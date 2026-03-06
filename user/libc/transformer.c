@@ -1,0 +1,599 @@
+#include "libc.h"
+
+/* --- Static helpers --- */
+
+static void rms_norm(float *out, const float *x, const float *weight,
+                     uint32_t dim) {
+    float ss = 0.0f;
+    for (uint32_t i = 0; i < dim; i++)
+        ss += x[i] * x[i];
+    ss = 1.0f / sqrtf(ss / (float)dim + 1e-5f);
+    for (uint32_t i = 0; i < dim; i++)
+        out[i] = x[i] * ss * weight[i];
+}
+
+static void matmul(float *out, const float *x, const float *w,
+                   uint32_t n, uint32_t d) {
+    /* out[d] = x[n] @ W[n×d]  (W is row-major: W[i*d + j]) */
+    for (uint32_t j = 0; j < d; j++) {
+        float sum = 0.0f;
+        for (uint32_t i = 0; i < n; i++)
+            sum += x[i] * w[i * d + j];
+        out[j] = sum;
+    }
+}
+
+static void softmax(float *x, uint32_t size) {
+    float max_val = x[0];
+    for (uint32_t i = 1; i < size; i++)
+        if (x[i] > max_val)
+            max_val = x[i];
+    float sum = 0.0f;
+    for (uint32_t i = 0; i < size; i++) {
+        x[i] = expf(x[i] - max_val);
+        sum += x[i];
+    }
+    for (uint32_t i = 0; i < size; i++)
+        x[i] /= sum;
+}
+
+static void apply_rope(float *vec, uint32_t dim, uint32_t pos, float theta) {
+    for (uint32_t i = 0; i < dim; i += 2) {
+        float freq = 1.0f / expf(logf(theta) * (float)i / (float)dim);
+        float angle = (float)pos * freq;
+        float cos_a = cosf(angle), sin_a = sinf(angle);
+        float v0 = vec[i], v1 = vec[i + 1];
+        vec[i]     = cos_a * v0 - sin_a * v1;
+        vec[i + 1] = sin_a * v0 + cos_a * v1;
+    }
+}
+
+/* Per-head RMS norm for QK-norm: out[i] = x[i] / rms(x) * weight[i] */
+static void head_rms_norm(float *x, const float *weight, uint32_t dim) {
+    float ss = 0.0f;
+    for (uint32_t i = 0; i < dim; i++)
+        ss += x[i] * x[i];
+    ss = 1.0f / sqrtf(ss / (float)dim + 1e-5f);
+    for (uint32_t i = 0; i < dim; i++)
+        x[i] = x[i] * ss * weight[i];
+}
+
+/* --- Init --- */
+
+int transformer_init(transformer_t *tf, const tf_config_t *cfg,
+                     uint32_t seed) {
+    /* Validate config */
+    if (cfg->dim == 0 || cfg->hidden_dim == 0 || cfg->n_heads == 0 ||
+        cfg->n_layers == 0 || cfg->vocab_size == 0 || cfg->max_seq_len == 0)
+        return -1;
+    if (cfg->dim % cfg->n_heads != 0)
+        return -1;
+
+    tf->cfg = *cfg;
+    tf->pos = 0;
+
+    uint64_t dim = cfg->dim;
+    uint64_t hdim = cfg->hidden_dim;
+    uint64_t nl = cfg->n_layers;
+    uint64_t vs = cfg->vocab_size;
+    uint64_t head_dim = dim / cfg->n_heads;
+    uint64_t kv_heads = (cfg->n_kv_heads > 0) ? cfg->n_kv_heads : cfg->n_heads;
+    uint64_t kv_dim = kv_heads * head_dim;
+
+    /* --- Weights buffer (use uint64_t to avoid overflow) --- */
+    uint64_t weight_count = vs * dim                /* token_emb */
+        + nl * dim                                  /* rms_att_w */
+        + nl * dim * dim                            /* wq */
+        + nl * dim * kv_dim                         /* wk (GQA: kv_dim) */
+        + nl * dim * kv_dim                         /* wv (GQA: kv_dim) */
+        + nl * dim * dim                            /* wo */
+        + nl * dim                                  /* rms_ffn_w */
+        + nl * dim * hdim                           /* w1 */
+        + nl * hdim * dim                           /* w2 */
+        + dim                                       /* rms_final_w */
+        + dim * vs;                                 /* wcls */
+    if (cfg->swiglu)
+        weight_count += nl * dim * hdim;            /* w3 (gate) */
+    if (cfg->qk_norm)
+        weight_count += nl * head_dim * 2;          /* wq_norm + wk_norm */
+
+    uint64_t weight_bytes = weight_count * sizeof(float);
+    tf->weights_mmap_pages = (weight_bytes + 4095) / 4096;
+
+    long addr = sys_mmap(tf->weights_mmap_pages);
+    if (addr <= 0) return -1;
+    tf->weights_mmap_addr = (uint64_t)addr;
+    tf->weights_buf = (float *)addr;
+
+    /* --- Per-layer pointer arrays --- */
+    uint64_t n_arrays = 8;  /* rms_att, wq, wk, wv, wo, rms_ffn, w1, w2 */
+    if (cfg->swiglu) n_arrays++;    /* w3 */
+    if (cfg->qk_norm) n_arrays += 2; /* wq_norm, wk_norm */
+    uint64_t ptrs_size = n_arrays * nl * sizeof(float *);
+    tf->ptrs_mmap_pages = (ptrs_size + 4095) / 4096;
+
+    addr = sys_mmap(tf->ptrs_mmap_pages);
+    if (addr <= 0) {
+        sys_munmap(tf->weights_mmap_addr);
+        return -1;
+    }
+    tf->ptrs_mmap_addr = (uint64_t)addr;
+
+    float **base = (float **)addr;
+    tf->rms_att_w = base;  base += nl;
+    tf->wq        = base;  base += nl;
+    tf->wk        = base;  base += nl;
+    tf->wv        = base;  base += nl;
+    tf->wo        = base;  base += nl;
+    tf->rms_ffn_w = base;  base += nl;
+    tf->w1        = base;  base += nl;
+    tf->w2        = base;  base += nl;
+    if (cfg->swiglu) {
+        tf->w3    = base;  base += nl;
+    } else {
+        tf->w3    = NULL;
+    }
+    if (cfg->qk_norm) {
+        tf->wq_norm = base;  base += nl;
+        tf->wk_norm = base;  base += nl;
+    } else {
+        tf->wq_norm = NULL;
+        tf->wk_norm = NULL;
+    }
+
+    /* Walk buffer, assign pointer views */
+    float *p = tf->weights_buf;
+
+    tf->token_emb = p;          p += vs * dim;
+
+    for (uint64_t l = 0; l < nl; l++) {
+        tf->rms_att_w[l] = p;   p += dim;
+    }
+    for (uint64_t l = 0; l < nl; l++) {
+        tf->wq[l] = p;          p += dim * dim;
+    }
+    for (uint64_t l = 0; l < nl; l++) {
+        tf->wk[l] = p;          p += dim * kv_dim;
+    }
+    for (uint64_t l = 0; l < nl; l++) {
+        tf->wv[l] = p;          p += dim * kv_dim;
+    }
+    for (uint64_t l = 0; l < nl; l++) {
+        tf->wo[l] = p;          p += dim * dim;
+    }
+    for (uint64_t l = 0; l < nl; l++) {
+        tf->rms_ffn_w[l] = p;   p += dim;
+    }
+    for (uint64_t l = 0; l < nl; l++) {
+        tf->w1[l] = p;          p += dim * hdim;
+    }
+    for (uint64_t l = 0; l < nl; l++) {
+        tf->w2[l] = p;          p += hdim * dim;
+    }
+    if (cfg->swiglu) {
+        for (uint64_t l = 0; l < nl; l++) {
+            tf->w3[l] = p;      p += dim * hdim;
+        }
+    }
+    if (cfg->qk_norm) {
+        for (uint64_t l = 0; l < nl; l++) {
+            tf->wq_norm[l] = p; p += head_dim;
+        }
+        for (uint64_t l = 0; l < nl; l++) {
+            tf->wk_norm[l] = p; p += head_dim;
+        }
+    }
+    tf->rms_final_w = p;        p += dim;
+    tf->wcls = p;               p += dim * vs;
+
+    /* Init weights with PRNG */
+    for (uint64_t i = 0; i < weight_count; i++)
+        tf->weights_buf[i] = prng_float(&seed) * 0.1f;
+
+    /* Override RMS norm weights to 1.0 */
+    for (uint64_t l = 0; l < nl; l++) {
+        for (uint64_t i = 0; i < dim; i++) {
+            tf->rms_att_w[l][i] = 1.0f;
+            tf->rms_ffn_w[l][i] = 1.0f;
+        }
+    }
+    for (uint64_t i = 0; i < dim; i++)
+        tf->rms_final_w[i] = 1.0f;
+    if (cfg->qk_norm) {
+        for (uint64_t l = 0; l < nl; l++) {
+            for (uint64_t i = 0; i < head_dim; i++) {
+                tf->wq_norm[l][i] = 1.0f;
+                tf->wk_norm[l][i] = 1.0f;
+            }
+        }
+    }
+
+    /* --- KV cache buffer --- */
+    uint64_t kv_count = 2 * nl * cfg->max_seq_len * kv_dim;
+    uint64_t kv_bytes = kv_count * sizeof(float);
+    tf->kv_mmap_pages = (kv_bytes + 4095) / 4096;
+
+    addr = sys_mmap(tf->kv_mmap_pages);
+    if (addr <= 0) {
+        sys_munmap(tf->ptrs_mmap_addr);
+        sys_munmap(tf->weights_mmap_addr);
+        return -1;
+    }
+    tf->kv_mmap_addr = (uint64_t)addr;
+    tf->kv_buf = (float *)addr;
+    tf->key_cache = tf->kv_buf;
+    tf->value_cache = tf->kv_buf + nl * cfg->max_seq_len * kv_dim;
+    memset(tf->kv_buf, 0, kv_bytes);
+
+    /* --- Scratch buffer --- */
+    /* x, xb, xb2, q, k: dim each; hb: hidden_dim; hb2: hidden_dim (swiglu); att: max_seq_len; logits: vocab_size */
+    uint64_t scratch_count = 5 * dim + hdim + cfg->max_seq_len + vs;
+    if (cfg->swiglu)
+        scratch_count += hdim;  /* hb2 */
+    uint64_t scratch_bytes = scratch_count * sizeof(float);
+    tf->scratch_mmap_pages = (scratch_bytes + 4095) / 4096;
+
+    addr = sys_mmap(tf->scratch_mmap_pages);
+    if (addr <= 0) {
+        sys_munmap(tf->kv_mmap_addr);
+        sys_munmap(tf->ptrs_mmap_addr);
+        sys_munmap(tf->weights_mmap_addr);
+        return -1;
+    }
+    tf->scratch_mmap_addr = (uint64_t)addr;
+    tf->scratch_buf = (float *)addr;
+
+    float *s = tf->scratch_buf;
+    tf->x      = s;  s += dim;
+    tf->xb     = s;  s += dim;
+    tf->xb2    = s;  s += dim;
+    tf->q      = s;  s += dim;
+    tf->k      = s;  s += dim;
+    tf->hb     = s;  s += hdim;
+    if (cfg->swiglu) {
+        tf->hb2 = s;  s += hdim;
+    } else {
+        tf->hb2 = NULL;
+    }
+    tf->att    = s;  s += cfg->max_seq_len;
+    tf->logits = s;
+
+    memset(tf->scratch_buf, 0, scratch_bytes);
+
+    return 0;
+}
+
+/* --- Destroy --- */
+
+void transformer_destroy(transformer_t *tf) {
+    if (tf->scratch_mmap_addr) {
+        sys_munmap(tf->scratch_mmap_addr);
+        tf->scratch_mmap_addr = 0;
+    }
+    if (tf->kv_mmap_addr) {
+        sys_munmap(tf->kv_mmap_addr);
+        tf->kv_mmap_addr = 0;
+    }
+    if (tf->ptrs_mmap_addr) {
+        sys_munmap(tf->ptrs_mmap_addr);
+        tf->ptrs_mmap_addr = 0;
+    }
+    if (tf->weights_mmap_addr) {
+        sys_munmap(tf->weights_mmap_addr);
+        tf->weights_mmap_addr = 0;
+    }
+}
+
+/* --- Forward pass --- */
+
+float *transformer_forward(transformer_t *tf, uint32_t token) {
+    uint32_t dim = tf->cfg.dim;
+    uint32_t hdim = tf->cfg.hidden_dim;
+    uint32_t n_heads = tf->cfg.n_heads;
+    uint32_t head_dim = dim / n_heads;
+    uint32_t nl = tf->cfg.n_layers;
+    uint32_t seq_len = tf->cfg.max_seq_len;
+    uint32_t pos = tf->pos;
+    uint32_t kv_heads = (tf->cfg.n_kv_heads > 0) ? tf->cfg.n_kv_heads : n_heads;
+    uint32_t kv_dim = kv_heads * head_dim;
+    uint32_t n_rep = n_heads / kv_heads;  /* GQA repeat factor */
+    float theta = (tf->cfg.rope_theta > 0.0f) ? tf->cfg.rope_theta : 10000.0f;
+
+    /* 1. Copy token embedding into x */
+    float *emb = tf->token_emb + token * dim;
+    for (uint32_t i = 0; i < dim; i++)
+        tf->x[i] = emb[i];
+
+    /* 2. For each layer */
+    for (uint32_t l = 0; l < nl; l++) {
+        /* RMS norm before attention */
+        rms_norm(tf->xb, tf->x, tf->rms_att_w[l], dim);
+
+        /* Q projection (always full dim) */
+        matmul(tf->q, tf->xb, tf->wq[l], dim, dim);
+
+        /* K, V projections into scratch then copy to cache */
+        float *k_cache_l = tf->key_cache + l * seq_len * kv_dim + pos * kv_dim;
+        float *v_cache_l = tf->value_cache + l * seq_len * kv_dim + pos * kv_dim;
+        matmul(tf->k, tf->xb, tf->wk[l], dim, kv_dim);
+        matmul(v_cache_l, tf->xb, tf->wv[l], dim, kv_dim);
+
+        /* QK-norm: per-head RMS norm on Q and K before RoPE */
+        if (tf->cfg.qk_norm) {
+            for (uint32_t h = 0; h < n_heads; h++)
+                head_rms_norm(tf->q + h * head_dim, tf->wq_norm[l], head_dim);
+            for (uint32_t h = 0; h < kv_heads; h++)
+                head_rms_norm(tf->k + h * head_dim, tf->wk_norm[l], head_dim);
+        }
+
+        /* Copy K to cache (after QK-norm, before RoPE so RoPE applies to cache) */
+        for (uint32_t i = 0; i < kv_dim; i++)
+            k_cache_l[i] = tf->k[i];
+
+        /* Apply RoPE to Q and K per head */
+        if (tf->cfg.rope) {
+            for (uint32_t h = 0; h < n_heads; h++)
+                apply_rope(tf->q + h * head_dim, head_dim, pos, theta);
+            for (uint32_t h = 0; h < kv_heads; h++)
+                apply_rope(k_cache_l + h * head_dim, head_dim, pos, theta);
+        }
+
+        /* Multi-head attention with GQA */
+        for (uint32_t h = 0; h < n_heads; h++) {
+            float *q_h = tf->q + h * head_dim;
+            uint32_t kv_h = h / n_rep;  /* map Q head to KV head */
+
+            /* Compute attention scores for this head */
+            for (uint32_t t = 0; t <= pos; t++) {
+                float *k_t = tf->key_cache + l * seq_len * kv_dim + t * kv_dim + kv_h * head_dim;
+                float score = 0.0f;
+                for (uint32_t i = 0; i < head_dim; i++)
+                    score += q_h[i] * k_t[i];
+                tf->att[t] = score / sqrtf((float)head_dim);
+            }
+
+            /* Softmax over attention scores */
+            softmax(tf->att, pos + 1);
+
+            /* Weighted sum of values */
+            float *xb_h = tf->xb + h * head_dim;
+            for (uint32_t i = 0; i < head_dim; i++)
+                xb_h[i] = 0.0f;
+            for (uint32_t t = 0; t <= pos; t++) {
+                float *v_t = tf->value_cache + l * seq_len * kv_dim + t * kv_dim + kv_h * head_dim;
+                float a = tf->att[t];
+                for (uint32_t i = 0; i < head_dim; i++)
+                    xb_h[i] += a * v_t[i];
+            }
+        }
+
+        /* Output projection + residual */
+        matmul(tf->xb2, tf->xb, tf->wo[l], dim, dim);
+        for (uint32_t i = 0; i < dim; i++)
+            tf->x[i] += tf->xb2[i];
+
+        /* RMS norm before FFN */
+        rms_norm(tf->xb, tf->x, tf->rms_ffn_w[l], dim);
+
+        /* FFN */
+        if (tf->cfg.swiglu) {
+            /* SwiGLU: hb = SiLU(W1(x)) * W3(x), then W2(hb) */
+            matmul(tf->hb, tf->xb, tf->w1[l], dim, hdim);
+            matmul(tf->hb2, tf->xb, tf->w3[l], dim, hdim);
+            for (uint32_t i = 0; i < hdim; i++)
+                tf->hb[i] = (tf->hb[i] * sigmoidf(tf->hb[i])) * tf->hb2[i];
+            matmul(tf->xb2, tf->hb, tf->w2[l], hdim, dim);
+        } else {
+            /* ReLU: W1 -> ReLU -> W2 */
+            matmul(tf->hb, tf->xb, tf->w1[l], dim, hdim);
+            for (uint32_t i = 0; i < hdim; i++)
+                if (tf->hb[i] < 0.0f)
+                    tf->hb[i] = 0.0f;
+            matmul(tf->xb2, tf->hb, tf->w2[l], hdim, dim);
+        }
+
+        /* Residual */
+        for (uint32_t i = 0; i < dim; i++)
+            tf->x[i] += tf->xb2[i];
+    }
+
+    /* 3. Final RMS norm */
+    rms_norm(tf->x, tf->x, tf->rms_final_w, dim);
+
+    /* 4. Classifier: logits = x @ wcls */
+    matmul(tf->logits, tf->x, tf->wcls, dim, tf->cfg.vocab_size);
+
+    /* 5. Increment position */
+    tf->pos++;
+
+    return tf->logits;
+}
+
+/* --- Save/Load --- */
+
+/* Helper: compute weight count for current config */
+static uint64_t weight_count_for_cfg(const tf_config_t *cfg) {
+    uint64_t dim = cfg->dim;
+    uint64_t hdim = cfg->hidden_dim;
+    uint64_t nl = cfg->n_layers;
+    uint64_t vs = cfg->vocab_size;
+    uint64_t head_dim = dim / cfg->n_heads;
+    uint64_t kv_heads = (cfg->n_kv_heads > 0) ? cfg->n_kv_heads : cfg->n_heads;
+    uint64_t kv_dim = kv_heads * head_dim;
+    uint64_t count = vs * dim               /* token_emb */
+        + nl * dim                           /* rms_att_w */
+        + nl * dim * dim                     /* wq */
+        + nl * dim * kv_dim                  /* wk (GQA) */
+        + nl * dim * kv_dim                  /* wv (GQA) */
+        + nl * dim * dim                     /* wo */
+        + nl * dim                           /* rms_ffn_w */
+        + nl * dim * hdim                    /* w1 */
+        + nl * hdim * dim                    /* w2 */
+        + dim                                /* rms_final_w */
+        + dim * vs;                          /* wcls */
+    if (cfg->swiglu)
+        count += nl * dim * hdim;            /* w3 */
+    if (cfg->qk_norm)
+        count += nl * head_dim * 2;          /* wq_norm + wk_norm */
+    return count;
+}
+
+#define LIMNX_MAGIC 0x584E4D4C  /* "LMNX" in little-endian */
+
+int transformer_save(transformer_t *tf, const char *path) {
+    long fd = sys_create(path);
+    if (fd < 0) return -1;
+
+    /* Write 52-byte header: magic + version + 11 config fields */
+    uint32_t header[13];
+    header[0] = LIMNX_MAGIC;
+    header[1] = 2;  /* version */
+    header[2] = tf->cfg.dim;
+    header[3] = tf->cfg.hidden_dim;
+    header[4] = tf->cfg.n_heads;
+    header[5] = tf->cfg.n_layers;
+    header[6] = tf->cfg.vocab_size;
+    header[7] = tf->cfg.max_seq_len;
+    header[8] = tf->cfg.rope;
+    header[9] = tf->cfg.swiglu;
+    header[10] = tf->cfg.n_kv_heads;
+    header[11] = tf->cfg.qk_norm;
+    /* Store rope_theta as uint32_t bit pattern */
+    union { float f; uint32_t u; } theta_bits;
+    theta_bits.f = tf->cfg.rope_theta;
+    header[12] = theta_bits.u;
+
+    long n = sys_fwrite(fd, header, sizeof(header));
+    if (n != (long)sizeof(header)) {
+        sys_close(fd);
+        return -1;
+    }
+
+    uint64_t weight_bytes = weight_count_for_cfg(&tf->cfg) * sizeof(float);
+
+    n = sys_fwrite(fd, tf->weights_buf, weight_bytes);
+    sys_close(fd);
+
+    return (n == (long)weight_bytes) ? 0 : -1;
+}
+
+int transformer_load(transformer_t *tf, tf_config_t *cfg, const char *path) {
+    long fd = sys_open(path, 0);
+    if (fd < 0) return -1;
+
+    /* Read first 4 bytes to detect format */
+    uint32_t magic;
+    long n = sys_read(fd, &magic, 4);
+    if (n != 4) {
+        sys_close(fd);
+        return -1;
+    }
+
+    if (magic == LIMNX_MAGIC) {
+        /* Read version */
+        uint32_t version;
+        n = sys_read(fd, &version, 4);
+        if (n != 4) { sys_close(fd); return -1; }
+
+        if (version == 1) {
+            /* v1 format: 8 config fields after magic+version */
+            uint32_t rest[8];
+            n = sys_read(fd, rest, sizeof(rest));
+            if (n != (long)sizeof(rest)) { sys_close(fd); return -1; }
+            cfg->dim         = rest[0];
+            cfg->hidden_dim  = rest[1];
+            cfg->n_heads     = rest[2];
+            cfg->n_layers    = rest[3];
+            cfg->vocab_size  = rest[4];
+            cfg->max_seq_len = rest[5];
+            cfg->rope        = rest[6];
+            cfg->swiglu      = rest[7];
+            cfg->n_kv_heads  = 0;
+            cfg->qk_norm     = 0;
+            cfg->rope_theta  = 0.0f;
+        } else {
+            /* v2 format: 11 config fields after magic+version */
+            uint32_t rest[11];
+            n = sys_read(fd, rest, sizeof(rest));
+            if (n != (long)sizeof(rest)) { sys_close(fd); return -1; }
+            cfg->dim         = rest[0];
+            cfg->hidden_dim  = rest[1];
+            cfg->n_heads     = rest[2];
+            cfg->n_layers    = rest[3];
+            cfg->vocab_size  = rest[4];
+            cfg->max_seq_len = rest[5];
+            cfg->rope        = rest[6];
+            cfg->swiglu      = rest[7];
+            cfg->n_kv_heads  = rest[8];
+            cfg->qk_norm     = rest[9];
+            /* Decode rope_theta from bit pattern */
+            union { uint32_t u; float f; } theta_bits;
+            theta_bits.u = rest[10];
+            cfg->rope_theta = theta_bits.f;
+        }
+    } else {
+        /* Old format: first 4 bytes were dim, read remaining 20 bytes */
+        cfg->dim = magic;
+        uint32_t old_rest[5];
+        n = sys_read(fd, old_rest, sizeof(old_rest));
+        if (n != (long)sizeof(old_rest)) {
+            sys_close(fd);
+            return -1;
+        }
+        cfg->hidden_dim  = old_rest[0];
+        cfg->n_heads     = old_rest[1];
+        cfg->n_layers    = old_rest[2];
+        cfg->vocab_size  = old_rest[3];
+        cfg->max_seq_len = old_rest[4];
+        cfg->rope        = 0;
+        cfg->swiglu      = 0;
+        cfg->n_kv_heads  = 0;
+        cfg->qk_norm     = 0;
+        cfg->rope_theta  = 0.0f;
+    }
+
+    /* Init transformer with seed=0 (weights will be overwritten) */
+    if (transformer_init(tf, cfg, 0) != 0) {
+        sys_close(fd);
+        return -1;
+    }
+
+    /* Read weights */
+    uint64_t weight_bytes = weight_count_for_cfg(cfg) * sizeof(float);
+
+    n = sys_read(fd, tf->weights_buf, weight_bytes);
+    sys_close(fd);
+
+    return (n == (long)weight_bytes) ? 0 : -1;
+}
+
+/* --- Generate (greedy) --- */
+
+uint32_t transformer_generate(transformer_t *tf, uint32_t start_token,
+                               uint32_t *out_tokens, uint32_t max_tokens) {
+    if (max_tokens == 0) return 0;
+
+    out_tokens[0] = start_token;
+    uint32_t count = 1;
+
+    uint32_t token = start_token;
+    while (count < max_tokens) {
+        float *logits = transformer_forward(tf, token);
+
+        /* Argmax over logits */
+        uint32_t best = 0;
+        float best_val = logits[0];
+        for (uint32_t i = 1; i < tf->cfg.vocab_size; i++) {
+            if (logits[i] > best_val) {
+                best_val = logits[i];
+                best = i;
+            }
+        }
+
+        out_tokens[count] = best;
+        token = best;
+        count++;
+    }
+
+    return count;
+}
