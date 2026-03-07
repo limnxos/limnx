@@ -34,7 +34,7 @@ It boots on real hardware (BIOS and UEFI), runs a preemptive SMP kernel, and pro
 - Interactive shell
 - Tool-using AI agent with multi-tool chains
 - Inference daemon (unix socket server)
-- 38 stages of incremental test suites
+- Incremental test suites
 
 ## Build
 
@@ -68,10 +68,6 @@ make run               # boot in QEMU with virtio-net + virtio-blk
  └──────────────────────────────────────────────────┘
         Limine Bootloader (BIOS / UEFI)
 ```
-
-## Status
-
-Stage 38 complete. All kernel subsystems operational. ~35,000 lines of code across 149 source files.
 
 ## License
 
