@@ -95,7 +95,15 @@
 #define SYS_NS_JOIN        88
 #define SYS_PROCINFO       89
 #define SYS_FSSTAT         90
-#define SYS_NR             91
+#define SYS_TASK_CREATE    91
+#define SYS_TASK_DEPEND    92
+#define SYS_TASK_START     93
+#define SYS_TASK_COMPLETE  94
+#define SYS_TASK_STATUS    95
+#define SYS_TASK_WAIT      96
+#define SYS_TOKEN_DELEGATE 97
+#define SYS_NS_SETQUOTA   98
+#define SYS_NR             99
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

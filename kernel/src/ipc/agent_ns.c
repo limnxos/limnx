@@ -49,3 +49,46 @@ int agent_ns_valid(uint32_t ns_id) {
     if (ns_id >= MAX_NAMESPACES) return 0;
     return namespaces[ns_id].used;
 }
+
+int agent_ns_set_quota(uint32_t ns_id, uint32_t resource, uint32_t limit,
+                        uint64_t caller_pid, uint16_t caller_uid) {
+    if (ns_id == 0 || ns_id >= MAX_NAMESPACES || !namespaces[ns_id].used)
+        return -2; /* -ENOENT */
+    if (caller_uid != 0 && namespaces[ns_id].owner_pid != caller_pid)
+        return -1; /* -EPERM */
+
+    if (resource == NS_QUOTA_PROCS)
+        namespaces[ns_id].max_procs = limit;
+    else if (resource == NS_QUOTA_MEM_PAGES)
+        namespaces[ns_id].max_mem_pages = limit;
+    else
+        return -22; /* -EINVAL */
+    return 0;
+}
+
+int agent_ns_quota_check(uint32_t ns_id, uint32_t resource, uint32_t count) {
+    if (ns_id == 0 || ns_id >= MAX_NAMESPACES || !namespaces[ns_id].used)
+        return 1; /* global/invalid ns = no quota */
+
+    if (resource == NS_QUOTA_PROCS) {
+        if (namespaces[ns_id].max_procs == 0) return 1; /* unlimited */
+        return (namespaces[ns_id].cur_procs + count <= namespaces[ns_id].max_procs);
+    } else if (resource == NS_QUOTA_MEM_PAGES) {
+        if (namespaces[ns_id].max_mem_pages == 0) return 1;
+        return (namespaces[ns_id].cur_mem_pages + count <= namespaces[ns_id].max_mem_pages);
+    }
+    return 1;
+}
+
+void agent_ns_quota_adjust(uint32_t ns_id, uint32_t resource, int32_t delta) {
+    if (ns_id == 0 || ns_id >= MAX_NAMESPACES || !namespaces[ns_id].used)
+        return;
+
+    if (resource == NS_QUOTA_PROCS) {
+        int32_t val = (int32_t)namespaces[ns_id].cur_procs + delta;
+        namespaces[ns_id].cur_procs = (val > 0) ? (uint32_t)val : 0;
+    } else if (resource == NS_QUOTA_MEM_PAGES) {
+        int32_t val = (int32_t)namespaces[ns_id].cur_mem_pages + delta;
+        namespaces[ns_id].cur_mem_pages = (val > 0) ? (uint32_t)val : 0;
+    }
+}

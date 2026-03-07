@@ -42,7 +42,7 @@ SRCS     := kernel/src/main.c kernel/src/serial.c \
             kernel/src/smp/smp.c kernel/src/smp/lapic.c \
             kernel/src/ipc/unix_sock.c kernel/src/ipc/eventfd.c kernel/src/ipc/agent_reg.c \
             kernel/src/ipc/epoll.c kernel/src/ipc/infer_svc.c kernel/src/ipc/uring.c \
-            kernel/src/ipc/cap_token.c kernel/src/ipc/agent_ns.c \
+            kernel/src/ipc/cap_token.c kernel/src/ipc/agent_ns.c kernel/src/ipc/taskgraph.c \
             kernel/src/mm/swap.c
 OBJS     := $(patsubst kernel/src/%.c,build/%.o,$(SRCS))
 
@@ -91,6 +91,7 @@ USER_C_ELFS := build/user/mathtest.elf build/user/agenttest.elf build/user/agent
                build/user/s39test.elf \
                build/user/s41test.elf \
                build/user/s42test.elf \
+               build/user/s44test.elf \
                build/user/inferd.elf
 
 USER_ELFS := $(USER_ASM_ELFS) $(USER_C_ELFS)
@@ -432,6 +433,13 @@ build/user/s42test.o: user/s42test.c user/libc/libc.h
 	$(CC) $(USER_CFLAGS) -c $< -o $@
 
 build/user/s42test.elf: build/user/s42test.o $(LIBC_OBJS) user/libc/linker.ld
+	$(LD) -nostdlib -static -T user/libc/linker.ld $(LIBC_OBJS) $< -o $@
+
+build/user/s44test.o: user/s44test.c user/libc/libc.h
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+build/user/s44test.elf: build/user/s44test.o $(LIBC_OBJS) user/libc/linker.ld
 	$(LD) -nostdlib -static -T user/libc/linker.ld $(LIBC_OBJS) $< -o $@
 
 build/user/inferd.o: user/inferd.c user/libc/libc.h

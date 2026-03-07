@@ -19,6 +19,7 @@
 #include "ipc/uring.h"
 #include "ipc/cap_token.h"
 #include "ipc/agent_ns.h"
+#include "ipc/taskgraph.h"
 #include "mm/swap.h"
 #include "blk/limnfs.h"
 #include "smp/percpu.h"
@@ -270,6 +271,10 @@ static int64_t sys_exit(uint64_t status, uint64_t a2,
         cap_token_cleanup_pid(t->process->pid);
         /* Cleanup agent namespaces owned by this process */
         agent_ns_cleanup_pid(t->process->pid);
+        /* Cleanup workflow tasks owned by this process */
+        taskgraph_cleanup_pid(t->process->pid);
+        /* Decrement namespace process count */
+        agent_ns_quota_adjust(t->process->ns_id, NS_QUOTA_PROCS, -1);
         /* Unregister inference services for dying process */
         infer_unregister_pid(t->process->pid);
         /* Detach shared memory regions */
@@ -1972,6 +1977,10 @@ static int64_t sys_fork(uint64_t a1, uint64_t a2,
     process_t *proc = t->process;
     if (!proc) return -1;
 
+    /* Namespace process quota check */
+    if (!agent_ns_quota_check(proc->ns_id, NS_QUOTA_PROCS, 1))
+        return -ENOMEM;
+
     /* Read parent's saved user context from kernel stack.
      * Layout (from syscall_entry.asm, high to low):
      *   kstack_top[-1] = user RSP
@@ -2049,6 +2058,9 @@ static int64_t sys_fork(uint64_t a1, uint64_t a2,
      * This prevents SMP races where the child exits before ref
      * counts reflect the inherited fds/shm. */
     sched_add(child->main_thread);
+
+    /* Adjust namespace quota after successful fork */
+    agent_ns_quota_adjust(proc->ns_id, NS_QUOTA_PROCS, 1);
 
     return (int64_t)child->pid;
 }
@@ -3500,6 +3512,10 @@ static int64_t sys_mmap2(uint64_t num_pages, uint64_t mmap_flags,
         proc->used_mem_pages + num_pages > proc->rlimit_mem_pages)
         return -ENOMEM;
 
+    /* Namespace memory quota check */
+    if (!agent_ns_quota_check(proc->ns_id, NS_QUOTA_MEM_PAGES, (uint32_t)num_pages))
+        return -ENOMEM;
+
     /* Find a free mmap slot */
     int slot = -1;
     for (int i = 0; i < MMAP_MAX_ENTRIES; i++) {
@@ -3691,6 +3707,98 @@ static int64_t sys_fsstat(uint64_t buf_ptr, uint64_t a2,
     return 0;
 }
 
+/* --- SYS_TASK_CREATE: create workflow task --- */
+static int64_t sys_task_create(uint64_t name_ptr, uint64_t ns_id,
+                                 uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;
+
+    char name[TASK_NAME_MAX];
+    if (name_ptr) {
+        if (copy_string_from_user((const char *)name_ptr, name, TASK_NAME_MAX) != 0)
+            return -EFAULT;
+    } else {
+        name[0] = '\0';
+    }
+
+    if (!agent_ns_valid((uint32_t)ns_id))
+        return -EINVAL;
+
+    return taskgraph_create(name, (uint32_t)ns_id, t->process->pid);
+}
+
+/* --- SYS_TASK_DEPEND: add dependency --- */
+static int64_t sys_task_depend(uint64_t task_id, uint64_t dep_id,
+                                 uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;
+    return taskgraph_depend((uint32_t)task_id, (uint32_t)dep_id, t->process->pid);
+}
+
+/* --- SYS_TASK_START: start task (check deps) --- */
+static int64_t sys_task_start(uint64_t task_id, uint64_t a2,
+                                uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;
+    return taskgraph_start((uint32_t)task_id, t->process->pid);
+}
+
+/* --- SYS_TASK_COMPLETE: mark task done/failed --- */
+static int64_t sys_task_complete(uint64_t task_id, uint64_t result,
+                                   uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;
+    return taskgraph_complete((uint32_t)task_id, (int32_t)result, t->process->pid);
+}
+
+/* --- SYS_TASK_STATUS: query task --- */
+static int64_t sys_task_status(uint64_t task_id, uint64_t buf_ptr,
+                                 uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    if (validate_user_ptr(buf_ptr, sizeof(task_status_t)) != 0) return -EFAULT;
+    return taskgraph_status((uint32_t)task_id, (task_status_t *)buf_ptr);
+}
+
+/* --- SYS_TASK_WAIT: poll if task finished --- */
+static int64_t sys_task_wait(uint64_t task_id, uint64_t a2,
+                               uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    return taskgraph_is_done((uint32_t)task_id) ? 0 : -EAGAIN;
+}
+
+/* --- SYS_TOKEN_DELEGATE: create sub-token --- */
+static int64_t sys_token_delegate(uint64_t parent_id, uint64_t target_pid,
+                                    uint64_t perms, uint64_t resource_ptr,
+                                    uint64_t a5) {
+    (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;
+
+    char resource[TOKEN_PATH_MAX];
+    resource[0] = '\0';
+    if (resource_ptr) {
+        if (copy_string_from_user((const char *)resource_ptr, resource, TOKEN_PATH_MAX) != 0)
+            return -EFAULT;
+    }
+
+    return cap_token_delegate((uint32_t)parent_id, t->process->pid,
+                               target_pid, (uint32_t)perms, resource);
+}
+
+/* --- SYS_NS_SETQUOTA: set namespace quota --- */
+static int64_t sys_ns_setquota(uint64_t ns_id, uint64_t resource,
+                                 uint64_t limit, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;
+    return agent_ns_set_quota((uint32_t)ns_id, (uint32_t)resource, (uint32_t)limit,
+                               t->process->pid, t->process->uid);
+}
+
 /* Syscall dispatch table */
 typedef int64_t (*syscall_fn_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
@@ -3786,6 +3894,14 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_NS_JOIN]        = sys_ns_join,
     [SYS_PROCINFO]       = sys_procinfo,
     [SYS_FSSTAT]         = sys_fsstat,
+    [SYS_TASK_CREATE]    = sys_task_create,
+    [SYS_TASK_DEPEND]    = sys_task_depend,
+    [SYS_TASK_START]     = sys_task_start,
+    [SYS_TASK_COMPLETE]  = sys_task_complete,
+    [SYS_TASK_STATUS]    = sys_task_status,
+    [SYS_TASK_WAIT]      = sys_task_wait,
+    [SYS_TOKEN_DELEGATE] = sys_token_delegate,
+    [SYS_NS_SETQUOTA]    = sys_ns_setquota,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).

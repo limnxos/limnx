@@ -587,6 +587,41 @@ typedef struct fs_stat {
 
 long sys_fsstat(fs_stat_t *st);
 
+/* Workflow task graph */
+#define TASK_PENDING  0
+#define TASK_RUNNING  1
+#define TASK_DONE     2
+#define TASK_FAILED   3
+#define MAX_TASK_DEPS 4
+#define TASK_NAME_MAX 32
+
+typedef struct task_status {
+    unsigned int id;
+    unsigned char status;
+    unsigned char dep_count;
+    unsigned char pad[2];
+    int          result;
+    unsigned int deps[MAX_TASK_DEPS];
+    char         name[TASK_NAME_MAX];
+} task_status_t;
+
+long sys_task_create(const char *name, long ns_id);
+long sys_task_depend(long task_id, long dep_id);
+long sys_task_start(long task_id);
+long sys_task_complete(long task_id, long result);
+long sys_task_status(long task_id, task_status_t *out);
+long sys_task_wait(long task_id);
+
+/* Token delegation */
+long sys_token_delegate(long parent_id, long target_pid, long perms,
+                        const char *resource);
+
+/* Namespace quotas */
+#define NS_QUOTA_PROCS     0
+#define NS_QUOTA_MEM_PAGES 1
+
+long sys_ns_setquota(long ns_id, long resource, long limit);
+
 /* --- HTTP types and functions --- */
 
 typedef struct http_request {

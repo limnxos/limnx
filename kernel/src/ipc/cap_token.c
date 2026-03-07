@@ -93,6 +93,37 @@ int cap_token_list(uint64_t owner_pid, token_info_t *buf, int max_count) {
     return count;
 }
 
+int cap_token_delegate(uint32_t parent_id, uint64_t caller_pid,
+                        uint64_t target_pid, uint32_t perms, const char *resource) {
+    /* Find parent token */
+    cap_token_t *parent = (void *)0;
+    for (int i = 0; i < MAX_TOKENS; i++) {
+        if (tokens[i].used && tokens[i].id == parent_id) {
+            parent = &tokens[i];
+            break;
+        }
+    }
+    if (!parent) return -2; /* -ENOENT */
+
+    /* Caller must be target of parent (or parent is bearer) */
+    if (parent->target_pid != 0 && parent->target_pid != caller_pid)
+        return -1; /* -EPERM */
+
+    /* Sub-token perms must be subset of parent perms */
+    if (perms & ~parent->perms)
+        return -1;
+
+    /* Sub-token resource must be equal or more specific (longer prefix) */
+    if (resource && resource[0] && parent->resource[0]) {
+        if (!prefix_match(parent->resource, resource))
+            return -1; /* sub-resource doesn't start with parent resource */
+    }
+
+    /* Create the sub-token owned by caller */
+    return cap_token_create(caller_pid, perms, perms, target_pid,
+                             resource && resource[0] ? resource : parent->resource);
+}
+
 void cap_token_cleanup_pid(uint64_t pid) {
     for (int i = 0; i < MAX_TOKENS; i++) {
         if (tokens[i].used) {

@@ -666,3 +666,60 @@ sys_fsstat:
     mov rax, 90         ; SYS_FSSTAT
     syscall
     ret
+
+; --- sys_task_create(name, ns_id) ---
+global sys_task_create
+sys_task_create:
+    mov rax, 91         ; SYS_TASK_CREATE
+    syscall
+    ret
+
+; --- sys_task_depend(task_id, dep_id) ---
+global sys_task_depend
+sys_task_depend:
+    mov rax, 92         ; SYS_TASK_DEPEND
+    syscall
+    ret
+
+; --- sys_task_start(task_id) ---
+global sys_task_start
+sys_task_start:
+    mov rax, 93         ; SYS_TASK_START
+    syscall
+    ret
+
+; --- sys_task_complete(task_id, result) ---
+global sys_task_complete
+sys_task_complete:
+    mov rax, 94         ; SYS_TASK_COMPLETE
+    syscall
+    ret
+
+; --- sys_task_status(task_id, buf_ptr) ---
+global sys_task_status
+sys_task_status:
+    mov rax, 95         ; SYS_TASK_STATUS
+    syscall
+    ret
+
+; --- sys_task_wait(task_id) ---
+global sys_task_wait
+sys_task_wait:
+    mov rax, 96         ; SYS_TASK_WAIT
+    syscall
+    ret
+
+; --- sys_token_delegate(parent_id, target_pid, perms, resource) ---
+global sys_token_delegate
+sys_token_delegate:
+    mov r10, rcx        ; 4th arg: rcx → r10 (syscall clobbers rcx)
+    mov rax, 97         ; SYS_TOKEN_DELEGATE
+    syscall
+    ret
+
+; --- sys_ns_setquota(ns_id, resource, limit) ---
+global sys_ns_setquota
+sys_ns_setquota:
+    mov rax, 98         ; SYS_NS_SETQUOTA
+    syscall
+    ret

@@ -36,6 +36,11 @@ int  cap_token_check(uint64_t pid, uint32_t needed_cap, const char *resource);
 /* List tokens owned by pid. Writes to buf, returns count. */
 int  cap_token_list(uint64_t owner_pid, token_info_t *buf, int max_count);
 
+/* Delegate: create sub-token from existing token. Caller must be target of parent.
+ * Sub-token perms must be subset of parent perms. Returns new token ID or -errno. */
+int  cap_token_delegate(uint32_t parent_id, uint64_t caller_pid,
+                         uint64_t target_pid, uint32_t perms, const char *resource);
+
 /* Cleanup all tokens owned by or targeting pid (called on process exit). */
 void cap_token_cleanup_pid(uint64_t pid);
 
