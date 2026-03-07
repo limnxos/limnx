@@ -356,6 +356,26 @@ int  agent_step(agent_t *ag, const float *input, const char *label,
                 uint32_t *out_action, float *out_confidence);
 void agent_destroy(agent_t *ag);
 
+/* --- Agent IPC Message Protocol --- */
+
+#define AMSG_REQUEST    1
+#define AMSG_RESPONSE   2
+#define AMSG_EVENT      3
+#define AMSG_HEARTBEAT  4
+#define AMSG_MAX_PAYLOAD 1024
+
+typedef struct agent_msg {
+    uint32_t type;                    /* AMSG_REQUEST, AMSG_RESPONSE, etc. */
+    uint32_t len;                     /* payload length */
+    char     payload[AMSG_MAX_PAYLOAD];
+} agent_msg_t;
+
+int  agent_msg_send(int fd, const agent_msg_t *msg);
+int  agent_msg_recv(int fd, agent_msg_t *msg);
+
+/* Signal numbers for user-space */
+#define SIGCHLD 20
+
 /* --- Transformer inference runtime --- */
 
 typedef struct tf_config {

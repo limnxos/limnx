@@ -9,8 +9,9 @@
 #define SIGINT   2
 #define SIGKILL  9
 #define SIGTERM  15
-#define SIGSTOP  19
 #define SIGCONT  18
+#define SIGSTOP  19
+#define SIGCHLD  20
 
 /* Signal handler constants */
 #define SIG_DFL  0

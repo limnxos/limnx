@@ -289,6 +289,17 @@ static int64_t sys_exit(uint64_t status, uint64_t a2,
             vmm_free_user_pages(t->process->cr3);
             t->process->cr3 = 0;
         }
+        /* Deliver SIGCHLD to parent if parent has a user handler.
+         * Only set pending bit — actual delivery happens on kernel→user return.
+         * Guard: parent must exist, not exited, and have a real handler (not DFL/IGN).
+         * We directly set the pending bit instead of calling process_deliver_signal
+         * to avoid any side effects from the signal dispatch switch statement. */
+        if (t->process->parent_pid != 0) {
+            process_t *parent = process_lookup(t->process->parent_pid);
+            if (parent && !parent->exited &&
+                parent->sig_handlers[SIGCHLD].sa_handler > SIG_IGN)
+                parent->pending_signals |= (1U << SIGCHLD);
+        }
     }
     serial_printf("[proc] Process exited with status %lu\n", status);
     thread_exit();
@@ -3756,6 +3767,8 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
             uint64_t handler = proc->sig_handlers[sig].sa_handler;
             if (handler == SIG_IGN) continue;
             if (handler == SIG_DFL) {
+                /* SIGCHLD and SIGCONT default action is ignore */
+                if (sig == SIGCHLD || sig == SIGCONT) continue;
                 /* Default: kill */
                 proc->exit_status = -(int64_t)sig;
                 serial_printf("[proc] Process %lu terminated (signal %d)\n",
@@ -3781,6 +3794,28 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
             /* Write frame via HHDM (user stack is mapped in process address space) */
             uint64_t *pte = vmm_get_pte(proc->cr3, frame_rsp);
             if (!pte || !(*pte & PTE_PRESENT)) break;  /* stack not mapped */
+
+            /* Handle COW: if page is COW, copy it before writing */
+            if (*pte & PTE_COW) {
+                uint64_t old_phys = *pte & PTE_ADDR_MASK;
+                uint64_t old_flags = *pte & ~PTE_ADDR_MASK;
+                if (pmm_ref_get(old_phys) == 1) {
+                    *pte = old_phys | ((old_flags & ~PTE_COW) | PTE_WRITABLE | PTE_PRESENT);
+                } else {
+                    uint64_t new_phys = pmm_alloc_page();
+                    if (new_phys == 0) break;
+                    uint8_t *src = (uint8_t *)PHYS_TO_VIRT(old_phys);
+                    uint8_t *dst = (uint8_t *)PHYS_TO_VIRT(new_phys);
+                    for (int i = 0; i < 4096; i++) dst[i] = src[i];
+                    *pte = new_phys | ((old_flags & ~PTE_COW) | PTE_WRITABLE | PTE_PRESENT);
+                    pmm_ref_dec(old_phys);
+                }
+                invlpg_addr(frame_rsp & ~0xFFFULL);
+                /* Re-read pte after COW */
+                pte = vmm_get_pte(proc->cr3, frame_rsp);
+                if (!pte || !(*pte & PTE_PRESENT)) break;
+            }
+
             uint64_t stack_phys = (*pte & PTE_ADDR_MASK) + (frame_rsp & 0xFFF);
             uint64_t *frame = (uint64_t *)PHYS_TO_VIRT(stack_phys);
 
@@ -3791,12 +3826,11 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
 
             proc->signal_frame_addr = frame_rsp;
 
-            /* Redirect SYSRET to handler */
-            kstack_top[-2] = handler;
-            kstack_top[-1] = frame_rsp;
-
-            /* Set RDI for signal handler via per-CPU data */
+            /* Redirect SYSRET to handler via per-CPU data.
+             * The asm stub overrides RCX (→RIP) and RSP after pops. */
             percpu_t *pc = percpu_get();
+            pc->signal_handler_rip = handler;
+            pc->signal_frame_rsp = frame_rsp;
             pc->signal_deliver_rdi = (uint64_t)sig;
             pc->signal_deliver_pending = 1;
 
@@ -3846,6 +3880,8 @@ void syscall_init(void) {
     percpu_array[0].cpu_id = 0;
     percpu_array[0].signal_deliver_pending = 0;
     percpu_array[0].signal_deliver_rdi = 0;
+    percpu_array[0].signal_handler_rip = 0;
+    percpu_array[0].signal_frame_rsp = 0;
 
     /* Set GS.base directly for kernel mode — percpu_get() reads gs:16.
      * KERNEL_GS_BASE starts as 0; process_enter_usermode will set it

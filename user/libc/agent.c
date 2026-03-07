@@ -108,3 +108,34 @@ void agent_destroy(agent_t *ag) {
     tensor_destroy(&ag->b2);
     vecstore_destroy(&ag->memory);
 }
+
+/* --- Structured IPC Message Protocol --- */
+
+int agent_msg_send(int fd, const agent_msg_t *msg) {
+    /* Write header: type(4) + len(4) */
+    long r = sys_fwrite(fd, &msg->type, 4);
+    if (r < 0) return -1;
+    r = sys_fwrite(fd, &msg->len, 4);
+    if (r < 0) return -1;
+    /* Write payload */
+    if (msg->len > 0) {
+        r = sys_fwrite(fd, msg->payload, msg->len);
+        if (r < 0) return -1;
+    }
+    return 0;
+}
+
+int agent_msg_recv(int fd, agent_msg_t *msg) {
+    /* Read header: type(4) + len(4) */
+    long r = sys_read(fd, &msg->type, 4);
+    if (r <= 0) return -1;
+    r = sys_read(fd, &msg->len, 4);
+    if (r <= 0) return -1;
+    if (msg->len > AMSG_MAX_PAYLOAD) return -1;
+    /* Read payload */
+    if (msg->len > 0) {
+        r = sys_read(fd, msg->payload, msg->len);
+        if (r <= 0) return -1;
+    }
+    return 0;
+}

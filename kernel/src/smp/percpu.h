@@ -30,10 +30,12 @@ typedef struct percpu {
     uint8_t   signal_deliver_pending; /* offset 48  */
     uint8_t   pad[7];
     uint64_t  signal_deliver_rdi;     /* offset 56  */
+    uint64_t  signal_handler_rip;     /* offset 64  — handler address for signal */
+    uint64_t  signal_frame_rsp;       /* offset 72  — user RSP for signal frame */
     /* === End of assembly-visible region === */
 
-    uint32_t  lapic_ticks_per_ms;     /* offset 64  */
-    uint32_t  started;                /* offset 68  — AP signals ready */
+    uint32_t  lapic_ticks_per_ms;     /* offset 80  */
+    uint32_t  started;                /* offset 84  — AP signals ready */
 
     /* Per-CPU run queue for work-stealing scheduler */
     struct thread *rq_head;

@@ -86,12 +86,14 @@ syscall_entry:
     pop rcx                         ; user RIP
     pop rsp                         ; user RSP
 
-    ; Check if we need to deliver a signal (modify RDI for handler)
+    ; Check if we need to deliver a signal
     mov r10b, [gs:48]
     test r10b, r10b
     jz .no_signal
     mov byte [gs:48], 0
-    mov rdi, [gs:56]
+    mov rdi, [gs:56]              ; signal number for handler arg
+    mov rcx, [gs:64]              ; override RIP → signal handler
+    mov rsp, [gs:72]              ; override RSP → signal frame
 .no_signal:
 
     ; SWAPGS back to user GS before returning

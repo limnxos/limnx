@@ -596,6 +596,7 @@ int process_deliver_signal(process_t *proc, int signum) {
         return 0;
     case SIGTERM:
     case SIGINT:
+    case SIGCHLD:
         proc->pending_signals |= (1U << (uint32_t)signum);
         return 0;
     case SIGSTOP:
