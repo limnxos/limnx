@@ -36,12 +36,12 @@ int main(void) {
         }
     }
 
-    /* Test 2: mkdir /testdir */
+    /* Test 2: mkdir /testdir (may already exist from previous boot on persistent disk) */
     {
         long rc = sys_mkdir("/testdir");
-        if (rc >= 0) {
-            /* Verify via stat */
-            uint8_t st[16];
+        /* If mkdir fails, check if it already exists as a directory */
+        uint8_t st[16];
+        if (rc >= 0 || sys_stat("/testdir", st) == 0) {
             if (sys_stat("/testdir", st) == 0) {
                 uint8_t type = st[8];
                 if (type == 1)  /* VFS_DIRECTORY */

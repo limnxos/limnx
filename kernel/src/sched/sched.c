@@ -152,19 +152,23 @@ static thread_t *steal_from_tail(percpu_t *vpc) {
     return t;
 }
 
-static void local_remove(percpu_t *pc, thread_t *t) {
+static int local_remove(percpu_t *pc, thread_t *t) {
     if (pc->rq_head == t) {
         pc->rq_head = t->next;
         if (pc->rq_tail == t) pc->rq_tail = NULL;
+        t->next = NULL;
+        return 1;  /* found */
     } else {
         thread_t *prev = pc->rq_head;
         while (prev && prev->next != t) prev = prev->next;
         if (prev) {
             prev->next = t->next;
             if (pc->rq_tail == t) pc->rq_tail = prev;
+            t->next = NULL;
+            return 1;  /* found */
         }
     }
-    t->next = NULL;
+    return 0;  /* not found */
 }
 
 /* --- Common schedule body --- */
@@ -294,15 +298,18 @@ void sched_add(thread_t *t) {
     }
 }
 
-void sched_remove(thread_t *t) {
+int sched_remove(thread_t *t) {
+    int found = 0;
     if (smp_active) {
-        /* Search all per-CPU queues (rare — only for SIGSTOP) */
+        /* Search all per-CPU queues (rare — only for SIGKILL/SIGSTOP) */
         for (uint32_t i = 0; i < cpu_count; i++) {
             percpu_t *pc = &percpu_array[i];
             uint64_t flags;
             spin_lock_irqsave((spinlock_t *)&pc->rq_lock, &flags);
-            local_remove(pc, t);
+            if (local_remove(pc, t))
+                found = 1;
             spin_unlock_irqrestore((spinlock_t *)&pc->rq_lock, flags);
+            if (found) break;
         }
     } else {
         uint64_t flags;
@@ -310,17 +317,21 @@ void sched_remove(thread_t *t) {
         if (ready_head == t) {
             ready_head = t->next;
             if (ready_tail == t) ready_tail = NULL;
+            t->next = NULL;
+            found = 1;
         } else {
             thread_t *prev = ready_head;
             while (prev && prev->next != t) prev = prev->next;
             if (prev) {
                 prev->next = t->next;
                 if (ready_tail == t) ready_tail = prev;
+                t->next = NULL;
+                found = 1;
             }
         }
-        t->next = NULL;
         spin_unlock_irqrestore(&sched_lock, flags);
     }
+    return found;
 }
 
 /* --- Schedule (SMP path) --- */
@@ -399,6 +410,19 @@ static void schedule_smp(void) {
         link_dead(old);
     }
 
+    /* If the dequeued thread was killed while in the queue (SIGKILL set
+     * THREAD_DEAD after we dequeued it, or between dequeue and here),
+     * don't schedule it — handle it as dead immediately. */
+    if (next->state == THREAD_DEAD && next != idle_thread) {
+        if (next->process)
+            next->process->exited = 1;
+        link_dead(next);
+        /* Try to find another thread */
+        next = local_dequeue(pc);
+        if (!next)
+            next = idle_thread;
+    }
+
     next->state = THREAD_RUNNING;
     next->last_cpu = pc->cpu_id;
     pc->current_thread = next;
@@ -448,6 +472,16 @@ static void schedule_single(void) {
         if (old->process)
             old->process->exited = 1;
         link_dead(old);
+    }
+
+    /* If the dequeued thread was killed while in the queue, handle as dead */
+    if (next->state == THREAD_DEAD && next != idle_thread) {
+        if (next->process)
+            next->process->exited = 1;
+        link_dead(next);
+        next = dequeue();
+        if (!next)
+            next = idle_thread;
     }
 
     next->state = THREAD_RUNNING;

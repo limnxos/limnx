@@ -1,5 +1,7 @@
 #include "blk/bcache.h"
 #include "blk/virtio_blk.h"
+#include "sched/sched.h"
+#include "sched/thread.h"
 #include "serial.h"
 
 #define SECTORS_PER_BLOCK (BLOCK_SIZE / VIRTIO_BLK_SECTOR_SIZE)  /* 8 */
@@ -270,4 +272,26 @@ uint32_t bcache_dirty_count(void) {
 void bcache_stats(uint64_t *hits, uint64_t *misses) {
     *hits = cache_hits;
     *misses = cache_misses;
+}
+
+/* --- Kernel flusher thread --- */
+
+static void bcache_flusher_fn(void) {
+    serial_puts("[bcache] Flusher thread started\n");
+    for (;;) {
+        /* Yield ~500 times (~5 seconds at ~10ms LAPIC timer) */
+        for (int i = 0; i < 500; i++)
+            sched_yield();
+        bcache_flush();
+    }
+}
+
+void bcache_start_flusher(void) {
+    thread_t *t = thread_create(bcache_flusher_fn, 0);
+    if (t) {
+        sched_add(t);
+        serial_puts("[bcache] Flusher thread launched\n");
+    } else {
+        serial_puts("[bcache] WARNING: failed to create flusher thread\n");
+    }
 }

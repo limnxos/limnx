@@ -84,6 +84,7 @@ typedef struct process {
     int           env_count;
     int           env_buf_len;
     char          env_buf[PROC_ENV_BUF_SIZE];    /* packed "KEY=VALUE\0..." */
+    int8_t        tcp_conns[8];   /* 1 = this process owns tcp conn slot i */
 } process_t;
 
 /* Signal delivery — returns 0 on success */

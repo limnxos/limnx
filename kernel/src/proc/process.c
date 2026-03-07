@@ -223,6 +223,10 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
     proc->env_count = 0;
     proc->env_buf_len = 0;
 
+    /* Initialize TCP connection tracking */
+    for (int i = 0; i < 8; i++)
+        proc->tcp_conns[i] = 0;
+
     /* Create a new address space (PML4 with kernel upper-half cloned) */
     proc->cr3 = vmm_create_address_space();
     if (proc->cr3 == 0) {
@@ -298,7 +302,7 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
     t->process = proc;
     proc->main_thread = t;
     process_register(proc);
-    sched_add(t);  /* Add to ready queue after thread is fully set up */
+    /* NOTE: caller must call sched_add(proc->main_thread) after setup */
 
     serial_printf("[proc] Created process %lu (cr3=%lx, entry=%lx)\n",
         proc->pid, proc->cr3, proc->user_entry);
@@ -393,6 +397,10 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
     proc->env_count = 0;
     proc->env_buf_len = 0;
 
+    /* Initialize TCP connection tracking */
+    for (int i = 0; i < 8; i++)
+        proc->tcp_conns[i] = 0;
+
     /* Map user stack pages (grows down from USER_STACK_TOP) */
     uint64_t stack_pages = USER_STACK_SIZE / PAGE_SIZE;
     uint64_t stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
@@ -429,7 +437,7 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
     t->process = proc;
     proc->main_thread = t;
     process_register(proc);
-    sched_add(t);  /* Add to ready queue after thread is fully set up */
+    /* NOTE: caller must call sched_add(proc->main_thread) after setup */
 
     serial_printf("[proc] Created process %lu (cr3=%lx, entry=%lx)\n",
         proc->pid, proc->cr3, proc->user_entry);
@@ -543,6 +551,12 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     for (int i = 0; i < MAX_SIGNALS; i++)
         child->sig_handlers[i] = parent->sig_handlers[i];
 
+    /* TCP connections are NOT inherited by forked children.
+     * They are per-process kernel resources (like Linux). If inherited,
+     * the child's sys_exit would close the parent's connections. */
+    for (int i = 0; i < 8; i++)
+        child->tcp_conns[i] = 0;
+
     /* fork_saved was filled by process_fork_set_context() before this call */
 
     /* Create kernel thread for child */
@@ -552,7 +566,8 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     child->main_thread = ct;
 
     process_register(child);
-    sched_add(ct);  /* Add to ready queue after thread is fully set up */
+    /* NOTE: caller must call sched_add(child->main_thread) after
+     * incrementing pipe/pty/unix_sock ref counts. */
     return child;
 }
 
@@ -565,6 +580,17 @@ int process_deliver_signal(process_t *proc, int signum) {
     switch (signum) {
     case SIGKILL:
         proc->exit_status = -(int64_t)signum;
+        /* Try to remove from ready queue. Only set exited=1 if we
+         * actually found and removed the thread — this proves it's not
+         * currently running on any CPU. If sched_remove returns 0, the
+         * thread was already dequeued by another CPU's scheduler and is
+         * either running or about to run; schedule() will set exited=1
+         * when it sees THREAD_DEAD. Setting exited=1 prematurely would
+         * let waitpid kfree the process while schedule() still uses it. */
+        if (proc->main_thread->state == THREAD_READY) {
+            if (sched_remove(proc->main_thread))
+                proc->exited = 1;
+        }
         proc->main_thread->state = THREAD_DEAD;
         serial_printf("[proc] Process %lu killed (SIGKILL)\n", proc->pid);
         return 0;

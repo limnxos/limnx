@@ -13,5 +13,6 @@ void     bcache_invalidate(uint32_t block_no);
 void     bcache_flush(void);
 uint32_t bcache_dirty_count(void);
 void     bcache_stats(uint64_t *hits, uint64_t *misses);
+void     bcache_start_flusher(void);
 
 #endif

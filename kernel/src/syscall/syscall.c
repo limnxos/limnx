@@ -254,6 +254,13 @@ static int64_t sys_exit(uint64_t status, uint64_t a2,
             entry->open_flags = 0;
             entry->fd_flags = 0;
         }
+        /* Close any owned TCP connections */
+        for (int i = 0; i < 8; i++) {
+            if (t->process->tcp_conns[i]) {
+                tcp_close(i);
+                t->process->tcp_conns[i] = 0;
+            }
+        }
         /* Unregister agent entries for dying process */
         agent_unregister_pid(t->process->pid);
         /* Unregister inference services for dying process */
@@ -744,6 +751,11 @@ static int64_t sys_exec(uint64_t path_ptr, uint64_t argv_ptr,
             if (ur_idx >= 0) uring_ref(ur_idx);
         }
     }
+
+    /* Schedule the child AFTER all setup (argv, env, fd table) is complete.
+     * This prevents SMP races where another CPU runs the child before
+     * fd inheritance is done, causing pipe/pty ref count mismatches. */
+    sched_add(child->main_thread);
 
     return (int64_t)child->pid;
 }
@@ -1997,6 +2009,11 @@ static int64_t sys_fork(uint64_t a1, uint64_t a2,
         }
     }
 
+    /* Schedule the child AFTER all ref counts are incremented.
+     * This prevents SMP races where the child exits before ref
+     * counts reflect the inherited fds/shm. */
+    sched_add(child->main_thread);
+
     return (int64_t)child->pid;
 }
 
@@ -2113,7 +2130,13 @@ static int64_t sys_openpty(uint64_t master_fd_ptr, uint64_t slave_fd_ptr,
 static int64_t sys_tcp_socket(uint64_t a1, uint64_t a2,
                                 uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
-    return tcp_socket();
+    int64_t idx = tcp_socket();
+    if (idx >= 0 && idx < 8) {
+        thread_t *t = thread_get_current();
+        if (t && t->process)
+            t->process->tcp_conns[idx] = 1;
+    }
+    return idx;
 }
 
 static int64_t sys_tcp_connect(uint64_t conn_idx, uint64_t ip, uint64_t port,
@@ -2131,7 +2154,13 @@ static int64_t sys_tcp_listen(uint64_t conn_idx, uint64_t port,
 static int64_t sys_tcp_accept(uint64_t listen_conn, uint64_t a2,
                                 uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a2; (void)a3; (void)a4; (void)a5;
-    return tcp_accept((int)listen_conn);
+    int64_t idx = tcp_accept((int)listen_conn);
+    if (idx >= 0 && idx < 8) {
+        thread_t *t = thread_get_current();
+        if (t && t->process)
+            t->process->tcp_conns[idx] = 1;
+    }
+    return idx;
 }
 
 static int64_t sys_tcp_send(uint64_t conn_idx, uint64_t buf_ptr, uint64_t len,
@@ -2153,7 +2182,13 @@ static int64_t sys_tcp_recv(uint64_t conn_idx, uint64_t buf_ptr, uint64_t len,
 static int64_t sys_tcp_close(uint64_t conn_idx, uint64_t a2,
                                uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a2; (void)a3; (void)a4; (void)a5;
-    return tcp_close((int)conn_idx);
+    int64_t r = tcp_close((int)conn_idx);
+    if (r == 0 && conn_idx < 8) {
+        thread_t *t = thread_get_current();
+        if (t && t->process)
+            t->process->tcp_conns[conn_idx] = 0;
+    }
+    return r;
 }
 
 /* --- Stage 34 syscalls --- */

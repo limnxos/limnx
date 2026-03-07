@@ -411,6 +411,19 @@ int tcp_socket(void) {
             return i;
         }
     }
+    /* All slots occupied — try to reclaim a TIME_WAIT slot */
+    for (int i = 0; i < MAX_TCP_CONNS; i++) {
+        if (tcp_conns[i].in_use && tcp_conns[i].state == TCP_TIME_WAIT) {
+            tcp_conn_t *c = &tcp_conns[i];
+            tcp_memset(c, 0, sizeof(tcp_conn_t));
+            c->in_use = 1;
+            c->state = TCP_CLOSED;
+            c->local_ip = 0x0A00020FU;
+            c->local_port = tcp_ephemeral_port++;
+            c->rcv_wnd = TCP_WINDOW;
+            return i;
+        }
+    }
     return -1;
 }
 

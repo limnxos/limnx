@@ -357,6 +357,14 @@ static process_t *load_elf_from_vfs(const char *path) {
     return proc;
 }
 
+/* Load ELF and immediately schedule it (most common case) */
+static process_t *load_and_run_elf(const char *path) {
+    process_t *proc = load_elf_from_vfs(path);
+    if (proc)
+        sched_add(proc->main_thread);
+    return proc;
+}
+
 static void set_process_args(process_t *proc, const char *arg0, const char *arg1) {
     int pos = 0;
     const char *p = arg0;
@@ -376,7 +384,7 @@ static void set_process_args(process_t *proc, const char *arg0, const char *arg1
 static void elf_hello_test(void) {
     serial_puts("\n[test] ELF hello test...\n");
 
-    process_t *proc = load_elf_from_vfs("/hello.elf");
+    process_t *proc = load_and_run_elf("/hello.elf");
     if (!proc) {
         serial_puts("[test] ELF hello test FAILED\n");
         return;
@@ -390,7 +398,7 @@ static void elf_hello_test(void) {
 static void elf_cat_test(void) {
     serial_puts("\n[test] ELF cat test...\n");
 
-    process_t *proc = load_elf_from_vfs("/cat.elf");
+    process_t *proc = load_and_run_elf("/cat.elf");
     if (!proc) {
         serial_puts("[test] ELF cat test FAILED\n");
         return;
@@ -438,6 +446,7 @@ static void sys_exec_test(void) {
         return;
     }
 
+    sched_add(proc->main_thread);
     serial_printf("[test] sys_exec spawned pid %lu\n", proc->pid);
 
     process_reap(proc);
@@ -479,13 +488,26 @@ static void console_reader_thread(void) {
             sched_yield();
             continue;
         }
+
+        int did_work = 0;
+
+        /* Read slave output (s2m) and send to serial/fbcon */
         int64_t n = pty_master_read(con, buf, sizeof(buf));
         if (n > 0) {
             for (int64_t i = 0; i < n; i++)
                 serial_putc((char)buf[i]);
-        } else {
-            sched_yield();
+            did_work = 1;
         }
+
+        /* Read serial input and feed to PTY master (m2s) */
+        char ch = serial_getchar();
+        if (ch) {
+            pty_console_input(ch);
+            did_work = 1;
+        }
+
+        if (!did_work)
+            sched_yield();
     }
 }
 
@@ -685,7 +707,7 @@ void kmain(void) {
 
         /* Load udpecho.elf */
         serial_puts("\n[test] Loading udpecho.elf...\n");
-        process_t *echo_proc = load_elf_from_vfs("/udpecho.elf");
+        process_t *echo_proc = load_and_run_elf("/udpecho.elf");
         if (echo_proc)
             serial_printf("[test] udpecho.elf spawned (pid %lu)\n",
                           echo_proc->pid);
@@ -906,7 +928,7 @@ void kmain(void) {
     /* --- Load writetest.elf --- */
     serial_puts("\n[test] Loading writetest.elf...\n");
     {
-        process_t *wt_proc = load_elf_from_vfs("/writetest.elf");
+        process_t *wt_proc = load_and_run_elf("/writetest.elf");
         if (wt_proc) {
             serial_printf("[test] writetest.elf spawned (pid %lu)\n",
                           wt_proc->pid);
@@ -927,7 +949,7 @@ void kmain(void) {
     /* Load and run mathtest.elf (C user-space program with float math + mmap) */
     serial_puts("\n[test] Loading mathtest.elf...\n");
     {
-        process_t *mt_proc = load_elf_from_vfs("/mathtest.elf");
+        process_t *mt_proc = load_and_run_elf("/mathtest.elf");
         if (mt_proc) {
             serial_printf("[test] mathtest.elf spawned (pid %lu)\n",
                           mt_proc->pid);
@@ -948,7 +970,7 @@ void kmain(void) {
     /* Load and run agenttest.elf (tensor primitives + MLP forward pass) */
     serial_puts("\n[test] Loading agenttest.elf...\n");
     {
-        process_t *at_proc = load_elf_from_vfs("/agenttest.elf");
+        process_t *at_proc = load_and_run_elf("/agenttest.elf");
         if (at_proc) {
             serial_printf("[test] agenttest.elf spawned (pid %lu)\n",
                           at_proc->pid);
@@ -969,7 +991,7 @@ void kmain(void) {
     /* Load and run agentrt.elf (semantic memory + agent runtime) */
     serial_puts("\n[test] Loading agentrt.elf...\n");
     {
-        process_t *ar_proc = load_elf_from_vfs("/agentrt.elf");
+        process_t *ar_proc = load_and_run_elf("/agentrt.elf");
         if (ar_proc) {
             serial_printf("[test] agentrt.elf spawned (pid %lu)\n",
                           ar_proc->pid);
@@ -990,7 +1012,7 @@ void kmain(void) {
     /* Load and run infertest.elf (transformer inference runtime) */
     serial_puts("\n[test] Loading infertest.elf...\n");
     {
-        process_t *inf_proc = load_elf_from_vfs("/infertest.elf");
+        process_t *inf_proc = load_and_run_elf("/infertest.elf");
         if (inf_proc) {
             serial_printf("[test] infertest.elf spawned (pid %lu)\n",
                           inf_proc->pid);
@@ -1011,7 +1033,7 @@ void kmain(void) {
     /* Load and run pipetest.elf (automated IPC tests) */
     serial_puts("\n[test] Loading pipetest.elf...\n");
     {
-        process_t *pt_proc = load_elf_from_vfs("/pipetest.elf");
+        process_t *pt_proc = load_and_run_elf("/pipetest.elf");
         if (pt_proc) {
             serial_printf("[test] pipetest.elf spawned (pid %lu)\n",
                           pt_proc->pid);
@@ -1032,7 +1054,7 @@ void kmain(void) {
     /* Load and run generate.elf (automated self-test via --test arg) */
     serial_puts("\n[test] Loading generate.elf...\n");
     {
-        process_t *gen_proc = load_elf_from_vfs("/generate.elf");
+        process_t *gen_proc = load_and_run_elf("/generate.elf");
         if (gen_proc) {
             set_process_args(gen_proc, "generate.elf", "--test");
             serial_printf("[test] generate.elf spawned (pid %lu)\n",
@@ -1054,7 +1076,7 @@ void kmain(void) {
     /* Load and run toolagent.elf (self-test via --test arg) */
     serial_puts("\n[test] Loading toolagent.elf...\n");
     {
-        process_t *ta_proc = load_elf_from_vfs("/toolagent.elf");
+        process_t *ta_proc = load_and_run_elf("/toolagent.elf");
         if (ta_proc) {
             set_process_args(ta_proc, "toolagent.elf", "--test");
             serial_printf("[test] toolagent.elf spawned (pid %lu)\n",
@@ -1076,7 +1098,7 @@ void kmain(void) {
     /* Load and run memtest.elf (persistent vecstore save/load test) */
     serial_puts("\n[test] Loading memtest.elf...\n");
     {
-        process_t *mem_proc = load_elf_from_vfs("/memtest.elf");
+        process_t *mem_proc = load_and_run_elf("/memtest.elf");
         if (mem_proc) {
             serial_printf("[test] memtest.elf spawned (pid %lu)\n",
                           mem_proc->pid);
@@ -1097,7 +1119,7 @@ void kmain(void) {
     /* Load and run ragtest.elf (RAG end-to-end test) */
     serial_puts("\n[test] Loading ragtest.elf...\n");
     {
-        process_t *rag_proc = load_elf_from_vfs("/ragtest.elf");
+        process_t *rag_proc = load_and_run_elf("/ragtest.elf");
         if (rag_proc) {
             serial_printf("[test] ragtest.elf spawned (pid %lu)\n",
                           rag_proc->pid);
@@ -1127,7 +1149,7 @@ void kmain(void) {
     /* Load and run fstest.elf (filesystem tests) */
     serial_puts("\n[test] Loading fstest.elf...\n");
     {
-        process_t *fs_proc = load_elf_from_vfs("/fstest.elf");
+        process_t *fs_proc = load_and_run_elf("/fstest.elf");
         if (fs_proc) {
             serial_printf("[test] fstest.elf spawned (pid %lu)\n",
                           fs_proc->pid);
@@ -1148,7 +1170,7 @@ void kmain(void) {
     /* Load and run fstest2.elf (filesystem completion tests) */
     serial_puts("\n[test] Loading fstest2.elf...\n");
     {
-        process_t *fs2_proc = load_elf_from_vfs("/fstest2.elf");
+        process_t *fs2_proc = load_and_run_elf("/fstest2.elf");
         if (fs2_proc) {
             serial_printf("[test] fstest2.elf spawned (pid %lu)\n",
                           fs2_proc->pid);
@@ -1169,7 +1191,7 @@ void kmain(void) {
     /* Load and run lmstest.elf (large model support tests) */
     serial_puts("\n[test] Loading lmstest.elf...\n");
     {
-        process_t *lms_proc = load_elf_from_vfs("/lmstest.elf");
+        process_t *lms_proc = load_and_run_elf("/lmstest.elf");
         if (lms_proc) {
             serial_printf("[test] lmstest.elf spawned (pid %lu)\n",
                           lms_proc->pid);
@@ -1190,7 +1212,7 @@ void kmain(void) {
     /* Load and run gguftest.elf (modern transformer architecture tests) */
     serial_puts("\n[test] Loading gguftest.elf...\n");
     {
-        process_t *gguf_proc = load_elf_from_vfs("/gguftest.elf");
+        process_t *gguf_proc = load_and_run_elf("/gguftest.elf");
         if (gguf_proc) {
             serial_printf("[test] gguftest.elf spawned (pid %lu)\n",
                           gguf_proc->pid);
@@ -1211,7 +1233,7 @@ void kmain(void) {
     /* Load and run gguf2test.elf (full GGUF support tests) */
     serial_puts("\n[test] Loading gguf2test.elf...\n");
     {
-        process_t *gguf2_proc = load_elf_from_vfs("/gguf2test.elf");
+        process_t *gguf2_proc = load_and_run_elf("/gguf2test.elf");
         if (gguf2_proc) {
             serial_printf("[test] gguf2test.elf spawned (pid %lu)\n",
                           gguf2_proc->pid);
@@ -1232,7 +1254,7 @@ void kmain(void) {
     /* Load and run agenttest2.elf (agent intelligence tests) */
     serial_puts("\n[test] Loading agenttest2.elf...\n");
     {
-        process_t *at2_proc = load_elf_from_vfs("/agenttest2.elf");
+        process_t *at2_proc = load_and_run_elf("/agenttest2.elf");
         if (at2_proc) {
             serial_printf("[test] agenttest2.elf spawned (pid %lu)\n",
                           at2_proc->pid);
@@ -1253,7 +1275,7 @@ void kmain(void) {
     /* Load and run ostest.elf (OS maturity tests) */
     serial_puts("\n[test] Loading ostest.elf...\n");
     {
-        process_t *os_proc = load_elf_from_vfs("/ostest.elf");
+        process_t *os_proc = load_and_run_elf("/ostest.elf");
         if (os_proc) {
             serial_printf("[test] ostest.elf spawned (pid %lu)\n",
                           os_proc->pid);
@@ -1274,7 +1296,7 @@ void kmain(void) {
     /* Load and run s25test.elf (framebuffer, fd inheritance, multi-agent tests) */
     serial_puts("\n[test] Loading s25test.elf...\n");
     {
-        process_t *s25_proc = load_elf_from_vfs("/s25test.elf");
+        process_t *s25_proc = load_and_run_elf("/s25test.elf");
         if (s25_proc) {
             serial_printf("[test] s25test.elf spawned (pid %lu)\n",
                           s25_proc->pid);
@@ -1288,7 +1310,7 @@ void kmain(void) {
     /* Load and run multiagent.elf (multi-agent self-test) */
     serial_puts("\n[test] Loading multiagent.elf...\n");
     {
-        process_t *ma_proc = load_elf_from_vfs("/multiagent.elf");
+        process_t *ma_proc = load_and_run_elf("/multiagent.elf");
         if (ma_proc) {
             serial_printf("[test] multiagent.elf spawned (pid %lu)\n",
                           ma_proc->pid);
@@ -1309,7 +1331,7 @@ void kmain(void) {
     /* Load and run s26test.elf (LimnFS disk filesystem tests) */
     serial_puts("\n[test] Loading s26test.elf...\n");
     {
-        process_t *s26_proc = load_elf_from_vfs("/s26test.elf");
+        process_t *s26_proc = load_and_run_elf("/s26test.elf");
         if (s26_proc) {
             serial_printf("[test] s26test.elf spawned (pid %lu)\n",
                           s26_proc->pid);
@@ -1330,7 +1352,7 @@ void kmain(void) {
     /* Load and run s27test.elf (large file / double indirect tests) */
     serial_puts("\n[test] Loading s27test.elf...\n");
     {
-        process_t *s27_proc = load_elf_from_vfs("/s27test.elf");
+        process_t *s27_proc = load_and_run_elf("/s27test.elf");
         if (s27_proc) {
             serial_printf("[test] s27test.elf spawned (pid %lu)\n",
                           s27_proc->pid);
@@ -1351,7 +1373,7 @@ void kmain(void) {
     /* Load and run s28test.elf (process args, fcntl, nonblock tests) */
     serial_puts("\n[test] Loading s28test.elf...\n");
     {
-        process_t *s28_proc = load_elf_from_vfs("/s28test.elf");
+        process_t *s28_proc = load_and_run_elf("/s28test.elf");
         if (s28_proc) {
             set_process_args(s28_proc, "s28test.elf", "--test");
             serial_printf("[test] s28test.elf spawned (pid %lu)\n",
@@ -1373,7 +1395,7 @@ void kmain(void) {
     /* Load and run s29test.elf (framebuffer, bcache LRU, triple indirect, cloexec/nonblock tests) */
     serial_puts("\n[test] Loading s29test.elf...\n");
     {
-        process_t *s29_proc = load_elf_from_vfs("/s29test.elf");
+        process_t *s29_proc = load_and_run_elf("/s29test.elf");
         if (s29_proc) {
             serial_printf("[test] s29test.elf spawned (pid %lu)\n",
                           s29_proc->pid);
@@ -1394,7 +1416,7 @@ void kmain(void) {
     /* Load and run s30test.elf */
     serial_puts("\n[test] Loading s30test.elf...\n");
     {
-        process_t *s30_proc = load_elf_from_vfs("/s30test.elf");
+        process_t *s30_proc = load_and_run_elf("/s30test.elf");
         if (s30_proc) {
             serial_printf("[test] s30test.elf spawned (pid %lu)\n",
                           s30_proc->pid);
@@ -1415,7 +1437,7 @@ void kmain(void) {
     /* Load and run s31test.elf (fork, COW, sigaction tests) */
     serial_puts("\n[test] Loading s31test.elf...\n");
     {
-        process_t *s31_proc = load_elf_from_vfs("/s31test.elf");
+        process_t *s31_proc = load_and_run_elf("/s31test.elf");
         if (s31_proc) {
             serial_printf("[test] s31test.elf spawned (pid %lu)\n",
                           s31_proc->pid);
@@ -1439,7 +1461,7 @@ void kmain(void) {
     /* Load and run s32test.elf (PTY + TCP tests) */
     serial_puts("\n[test] Loading s32test.elf...\n");
     {
-        process_t *s32_proc = load_elf_from_vfs("/s32test.elf");
+        process_t *s32_proc = load_and_run_elf("/s32test.elf");
         if (s32_proc) {
             serial_printf("[test] s32test.elf spawned (pid %lu)\n",
                           s32_proc->pid);
@@ -1472,7 +1494,7 @@ void kmain(void) {
     /* Load and run s33test.elf */
     serial_puts("\n[test] Loading s33test.elf...\n");
     {
-        process_t *s33_proc = load_elf_from_vfs("/s33test.elf");
+        process_t *s33_proc = load_and_run_elf("/s33test.elf");
         if (s33_proc) {
             serial_printf("[test] s33test.elf spawned (pid %lu)\n",
                           s33_proc->pid);
@@ -1508,7 +1530,7 @@ void kmain(void) {
         process_t *s34_proc = load_elf_from_vfs("/s34test.elf");
         if (s34_proc) {
             /* Set LIMNX_VERSION env var on test process */
-            const char *env_entry = "LIMNX_VERSION=38";
+            const char *env_entry = "LIMNX_VERSION=39";
             int elen = 0;
             while (env_entry[elen]) elen++;
             for (int i = 0; i <= elen; i++)
@@ -1516,6 +1538,7 @@ void kmain(void) {
             s34_proc->env_buf_len = elen + 1;
             s34_proc->env_count = 1;
 
+            sched_add(s34_proc->main_thread);
             serial_printf("[test] s34test.elf spawned (pid %lu)\n",
                           s34_proc->pid);
             process_reap(s34_proc);
@@ -1535,7 +1558,7 @@ void kmain(void) {
     /* Load and run s35test.elf */
     serial_puts("\n[test] Loading s35test.elf...\n");
     {
-        process_t *s35_proc = load_elf_from_vfs("/s35test.elf");
+        process_t *s35_proc = load_and_run_elf("/s35test.elf");
         if (s35_proc) {
             serial_printf("[test] s35test.elf spawned (pid %lu)\n",
                           s35_proc->pid);
@@ -1556,7 +1579,7 @@ void kmain(void) {
     /* Load and run s36test.elf */
     serial_puts("\n[test] Loading s36test.elf...\n");
     {
-        process_t *s36_proc = load_elf_from_vfs("/s36test.elf");
+        process_t *s36_proc = load_and_run_elf("/s36test.elf");
         if (s36_proc) {
             serial_printf("[test] s36test.elf spawned (pid %lu)\n",
                           s36_proc->pid);
@@ -1577,7 +1600,7 @@ void kmain(void) {
     /* Load and run s37test.elf */
     serial_puts("\n[test] Loading s37test.elf...\n");
     {
-        process_t *s37_proc = load_elf_from_vfs("/s37test.elf");
+        process_t *s37_proc = load_and_run_elf("/s37test.elf");
         if (s37_proc) {
             serial_printf("[test] s37test.elf spawned (pid %lu)\n",
                           s37_proc->pid);
@@ -1598,7 +1621,7 @@ void kmain(void) {
     /* Load and run s38test.elf */
     serial_puts("\n[test] Loading s38test.elf...\n");
     {
-        process_t *s38_proc = load_elf_from_vfs("/s38test.elf");
+        process_t *s38_proc = load_and_run_elf("/s38test.elf");
         if (s38_proc) {
             serial_printf("[test] s38test.elf spawned (pid %lu)\n",
                           s38_proc->pid);
@@ -1612,6 +1635,33 @@ void kmain(void) {
     serial_puts("\n========================================\n");
     serial_puts("  Stage 38 init complete\n");
     serial_puts("========================================\n");
+
+    /* ======== Stage 39 init ======== */
+    serial_puts("\n--- Stage 39 init ---\n");
+
+    /* Load and run s39test.elf */
+    serial_puts("\n[test] Loading s39test.elf...\n");
+    {
+        process_t *s39_proc = load_and_run_elf("/s39test.elf");
+        if (s39_proc) {
+            serial_printf("[test] s39test.elf spawned (pid %lu)\n",
+                          s39_proc->pid);
+            process_reap(s39_proc);
+            serial_puts("[test] s39test.elf completed\n");
+        } else {
+            serial_puts("[test] s39test.elf not found or failed to load\n");
+        }
+    }
+
+    serial_puts("\n========================================\n");
+    serial_puts("  Stage 39 init complete\n");
+    serial_puts("========================================\n");
+
+    /* Start bcache flusher kernel thread (periodic write-back).
+     * Launched after all boot-time disk syncing is complete to
+     * avoid data races with the non-locked bcache. */
+    if (blk_ok)
+        bcache_start_flusher();
 
     /* Enable framebuffer console for interactive use */
     fbcon_set_serial(1);
@@ -1654,7 +1704,7 @@ void kmain(void) {
             }
             /* Set LIMNX_VERSION env on shell */
             {
-                const char *env_entry = "LIMNX_VERSION=38";
+                const char *env_entry = "LIMNX_VERSION=39";
                 int elen = 0;
                 while (env_entry[elen]) elen++;
                 for (int i = 0; i <= elen; i++)
@@ -1664,6 +1714,8 @@ void kmain(void) {
             }
             serial_printf("[test] shell.elf spawned (pid %lu)\n",
                           sh_proc->pid);
+            /* Schedule shell AFTER fd/env setup is complete */
+            sched_add(sh_proc->main_thread);
             process_reap(sh_proc);
             serial_puts("[test] shell.elf completed\n");
         } else {
@@ -1672,7 +1724,7 @@ void kmain(void) {
     }
 
     serial_puts("\n========================================\n");
-    serial_puts("  All stages (2-38) complete — idling\n");
+    serial_puts("  All stages (2-39) complete — idling\n");
     serial_puts("========================================\n");
 
     /* Keep scheduler running so udpecho can process packets */

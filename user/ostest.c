@@ -203,22 +203,25 @@ static void test_perm_read(void) {
 static void test_perm_stat_mode(void) {
     const char *name = "permission stat mode";
 
-    /* Stat structure with mode field */
+    /* Stat structure must match kernel vfs_stat_t layout */
     typedef struct {
         uint64_t size;
         uint8_t  type;
-        uint8_t  mode;
-        uint8_t  pad[6];
+        uint8_t  pad1;
+        uint16_t mode;
+        uint16_t uid;
+        uint16_t gid;
     } stat_t;
 
     stat_t st;
     long ret = sys_stat("/hello.txt", &st);
     if (ret != 0) { fail(name, "stat failed"); return; }
 
-    /* Initrd file should have READ | EXEC = 0x05 */
-    if (st.mode == 0x05) pass(name);
+    /* hello.txt has TAR mode 0644 (rw-r--r--) = 0x1A4 */
+    uint16_t m = st.mode;
+    if (m == 0644) pass(name);
     else {
-        printf("  [FAIL] %s — expected mode 0x05, got 0x%x\n", name, st.mode);
+        printf("  [FAIL] %s — expected mode 0644, got 0%o\n", name, m);
         tests_total++;
     }
 }

@@ -66,8 +66,16 @@ int tar_init(const void *archive, uint64_t size) {
             serial_printf("[tar] Found file: %s (%lu bytes)\n",
                           basename, file_size);
             /* Register under root (node 0) with basename only */
-            vfs_register_node(0, basename, VFS_FILE, file_size,
+            int idx = vfs_register_node(0, basename, VFS_FILE, file_size,
                               (uint8_t *)data);
+            /* Apply file mode from TAR header (octal, lower 9 bits) */
+            if (idx >= 0) {
+                uint64_t tar_mode = oct_to_u64(hdr->mode, 8);
+                uint16_t unix_mode = (uint16_t)(tar_mode & 0x1FF);
+                if (unix_mode == 0) unix_mode = 0755;  /* fallback */
+                vfs_node_t *n = vfs_get_node(idx);
+                if (n) n->mode = unix_mode;
+            }
             file_count++;
         }
 

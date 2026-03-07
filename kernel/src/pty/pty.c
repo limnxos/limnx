@@ -116,6 +116,10 @@ int64_t pty_master_write(int idx, const uint8_t *buf, uint32_t len) {
             }
         }
 
+        /* CR → LF translation (serial terminals send \r on Enter) */
+        if (ch == '\r')
+            ch = '\n';
+
         /* Backspace handling in canonical mode */
         if ((p->flags & PTY_ICANON) && (ch == 0x7F || ch == 0x08)) {
             if (p->m2s_count > 0) {
@@ -203,12 +207,9 @@ int64_t pty_slave_read(int idx, uint8_t *buf, uint32_t len, int nonblock) {
             return 0;
         }
 
-        /* Wait for newline, EOF, or master close */
-        int timeout = 50000;
+        /* Wait for newline, EOF, or master close (block indefinitely) */
         while (!m2s_has_newline(p) && !p->master_closed && !p->eof_flag) {
             if (nonblock)
-                return 0;
-            if (--timeout <= 0)
                 return 0;
             sched_yield();
         }
@@ -231,12 +232,9 @@ int64_t pty_slave_read(int idx, uint8_t *buf, uint32_t len, int nonblock) {
         return (int64_t)total;
     }
 
-    /* Raw mode: read whatever is available */
-    int timeout = 50000;
+    /* Raw mode: read whatever is available (block indefinitely) */
     while (p->m2s_count == 0 && !p->master_closed) {
         if (nonblock)
-            return 0;
-        if (--timeout <= 0)
             return 0;
         sched_yield();
     }
