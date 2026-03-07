@@ -51,7 +51,7 @@ make run               # boot in QEMU with virtio-net + virtio-blk
 ```
  User Space (Ring 3)
  ┌──────────────────────────────────────────────────┐
- │  shell    toolagent    inferd    agent programs   │
+ │  shell   toolagent    inferd    agent programs   │
  │                                                  │
  │  libc (syscalls, printf, math, HTTP, tokenizer)  │
  ├──────────────────────────────────────────────────┤
@@ -62,9 +62,9 @@ make run               # boot in QEMU with virtio-net + virtio-blk
  │  Process     Scheduler    Memory     Filesystem  │
  │  fork/exec   SMP/steal    COW/swap   LimnFS/VFS  │
  │                                                  │
- │  Networking   IPC          Security   Device      │
- │  TCP/IP/UDP   unix/epoll   caps/sec   virtio      │
- │               uring/evfd   seccomp    PCI/LAPIC   │
+ │  Networking  IPC          Security   Device      │
+ │  TCP/IP/UDP  unix/epoll   caps/sec   virtio      │
+ │              uring/evfd   seccomp    PCI/LAPIC   │
  └──────────────────────────────────────────────────┘
         Limine Bootloader (BIOS / UEFI)
 ```

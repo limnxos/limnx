@@ -1530,7 +1530,7 @@ void kmain(void) {
         process_t *s34_proc = load_elf_from_vfs("/s34test.elf");
         if (s34_proc) {
             /* Set LIMNX_VERSION env var on test process */
-            const char *env_entry = "LIMNX_VERSION=39";
+            const char *env_entry = "LIMNX_VERSION=41";
             int elen = 0;
             while (env_entry[elen]) elen++;
             for (int i = 0; i <= elen; i++)
@@ -1657,6 +1657,27 @@ void kmain(void) {
     serial_puts("  Stage 39 init complete\n");
     serial_puts("========================================\n");
 
+    /* ======== Stage 41 init ======== */
+    serial_puts("\n--- Stage 41 init ---\n");
+
+    /* Load and run s41test.elf */
+    serial_puts("\n[test] Loading s41test.elf...\n");
+    {
+        process_t *s41_proc = load_and_run_elf("/s41test.elf");
+        if (s41_proc) {
+            serial_printf("[test] s41test.elf spawned (pid %lu)\n",
+                          s41_proc->pid);
+            process_reap(s41_proc);
+            serial_puts("[test] s41test.elf completed\n");
+        } else {
+            serial_puts("[test] s41test.elf not found or failed to load\n");
+        }
+    }
+
+    serial_puts("\n========================================\n");
+    serial_puts("  Stage 41 init complete\n");
+    serial_puts("========================================\n");
+
     /* Start bcache flusher kernel thread (periodic write-back).
      * Launched after all boot-time disk syncing is complete to
      * avoid data races with the non-locked bcache. */
@@ -1704,7 +1725,7 @@ void kmain(void) {
             }
             /* Set LIMNX_VERSION env on shell */
             {
-                const char *env_entry = "LIMNX_VERSION=39";
+                const char *env_entry = "LIMNX_VERSION=41";
                 int elen = 0;
                 while (env_entry[elen]) elen++;
                 for (int i = 0; i <= elen; i++)

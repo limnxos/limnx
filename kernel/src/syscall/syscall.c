@@ -17,6 +17,8 @@
 #include "ipc/epoll.h"
 #include "ipc/infer_svc.h"
 #include "ipc/uring.h"
+#include "ipc/cap_token.h"
+#include "ipc/agent_ns.h"
 #include "mm/swap.h"
 #include "smp/percpu.h"
 #include "serial.h"
@@ -263,6 +265,10 @@ static int64_t sys_exit(uint64_t status, uint64_t a2,
         }
         /* Unregister agent entries for dying process */
         agent_unregister_pid(t->process->pid);
+        /* Cleanup capability tokens owned by or targeting this process */
+        cap_token_cleanup_pid(t->process->pid);
+        /* Cleanup agent namespaces owned by this process */
+        agent_ns_cleanup_pid(t->process->pid);
         /* Unregister inference services for dying process */
         infer_unregister_pid(t->process->pid);
         /* Detach shared memory regions */
@@ -317,14 +323,16 @@ static int64_t sys_open(uint64_t path_ptr, uint64_t flags,
     if (node_idx < 0)
         return -1;
 
-    /* Capability checks */
+    /* Capability checks (with token fallback) */
     {
         uint8_t acc = (uint8_t)(flags & O_ACCMODE);
         if ((acc == O_RDONLY || acc == O_RDWR) &&
-            !(proc->capabilities & CAP_FS_READ))
+            !(proc->capabilities & CAP_FS_READ) &&
+            !cap_token_check(proc->pid, CAP_FS_READ, path))
             return -EACCES;
         if ((acc == O_WRONLY || acc == O_RDWR) &&
-            !(proc->capabilities & CAP_FS_WRITE))
+            !(proc->capabilities & CAP_FS_WRITE) &&
+            !cap_token_check(proc->pid, CAP_FS_WRITE, path))
             return -EACCES;
     }
 
@@ -610,8 +618,9 @@ static int64_t sys_exec(uint64_t path_ptr, uint64_t argv_ptr,
     if (!proc) return -1;
     resolve_user_path(proc, raw_path, path);
 
-    /* Check CAP_EXEC */
-    if (!(proc->capabilities & CAP_EXEC))
+    /* Check CAP_EXEC (with token fallback) */
+    if (!(proc->capabilities & CAP_EXEC) &&
+        !cap_token_check(proc->pid, CAP_EXEC, path))
         return -EACCES;
 
     /* Open the file in VFS */
@@ -874,8 +883,9 @@ static int64_t sys_create(uint64_t path_ptr, uint64_t a2,
     if (!proc) return -1;
     resolve_user_path(proc, raw_path, path);
 
-    /* Check CAP_FS_WRITE */
-    if (!(proc->capabilities & CAP_FS_WRITE))
+    /* Check CAP_FS_WRITE (with token fallback) */
+    if (!(proc->capabilities & CAP_FS_WRITE) &&
+        !cap_token_check(proc->pid, CAP_FS_WRITE, path))
         return -EACCES;
 
     /* fd limit check */
@@ -2962,19 +2972,23 @@ static int64_t sys_agent_register(uint64_t name_ptr, uint64_t a2,
     if (copy_string_from_user((const char *)name_ptr, name, AGENT_NAME_MAX) != 0)
         return -EFAULT;
 
-    return agent_register(name, proc->pid);
+    return agent_register_ns(name, proc->pid, proc->ns_id);
 }
 
 static int64_t sys_agent_lookup(uint64_t name_ptr, uint64_t pid_out_ptr,
                                   uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a3; (void)a4; (void)a5;
 
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
     char name[AGENT_NAME_MAX];
     if (copy_string_from_user((const char *)name_ptr, name, AGENT_NAME_MAX) != 0)
         return -EFAULT;
 
     uint64_t pid = 0;
-    int ret = agent_lookup(name, &pid);
+    int ret = agent_lookup_ns(name, &pid, proc->ns_id);
     if (ret != 0) return -1;
 
     if (pid_out_ptr != 0) {
@@ -3510,6 +3524,88 @@ static int64_t sys_mmap2(uint64_t num_pages, uint64_t mmap_flags,
     return (int64_t)virt;
 }
 
+/* --- Capability tokens --- */
+
+static int64_t sys_token_create(uint64_t perms, uint64_t target_pid,
+                                uint64_t resource_ptr, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    char resource[TOKEN_PATH_MAX];
+    resource[0] = '\0';
+    if (resource_ptr != 0) {
+        if (copy_string_from_user((const char *)resource_ptr, resource, TOKEN_PATH_MAX) != 0)
+            return -EFAULT;
+    }
+
+    return cap_token_create(proc->pid, proc->capabilities,
+                            (uint32_t)perms, target_pid, resource);
+}
+
+static int64_t sys_token_revoke(uint64_t token_id, uint64_t a2,
+                                uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    return cap_token_revoke((uint32_t)token_id, proc->pid);
+}
+
+static int64_t sys_token_list(uint64_t buf_ptr, uint64_t max_count,
+                              uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    if (max_count == 0 || buf_ptr == 0) return 0;
+    if (max_count > 32) max_count = 32;
+
+    if (validate_user_ptr(buf_ptr, max_count * sizeof(token_info_t)) != 0)
+        return -EFAULT;
+
+    return cap_token_list(proc->pid, (token_info_t *)buf_ptr, (int)max_count);
+}
+
+/* --- Agent namespaces --- */
+
+static int64_t sys_ns_create(uint64_t name_ptr, uint64_t a2,
+                             uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    /* Only root or CAP_SYS_ADMIN can create namespaces */
+    if (proc->uid != 0 && !(proc->capabilities & CAP_SYS_ADMIN))
+        return -EPERM;
+
+    char name[NS_NAME_MAX];
+    name[0] = '\0';
+    if (name_ptr != 0) {
+        if (copy_string_from_user((const char *)name_ptr, name, NS_NAME_MAX) != 0)
+            return -EFAULT;
+    }
+
+    return agent_ns_create(name, proc->pid);
+}
+
+static int64_t sys_ns_join(uint64_t ns_id, uint64_t a2,
+                           uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    int ret = agent_ns_join((uint32_t)ns_id, proc->pid, proc->uid);
+    if (ret == 0)
+        proc->ns_id = (uint32_t)ns_id;
+    return ret;
+}
+
 /* Syscall dispatch table */
 typedef int64_t (*syscall_fn_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
@@ -3598,6 +3694,11 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_URING_SETUP]    = sys_uring_setup,
     [SYS_URING_ENTER]    = sys_uring_enter,
     [SYS_MMAP2]          = sys_mmap2,
+    [SYS_TOKEN_CREATE]   = sys_token_create,
+    [SYS_TOKEN_REVOKE]   = sys_token_revoke,
+    [SYS_TOKEN_LIST]     = sys_token_list,
+    [SYS_NS_CREATE]      = sys_ns_create,
+    [SYS_NS_JOIN]        = sys_ns_join,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).

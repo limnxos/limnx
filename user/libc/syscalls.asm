@@ -616,3 +616,39 @@ sys_mmap2:
     mov rax, 83         ; SYS_MMAP2
     syscall
     ret
+
+; --- sys_token_create(perms, target_pid, resource) ---
+global sys_token_create
+sys_token_create:
+    mov rax, 84         ; SYS_TOKEN_CREATE
+    mov r10, rcx
+    syscall
+    ret
+
+; --- sys_token_revoke(token_id) ---
+global sys_token_revoke
+sys_token_revoke:
+    mov rax, 85         ; SYS_TOKEN_REVOKE
+    syscall
+    ret
+
+; --- sys_token_list(buf, max_count) ---
+global sys_token_list
+sys_token_list:
+    mov rax, 86         ; SYS_TOKEN_LIST
+    syscall
+    ret
+
+; --- sys_ns_create(name) ---
+global sys_ns_create
+sys_ns_create:
+    mov rax, 87         ; SYS_NS_CREATE
+    syscall
+    ret
+
+; --- sys_ns_join(ns_id) ---
+global sys_ns_join
+sys_ns_join:
+    mov rax, 88         ; SYS_NS_JOIN
+    syscall
+    ret

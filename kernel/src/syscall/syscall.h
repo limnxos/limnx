@@ -88,7 +88,12 @@
 #define SYS_URING_SETUP    81
 #define SYS_URING_ENTER    82
 #define SYS_MMAP2          83
-#define SYS_NR             84
+#define SYS_TOKEN_CREATE   84
+#define SYS_TOKEN_REVOKE   85
+#define SYS_TOKEN_LIST     86
+#define SYS_NS_CREATE      87
+#define SYS_NS_JOIN        88
+#define SYS_NR             89
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

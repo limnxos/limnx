@@ -537,6 +537,11 @@ long sys_infer_request(const char *name, const void *req_buf, long req_len,
 long sys_uring_setup(long entries, void *params);
 long sys_uring_enter(long uring_fd, void *sqe_ptr, long count, void *cqe_ptr);
 long sys_mmap2(long num_pages, long flags);
+long sys_token_create(long perms, long target_pid, const char *resource);
+long sys_token_revoke(long token_id);
+long sys_token_list(void *buf, long max_count);
+long sys_ns_create(const char *name);
+long sys_ns_join(long ns_id);
 
 /* --- HTTP types and functions --- */
 
