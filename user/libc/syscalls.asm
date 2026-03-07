@@ -652,3 +652,17 @@ sys_ns_join:
     mov rax, 88         ; SYS_NS_JOIN
     syscall
     ret
+
+; --- sys_procinfo(index, info_ptr) ---
+global sys_procinfo
+sys_procinfo:
+    mov rax, 89         ; SYS_PROCINFO
+    syscall
+    ret
+
+; --- sys_fsstat(stat_ptr) ---
+global sys_fsstat
+sys_fsstat:
+    mov rax, 90         ; SYS_FSSTAT
+    syscall
+    ret

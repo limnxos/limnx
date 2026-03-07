@@ -93,7 +93,9 @@
 #define SYS_TOKEN_LIST     86
 #define SYS_NS_CREATE      87
 #define SYS_NS_JOIN        88
-#define SYS_NR             89
+#define SYS_PROCINFO       89
+#define SYS_FSSTAT         90
+#define SYS_NR             91
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

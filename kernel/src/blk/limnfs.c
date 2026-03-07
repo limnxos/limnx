@@ -424,6 +424,16 @@ int limnfs_mounted(void) {
     return lfs.mounted;
 }
 
+int limnfs_get_stats(uint32_t *total, uint32_t *free_blk,
+                      uint32_t *total_ino, uint32_t *free_ino) {
+    if (!lfs.mounted) return -1;
+    *total = lfs.super.total_blocks;
+    *free_blk = lfs.super.free_blocks;
+    *total_ino = lfs.super.total_inodes;
+    *free_ino = lfs.super.free_inodes;
+    return 0;
+}
+
 /* --- Inode operations --- */
 
 int limnfs_read_inode(uint32_t ino, limnfs_inode_t *out) {

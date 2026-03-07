@@ -427,7 +427,8 @@ static int is_builtin(const char *cmd) {
            strcmp(cmd, "history") == 0 || strcmp(cmd, "rm") == 0 ||
            strcmp(cmd, "touch") == 0 || strcmp(cmd, "stat") == 0 ||
            strcmp(cmd, "kill") == 0 || strcmp(cmd, "jobs") == 0 ||
-           strcmp(cmd, "write") == 0;
+           strcmp(cmd, "write") == 0 || strcmp(cmd, "ps") == 0 ||
+           strcmp(cmd, "df") == 0 || strcmp(cmd, "mount") == 0;
 }
 
 static void cmd_help(void) {
@@ -446,6 +447,9 @@ static void cmd_help(void) {
     printf("  stat <path>          Show file info\n");
     printf("  env                  Show environment\n");
     printf("  export VAR=value     Set environment variable\n");
+    printf("  ps                   List running processes\n");
+    printf("  df                   Show disk usage\n");
+    printf("  mount                Show mounted filesystems\n");
     printf("  kill <pid> [sig]     Send signal to process\n");
     printf("  pid                  Show shell PID\n");
     printf("  history              Show command history\n");
@@ -576,6 +580,43 @@ static void cmd_jobs(void) {
     if (!any) printf("No background jobs.\n");
 }
 
+static void cmd_ps(void) {
+    printf("  PID  PPID  UID  STATE  NAME\n");
+    proc_info_t info;
+    for (long i = 0; sys_procinfo(i, &info) == 0; i++) {
+        const char *state = info.state == 1 ? "stopped" : "running";
+        printf("%5ld %5ld %4u  %-7s  %s\n",
+               info.pid, info.parent_pid, info.uid, state, info.name);
+    }
+}
+
+static void cmd_df(void) {
+    fs_stat_t st;
+    if (sys_fsstat(&st) < 0 || !st.mounted) {
+        printf("No filesystem mounted.\n");
+        return;
+    }
+    unsigned int used = st.total_blocks - st.free_blocks;
+    unsigned int total_kb = (st.total_blocks * (st.block_size / 1024));
+    unsigned int used_kb = (used * (st.block_size / 1024));
+    unsigned int free_kb = (st.free_blocks * (st.block_size / 1024));
+    unsigned int pct = st.total_blocks ? (used * 100 / st.total_blocks) : 0;
+    printf("Filesystem      Size    Used    Free    Use%%  Mounted on\n");
+    printf("LimnFS      %5uKB %5uKB %5uKB    %3u%%  /\n",
+           total_kb, used_kb, free_kb, pct);
+    printf("Inodes: %u/%u used\n",
+           st.total_inodes - st.free_inodes, st.total_inodes);
+}
+
+static void cmd_mount(void) {
+    fs_stat_t st;
+    if (sys_fsstat(&st) < 0 || !st.mounted) {
+        printf("No filesystem mounted.\n");
+        return;
+    }
+    printf("LimnFS on / (rw, %uKB blocks)\n", st.block_size / 1024);
+}
+
 /* --- Execute a builtin command, returns 1 if handled, 0 if not builtin.
  *     Sets *should_exit = 1 if the shell should exit. */
 static int run_builtin(command_t *cmd, int *should_exit) {
@@ -677,6 +718,12 @@ static int run_builtin(command_t *cmd, int *should_exit) {
         }
     } else if (strcmp(name, "jobs") == 0) {
         cmd_jobs();
+    } else if (strcmp(name, "ps") == 0) {
+        cmd_ps();
+    } else if (strcmp(name, "df") == 0) {
+        cmd_df();
+    } else if (strcmp(name, "mount") == 0) {
+        cmd_mount();
     } else if (strcmp(name, "exit") == 0) {
         printf("Goodbye.\n");
         *should_exit = 1;

@@ -354,6 +354,18 @@ static process_t *load_elf_from_vfs(const char *path) {
 
     process_t *proc = process_create_from_elf(buf, st.size);
     kfree(buf);
+    if (proc) {
+        /* Set process name from path */
+        const char *base = path;
+        for (const char *p = path; *p; p++)
+            if (*p == '/') base = p + 1;
+        int ni = 0;
+        while (base[ni] && ni < 31) { proc->name[ni] = base[ni]; ni++; }
+        proc->name[ni] = '\0';
+        if (ni > 4 && proc->name[ni-4] == '.' && proc->name[ni-3] == 'e' &&
+            proc->name[ni-2] == 'l' && proc->name[ni-1] == 'f')
+            proc->name[ni-4] = '\0';
+    }
     return proc;
 }
 
@@ -1530,7 +1542,7 @@ void kmain(void) {
         process_t *s34_proc = load_elf_from_vfs("/s34test.elf");
         if (s34_proc) {
             /* Set LIMNX_VERSION env var on test process */
-            const char *env_entry = "LIMNX_VERSION=42";
+            const char *env_entry = "LIMNX_VERSION=0.43";
             int elen = 0;
             while (env_entry[elen]) elen++;
             for (int i = 0; i <= elen; i++)
@@ -1746,7 +1758,7 @@ void kmain(void) {
             }
             /* Set LIMNX_VERSION env on shell */
             {
-                const char *env_entry = "LIMNX_VERSION=42";
+                const char *env_entry = "LIMNX_VERSION=0.43";
                 int elen = 0;
                 while (env_entry[elen]) elen++;
                 for (int i = 0; i <= elen; i++)

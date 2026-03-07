@@ -27,6 +27,11 @@ process_t *process_lookup(uint64_t pid) {
     return NULL;
 }
 
+process_t *proc_table_get(int idx) {
+    if (idx < 0 || idx >= MAX_PROCS) return NULL;
+    return proc_table[idx];
+}
+
 void process_unregister(uint64_t pid) {
     for (int i = 0; i < MAX_PROCS; i++) {
         if (proc_table[i] && proc_table[i]->pid == pid) {
@@ -517,6 +522,7 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     child->pending_signals = 0;
     child->signal_frame_addr = 0;
     child->fork_ctx = *ctx;  /* per-child saved user context */
+    for (int i = 0; i < 32; i++) child->name[i] = parent->name[i];
 
     /* Clone address space with COW */
     child->cr3 = vmm_clone_cow(parent->cr3);

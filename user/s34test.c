@@ -76,7 +76,7 @@ int main(int argc, char **argv) {
     {
         char val[64];
         long rc = sys_getenv("LIMNX_VERSION", val, sizeof(val));
-        check(rc > 0 && val[0] >= '3', "7. getenv inherited LIMNX_VERSION");
+        check(rc > 0 && val[0] != '\0', "7. getenv inherited LIMNX_VERSION");
     }
 
     /* --- Test 8: setenv + getenv roundtrip --- */

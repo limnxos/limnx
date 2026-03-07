@@ -20,6 +20,7 @@
 #include "ipc/cap_token.h"
 #include "ipc/agent_ns.h"
 #include "mm/swap.h"
+#include "blk/limnfs.h"
 #include "smp/percpu.h"
 #include "serial.h"
 
@@ -698,6 +699,20 @@ static int64_t sys_exec(uint64_t path_ptr, uint64_t argv_ptr,
 
     if (!child)
         return -1;
+
+    /* Set process name from path (strip directory and .elf extension) */
+    {
+        const char *base = path;
+        for (const char *p = path; *p; p++)
+            if (*p == '/') base = p + 1;
+        int ni = 0;
+        while (base[ni] && ni < 31) { child->name[ni] = base[ni]; ni++; }
+        child->name[ni] = '\0';
+        /* Strip .elf suffix */
+        if (ni > 4 && child->name[ni-4] == '.' && child->name[ni-3] == 'e' &&
+            child->name[ni-2] == 'l' && child->name[ni-1] == 'f')
+            child->name[ni-4] = '\0';
+    }
 
     /* Set argv on child */
     child->argc = argc;
@@ -3617,6 +3632,65 @@ static int64_t sys_ns_join(uint64_t ns_id, uint64_t a2,
     return ret;
 }
 
+/* --- SYS_PROCINFO: enumerate active processes --- */
+/* User-space struct layout: pid(8), parent_pid(8), state(4), uid(2), gid(2), name(32) = 56 bytes */
+static int64_t sys_procinfo(uint64_t index, uint64_t buf_ptr,
+                             uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    if (validate_user_ptr(buf_ptr, 56) != 0) return -1;
+
+    /* Find the index-th active process */
+    extern process_t *proc_table_get(int idx);
+    int count = 0;
+    for (int i = 0; i < MAX_PROCS; i++) {
+        process_t *p = proc_table_get(i);
+        if (!p || p->exited) continue;
+        if (count == (int)index) {
+            uint8_t *out = (uint8_t *)buf_ptr;
+            *(uint64_t *)(out + 0)  = p->pid;
+            *(uint64_t *)(out + 8)  = p->parent_pid;
+            /* state: 0=running, 1=stopped */
+            uint32_t state = 0;
+            if (p->main_thread && p->main_thread->state == THREAD_STOPPED)
+                state = 1;
+            *(uint32_t *)(out + 16) = state;
+            *(uint16_t *)(out + 20) = p->uid;
+            *(uint16_t *)(out + 22) = p->gid;
+            for (int j = 0; j < 32; j++)
+                out[24 + j] = (uint8_t)p->name[j];
+            return 0;
+        }
+        count++;
+    }
+    return -1;  /* no more processes */
+}
+
+/* --- SYS_FSSTAT: filesystem statistics --- */
+/* User-space struct layout: total_blocks(4), free_blocks(4), total_inodes(4),
+ *                           free_inodes(4), block_size(4), mounted(4) = 24 bytes */
+static int64_t sys_fsstat(uint64_t buf_ptr, uint64_t a2,
+                           uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    if (validate_user_ptr(buf_ptr, 24) != 0) return -1;
+
+    uint32_t *out = (uint32_t *)buf_ptr;
+    if (limnfs_mounted()) {
+        extern int limnfs_get_stats(uint32_t *total, uint32_t *free_blk,
+                                     uint32_t *total_ino, uint32_t *free_ino);
+        uint32_t tb, fb, ti, fi;
+        limnfs_get_stats(&tb, &fb, &ti, &fi);
+        out[0] = tb;
+        out[1] = fb;
+        out[2] = ti;
+        out[3] = fi;
+        out[4] = 4096;  /* LIMNFS_BLOCK_SIZE */
+        out[5] = 1;     /* mounted */
+    } else {
+        for (int i = 0; i < 6; i++) out[i] = 0;
+    }
+    return 0;
+}
+
 /* Syscall dispatch table */
 typedef int64_t (*syscall_fn_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
@@ -3710,6 +3784,8 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_TOKEN_LIST]     = sys_token_list,
     [SYS_NS_CREATE]      = sys_ns_create,
     [SYS_NS_JOIN]        = sys_ns_join,
+    [SYS_PROCINFO]       = sys_procinfo,
+    [SYS_FSSTAT]         = sys_fsstat,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).

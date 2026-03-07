@@ -563,6 +563,30 @@ long sys_token_list(void *buf, long max_count);
 long sys_ns_create(const char *name);
 long sys_ns_join(long ns_id);
 
+/* Process info (matches kernel layout: 56 bytes) */
+typedef struct proc_info {
+    long     pid;
+    long     parent_pid;
+    int      state;       /* 0=running, 1=stopped */
+    unsigned short uid;
+    unsigned short gid;
+    char     name[32];
+} proc_info_t;
+
+long sys_procinfo(long index, proc_info_t *info);
+
+/* Filesystem stats (matches kernel layout: 24 bytes) */
+typedef struct fs_stat {
+    unsigned int total_blocks;
+    unsigned int free_blocks;
+    unsigned int total_inodes;
+    unsigned int free_inodes;
+    unsigned int block_size;
+    unsigned int mounted;
+} fs_stat_t;
+
+long sys_fsstat(fs_stat_t *st);
+
 /* --- HTTP types and functions --- */
 
 typedef struct http_request {
