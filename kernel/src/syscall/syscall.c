@@ -1938,13 +1938,14 @@ static int64_t sys_shmat(uint64_t shmid, uint64_t a2,
     uint32_t npages = shm_table[shmid].num_pages;
     uint64_t virt = proc->mmap_next_addr;
 
-    /* Map each page individually */
+    /* Map each page individually and increment refcount for PTE reference */
     for (uint32_t i = 0; i < npages; i++) {
         uint64_t page_phys = shm_table[shmid].phys_pages[i];
         uint64_t page_virt = virt + (uint64_t)i * PAGE_SIZE;
         if (vmm_map_page_in(proc->cr3, page_virt, page_phys,
                             PTE_USER | PTE_WRITABLE | PTE_NX) != 0)
             return 0;
+        pmm_ref_inc(page_phys);
     }
 
     proc->mmap_table[slot].virt_addr = virt;
@@ -1975,8 +1976,19 @@ static int64_t sys_shmdt(uint64_t virt_addr, uint64_t a2,
             proc->mmap_table[i].virt_addr == virt_addr &&
             proc->mmap_table[i].shm_id >= 0) {
             int32_t sid = proc->mmap_table[i].shm_id;
+            uint32_t npages = proc->mmap_table[i].num_pages;
             if (sid < MAX_SHM_REGIONS && shm_table[sid].ref_count > 0)
                 shm_table[sid].ref_count--;
+            /* Unmap pages from page table and drop PTE refcount */
+            for (uint32_t p = 0; p < npages; p++) {
+                uint64_t pv = virt_addr + (uint64_t)p * PAGE_SIZE;
+                uint64_t *pte = vmm_get_pte(proc->cr3, pv);
+                if (pte && (*pte & PTE_PRESENT)) {
+                    uint64_t phys = *pte & PTE_ADDR_MASK;
+                    *pte = 0;
+                    pmm_free_page(phys);
+                }
+            }
             proc->mmap_table[i].used = 0;
             proc->mmap_table[i].shm_id = -1;
             return 0;
