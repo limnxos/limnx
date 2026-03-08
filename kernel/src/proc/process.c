@@ -554,7 +554,8 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     for (int i = 0; i < 32; i++) child->name[i] = parent->name[i];
 
     /* Clone address space with COW */
-    child->cr3 = vmm_clone_cow(parent->cr3);
+    child->cr3 = vmm_clone_cow(parent->cr3,
+                               parent->mmap_table, MMAP_MAX_ENTRIES);
     if (child->cr3 == 0) { kfree(child); return NULL; }
 
     /* Copy fd_table (pipe ref increments done by caller in syscall.c) */

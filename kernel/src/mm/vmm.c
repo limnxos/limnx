@@ -1,6 +1,7 @@
 #include "mm/vmm.h"
 #include "mm/pmm.h"
 #include "mm/swap.h"
+#include "proc/process.h"
 #include "serial.h"
 
 /* PML4 physical address, read from CR3 */
@@ -225,7 +226,25 @@ uint64_t *vmm_get_pte(uint64_t target_pml4_phys, uint64_t virt) {
  * Physical page refcounts are incremented.
  * Returns child PML4 phys, or 0 on failure.
  */
-uint64_t vmm_clone_cow(uint64_t parent_cr3) {
+/*
+ * Check if a virtual address falls within a shared memory mmap region.
+ * Returns 1 if the address is in a shm region, 0 otherwise.
+ */
+static int is_shm_page(uint64_t virt, struct mmap_entry *mmap_table, int mmap_count) {
+    if (!mmap_table) return 0;
+    for (int i = 0; i < mmap_count; i++) {
+        if (!mmap_table[i].used) continue;
+        if (mmap_table[i].shm_id < 0) continue;
+        uint64_t start = mmap_table[i].virt_addr;
+        uint64_t end = start + (uint64_t)mmap_table[i].num_pages * 4096;
+        if (virt >= start && virt < end)
+            return 1;
+    }
+    return 0;
+}
+
+uint64_t vmm_clone_cow(uint64_t parent_cr3,
+                        struct mmap_entry *mmap_table, int mmap_count) {
     uint64_t child_cr3 = vmm_create_address_space();
     if (child_cr3 == 0) return 0;
 
@@ -252,20 +271,25 @@ uint64_t vmm_clone_cow(uint64_t parent_cr3) {
                     uint64_t phys = pte & PTE_ADDR_MASK;
                     uint64_t flags = pte & ~PTE_ADDR_MASK;
 
-                    /* Make both parent and child COW (read-only + COW bit) */
-                    uint64_t cow_flags = (flags & ~PTE_WRITABLE) | PTE_COW;
-                    parent_pt[i1] = phys | cow_flags;
-
                     /* Reconstruct virtual address */
                     uint64_t virt = ((uint64_t)i4 << 39) | ((uint64_t)i3 << 30) |
                                     ((uint64_t)i2 << 21) | ((uint64_t)i1 << 12);
 
-                    /* Map in child with same COW flags */
-                    vmm_map_page_in(child_cr3, virt, phys,
-                                    cow_flags & ~PTE_PRESENT);
+                    if (is_shm_page(virt, mmap_table, mmap_count)) {
+                        /* Shared memory: keep writable, no COW — both processes
+                         * share the same physical page as intended */
+                        vmm_map_page_in(child_cr3, virt, phys,
+                                        flags & ~PTE_PRESENT);
+                        pmm_ref_inc(phys);
+                    } else {
+                        /* Private page: mark both parent and child as COW */
+                        uint64_t cow_flags = (flags & ~PTE_WRITABLE) | PTE_COW;
+                        parent_pt[i1] = phys | cow_flags;
 
-                    /* Increment refcount */
-                    pmm_ref_inc(phys);
+                        vmm_map_page_in(child_cr3, virt, phys,
+                                        cow_flags & ~PTE_PRESENT);
+                        pmm_ref_inc(phys);
+                    }
                 }
             }
         }
