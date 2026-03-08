@@ -554,6 +554,8 @@ long sys_swap_stat(uint32_t *stat);
 long sys_infer_register(const char *name, const char *sock_path);
 long sys_infer_request(const char *name, const void *req_buf, long req_len,
                        void *resp_buf, long resp_len);
+long sys_infer_health(long load);
+long sys_infer_route(const char *name);
 long sys_uring_setup(long entries, void *params);
 long sys_uring_enter(long uring_fd, void *sqe_ptr, long count, void *cqe_ptr);
 long sys_mmap2(long num_pages, long flags);

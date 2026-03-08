@@ -100,7 +100,8 @@ process_t *process_create(const uint8_t *code, uint64_t code_size);
 process_t *process_create_from_elf(const uint8_t *elf, uint64_t size);
 process_t *process_fork(process_t *parent, const fork_context_t *ctx);
 
-/* Process registry */
+/* Process registry (spinlock-protected for SMP safety) */
+uint64_t   process_alloc_pid(void);
 void       process_register(process_t *proc);
 process_t *process_lookup(uint64_t pid);
 void       process_unregister(uint64_t pid);

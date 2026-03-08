@@ -102,8 +102,10 @@
 #define SYS_TASK_STATUS    95
 #define SYS_TASK_WAIT      96
 #define SYS_TOKEN_DELEGATE 97
-#define SYS_NS_SETQUOTA   98
-#define SYS_NR             99
+#define SYS_NS_SETQUOTA    98
+#define SYS_INFER_HEALTH   99
+#define SYS_INFER_ROUTE   100
+#define SYS_NR            101
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

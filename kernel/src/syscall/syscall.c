@@ -3810,6 +3810,33 @@ static int64_t sys_ns_setquota(uint64_t ns_id, uint64_t resource,
                                t->process->pid, t->process->uid);
 }
 
+/* --- SYS_INFER_HEALTH: daemon reports heartbeat + load --- */
+static int64_t sys_infer_health(uint64_t load, uint64_t a2,
+                                  uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;
+    return infer_health(t->process->pid, (uint32_t)load);
+}
+
+/* --- SYS_INFER_ROUTE: find best service instance by name --- */
+static int64_t sys_infer_route(uint64_t name_ptr, uint64_t a2,
+                                 uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+
+    char name[INFER_NAME_MAX];
+    if (copy_string_from_user((const char *)name_ptr, name, INFER_NAME_MAX) != 0)
+        return -EFAULT;
+
+    int idx = infer_route(name);
+    if (idx < 0) return -ENOENT;
+
+    /* Return the provider_pid so caller knows which instance was chosen */
+    infer_service_t *svc = infer_get(idx);
+    if (!svc) return -ENOENT;
+    return (int64_t)svc->provider_pid;
+}
+
 /* Syscall dispatch table */
 typedef int64_t (*syscall_fn_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
@@ -3913,6 +3940,8 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_TASK_WAIT]      = sys_task_wait,
     [SYS_TOKEN_DELEGATE] = sys_token_delegate,
     [SYS_NS_SETQUOTA]    = sys_ns_setquota,
+    [SYS_INFER_HEALTH]   = sys_infer_health,
+    [SYS_INFER_ROUTE]    = sys_infer_route,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).

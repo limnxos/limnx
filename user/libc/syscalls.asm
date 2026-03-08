@@ -723,3 +723,17 @@ sys_ns_setquota:
     mov rax, 98         ; SYS_NS_SETQUOTA
     syscall
     ret
+
+; --- sys_infer_health(load) ---
+global sys_infer_health
+sys_infer_health:
+    mov rax, 99         ; SYS_INFER_HEALTH
+    syscall
+    ret
+
+; --- sys_infer_route(name) ---
+global sys_infer_route
+sys_infer_route:
+    mov rax, 100        ; SYS_INFER_ROUTE
+    syscall
+    ret

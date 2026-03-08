@@ -6,39 +6,67 @@
 #include "sched/sched.h"
 #include "syscall/syscall.h"
 #include "serial.h"
+#include "sync/spinlock.h"
 
 static uint64_t next_pid = 1;
 static process_t *proc_table[MAX_PROCS];
+static spinlock_t proc_table_lock = SPINLOCK_INIT;
+
+uint64_t process_alloc_pid(void) {
+    uint64_t flags;
+    spin_lock_irqsave(&proc_table_lock, &flags);
+    uint64_t pid = next_pid++;
+    spin_unlock_irqrestore(&proc_table_lock, flags);
+    return pid;
+}
 
 void process_register(process_t *proc) {
+    uint64_t flags;
+    spin_lock_irqsave(&proc_table_lock, &flags);
     for (int i = 0; i < MAX_PROCS; i++) {
         if (proc_table[i] == NULL) {
             proc_table[i] = proc;
+            spin_unlock_irqrestore(&proc_table_lock, flags);
             return;
         }
     }
+    spin_unlock_irqrestore(&proc_table_lock, flags);
 }
 
 process_t *process_lookup(uint64_t pid) {
+    uint64_t flags;
+    spin_lock_irqsave(&proc_table_lock, &flags);
     for (int i = 0; i < MAX_PROCS; i++) {
-        if (proc_table[i] && proc_table[i]->pid == pid)
-            return proc_table[i];
+        if (proc_table[i] && proc_table[i]->pid == pid) {
+            process_t *p = proc_table[i];
+            spin_unlock_irqrestore(&proc_table_lock, flags);
+            return p;
+        }
     }
+    spin_unlock_irqrestore(&proc_table_lock, flags);
     return NULL;
 }
 
 process_t *proc_table_get(int idx) {
     if (idx < 0 || idx >= MAX_PROCS) return NULL;
-    return proc_table[idx];
+    uint64_t flags;
+    spin_lock_irqsave(&proc_table_lock, &flags);
+    process_t *p = proc_table[idx];
+    spin_unlock_irqrestore(&proc_table_lock, flags);
+    return p;
 }
 
 void process_unregister(uint64_t pid) {
+    uint64_t flags;
+    spin_lock_irqsave(&proc_table_lock, &flags);
     for (int i = 0; i < MAX_PROCS; i++) {
         if (proc_table[i] && proc_table[i]->pid == pid) {
             proc_table[i] = NULL;
+            spin_unlock_irqrestore(&proc_table_lock, flags);
             return;
         }
     }
+    spin_unlock_irqrestore(&proc_table_lock, flags);
 }
 
 /*
@@ -151,7 +179,7 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
     if (!proc)
         return NULL;
 
-    proc->pid = next_pid++;
+    proc->pid = process_alloc_pid();
     proc->user_entry = USER_CODE_BASE;
     proc->user_stack_top = USER_STACK_TOP;
 
@@ -324,7 +352,7 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
     if (!proc)
         return NULL;
 
-    proc->pid = next_pid++;
+    proc->pid = process_alloc_pid();
     proc->user_entry = result.entry;
     proc->user_stack_top = USER_STACK_TOP;
     proc->cr3 = result.cr3;
@@ -502,7 +530,7 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     process_t *child = (process_t *)kmalloc(sizeof(process_t));
     if (!child) return NULL;
 
-    child->pid = next_pid++;
+    child->pid = process_alloc_pid();
     child->parent_pid = parent->pid;
     child->pgid = parent->pgid;
     child->uid = parent->uid;
@@ -626,12 +654,22 @@ int process_deliver_signal(process_t *proc, int signum) {
 }
 
 int process_kill_group(uint64_t pgid, int signum) {
-    int count = 0;
+    uint64_t flags;
+    process_t *targets[MAX_PROCS];
+    int n = 0;
+
+    /* Collect targets under lock, deliver signals after releasing */
+    spin_lock_irqsave(&proc_table_lock, &flags);
     for (int i = 0; i < MAX_PROCS; i++) {
-        if (proc_table[i] && proc_table[i]->pgid == pgid) {
-            if (process_deliver_signal(proc_table[i], signum) == 0)
-                count++;
-        }
+        if (proc_table[i] && proc_table[i]->pgid == pgid)
+            targets[n++] = proc_table[i];
+    }
+    spin_unlock_irqrestore(&proc_table_lock, flags);
+
+    int count = 0;
+    for (int i = 0; i < n; i++) {
+        if (process_deliver_signal(targets[i], signum) == 0)
+            count++;
     }
     return count > 0 ? 0 : -1;
 }
