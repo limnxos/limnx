@@ -22,6 +22,7 @@
 #include "blk/virtio_blk.h"
 #include "blk/limnfs.h"
 #include "blk/bcache.h"
+#include "sync/futex.h"
 #include "net/netstor.h"
 #include "fb/fbcon.h"
 #include "pty/pty.h"
@@ -1542,7 +1543,7 @@ void kmain(void) {
         process_t *s34_proc = load_elf_from_vfs("/s34test.elf");
         if (s34_proc) {
             /* Set LIMNX_VERSION env var on test process */
-            const char *env_entry = "LIMNX_VERSION=0.48";
+            const char *env_entry = "LIMNX_VERSION=0.49";
             int elen = 0;
             while (env_entry[elen]) elen++;
             for (int i = 0; i <= elen; i++)
@@ -1795,6 +1796,28 @@ void kmain(void) {
     serial_puts("  Stage 48 init complete\n");
     serial_puts("========================================\n");
 
+    /* --- Stage 49 init --- */
+    serial_puts("\n--- Stage 49 init ---\n\n");
+
+    futex_init();
+
+    serial_puts("[test] Loading s49test.elf...\n");
+    {
+        process_t *s49_proc = load_and_run_elf("/s49test.elf");
+        if (s49_proc) {
+            serial_printf("[test] s49test.elf spawned (pid %lu)\n",
+                          s49_proc->pid);
+            process_reap(s49_proc);
+            serial_puts("[test] s49test.elf completed\n");
+        } else {
+            serial_puts("[test] s49test.elf not found or failed to load\n");
+        }
+    }
+
+    serial_puts("\n========================================\n");
+    serial_puts("  Stage 49 init complete\n");
+    serial_puts("========================================\n");
+
     /* Start bcache flusher kernel thread (periodic write-back).
      * Launched after all boot-time disk syncing is complete to
      * avoid data races with the non-locked bcache. */
@@ -1842,7 +1865,7 @@ void kmain(void) {
             }
             /* Set LIMNX_VERSION env on shell */
             {
-                const char *env_entry = "LIMNX_VERSION=0.48";
+                const char *env_entry = "LIMNX_VERSION=0.49";
                 int elen = 0;
                 while (env_entry[elen]) elen++;
                 for (int i = 0; i <= elen; i++)

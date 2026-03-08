@@ -566,6 +566,43 @@ long sys_token_revoke(long token_id);
 long sys_token_list(void *buf, long max_count);
 long sys_ns_create(const char *name);
 long sys_ns_join(long ns_id);
+long sys_futex_wait(volatile unsigned int *addr, unsigned int expected);
+long sys_futex_wake(volatile unsigned int *addr, unsigned int max_wake);
+
+/* --- Userspace sleeping mutex (built on futex) --- */
+
+typedef struct {
+    volatile unsigned int state;  /* 0=unlocked, 1=locked-no-waiters, 2=locked-with-waiters */
+} umutex_t;
+
+#define UMUTEX_INIT { 0 }
+
+static inline void umutex_lock(umutex_t *m) {
+    unsigned int c;
+    /* Fast path: try to grab uncontested lock */
+    c = __sync_val_compare_and_swap(&m->state, 0, 1);
+    if (c == 0) return;  /* Got it */
+
+    /* Slow path: mark as contended and sleep */
+    if (c != 2)
+        c = __sync_lock_test_and_set(&m->state, 2);
+    while (c != 0) {
+        sys_futex_wait(&m->state, 2);
+        c = __sync_lock_test_and_set(&m->state, 2);
+    }
+}
+
+static inline void umutex_unlock(umutex_t *m) {
+    if (__sync_fetch_and_sub(&m->state, 1) != 1) {
+        /* There were waiters (state was 2) — reset to 0 and wake one */
+        m->state = 0;
+        sys_futex_wake(&m->state, 1);
+    }
+}
+
+static inline int umutex_trylock(umutex_t *m) {
+    return __sync_val_compare_and_swap(&m->state, 0, 1) == 0 ? 0 : -1;
+}
 
 /* Process info (matches kernel layout: 56 bytes) */
 typedef struct proc_info {

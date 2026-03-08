@@ -19,6 +19,7 @@
 #include "ipc/uring.h"
 #include "ipc/cap_token.h"
 #include "ipc/agent_ns.h"
+#include "sync/futex.h"
 #include "ipc/taskgraph.h"
 #include "mm/swap.h"
 #include "blk/limnfs.h"
@@ -3884,6 +3885,27 @@ static int64_t sys_agent_recv(uint64_t msg_buf, uint64_t msg_len,
     return r;
 }
 
+/* --- Futex --- */
+
+static int64_t sys_futex_wait(uint64_t uaddr, uint64_t expected,
+                               uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;
+    if (uaddr < 0x1000) return -14;  /* -EFAULT */
+    return futex_wait(t->process->pid, (uint32_t *)uaddr, (uint32_t)expected);
+}
+
+static int64_t sys_futex_wake(uint64_t uaddr, uint64_t max_wake,
+                               uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;
+    if (uaddr < 0x1000) return -14;  /* -EFAULT */
+    if (max_wake == 0) max_wake = 1;
+    return futex_wake(t->process->pid, (uint32_t *)uaddr, (uint32_t)max_wake);
+}
+
 /* Syscall dispatch table */
 typedef int64_t (*syscall_fn_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
@@ -3991,6 +4013,8 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_INFER_ROUTE]    = sys_infer_route,
     [SYS_AGENT_SEND]     = sys_agent_send,
     [SYS_AGENT_RECV]     = sys_agent_recv,
+    [SYS_FUTEX_WAIT]     = sys_futex_wait,
+    [SYS_FUTEX_WAKE]     = sys_futex_wake,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).

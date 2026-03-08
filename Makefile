@@ -38,7 +38,7 @@ SRCS     := kernel/src/main.c kernel/src/serial.c \
             kernel/src/net/netstor.c \
             kernel/src/fb/fbcon.c \
             kernel/src/pty/pty.c \
-            kernel/src/sync/mutex.c \
+            kernel/src/sync/mutex.c kernel/src/sync/futex.c \
             kernel/src/smp/smp.c kernel/src/smp/lapic.c \
             kernel/src/ipc/unix_sock.c kernel/src/ipc/eventfd.c kernel/src/ipc/agent_reg.c \
             kernel/src/ipc/epoll.c kernel/src/ipc/infer_svc.c kernel/src/ipc/uring.c \
@@ -95,6 +95,7 @@ USER_C_ELFS := build/user/mathtest.elf build/user/agenttest.elf build/user/agent
                build/user/s45test.elf \
                build/user/s47test.elf \
                build/user/s48test.elf \
+               build/user/s49test.elf \
                build/user/inferd.elf
 
 USER_ELFS := $(USER_ASM_ELFS) $(USER_C_ELFS)
@@ -464,6 +465,13 @@ build/user/s48test.o: user/s48test.c user/libc/libc.h
 	$(CC) $(USER_CFLAGS) -c $< -o $@
 
 build/user/s48test.elf: build/user/s48test.o $(LIBC_OBJS) user/libc/linker.ld
+	$(LD) -nostdlib -static -T user/libc/linker.ld $(LIBC_OBJS) $< -o $@
+
+build/user/s49test.o: user/s49test.c user/libc/libc.h
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+build/user/s49test.elf: build/user/s49test.o $(LIBC_OBJS) user/libc/linker.ld
 	$(LD) -nostdlib -static -T user/libc/linker.ld $(LIBC_OBJS) $< -o $@
 
 build/user/inferd.o: user/inferd.c user/libc/libc.h

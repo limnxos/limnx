@@ -107,7 +107,9 @@
 #define SYS_INFER_ROUTE   100
 #define SYS_AGENT_SEND    101
 #define SYS_AGENT_RECV    102
-#define SYS_NR            103
+#define SYS_FUTEX_WAIT    103
+#define SYS_FUTEX_WAKE    104
+#define SYS_NR            105
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

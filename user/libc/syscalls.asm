@@ -753,3 +753,17 @@ sys_agent_recv:
     mov rax, 102        ; SYS_AGENT_RECV
     syscall
     ret
+
+; --- sys_futex_wait(addr, expected) ---
+global sys_futex_wait
+sys_futex_wait:
+    mov rax, 103        ; SYS_FUTEX_WAIT
+    syscall
+    ret
+
+; --- sys_futex_wake(addr, max_wake) ---
+global sys_futex_wake
+sys_futex_wake:
+    mov rax, 104        ; SYS_FUTEX_WAKE
+    syscall
+    ret
