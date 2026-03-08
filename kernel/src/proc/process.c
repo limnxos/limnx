@@ -517,6 +517,7 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     child->audit_flags = parent->audit_flags;
     child->exit_status = 0;
     child->exited = 0;
+    child->ns_id = parent->ns_id;
     child->user_entry = parent->user_entry;
     child->user_stack_top = parent->user_stack_top;
     child->pending_signals = 0;

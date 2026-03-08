@@ -308,6 +308,17 @@ static int64_t sys_exit(uint64_t status, uint64_t a2,
         }
     }
     serial_printf("[proc] Process exited with status %lu\n", status);
+    /* Mark process as exited BEFORE thread_exit, so parent's waitpid sees
+     * it immediately. Previously this was only set in schedule_smp() when
+     * switching away from the DEAD thread, which created an SMP race where
+     * the parent's spin loop could miss the update.
+     * Null the thread's process pointer to prevent use-after-free: after
+     * exited=1, the parent may kfree the process at any time. The scheduler
+     * already handles NULL process pointers for DEAD threads. */
+    if (t->process) {
+        t->process->exited = 1;
+        t->process = NULL;
+    }
     thread_exit();
     /* Never returns */
     return 0;

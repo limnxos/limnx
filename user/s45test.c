@@ -238,21 +238,10 @@ int main(void) {
      * ============================================================ */
 
     /* Test 16: Fork beyond quota fails
-     * We have orchestrator + 3 workers = 4 procs in namespace.
-     * Quota is 5. Fork one more should succeed, then next should fail.
-     * But we don't want to actually create processes that hang.
-     * Instead, fork a child that immediately exits. */
-    long extra_pid = sys_fork();
-    if (extra_pid == 0) {
-        sys_exit(0);
-    }
-    /* 5th process created (orchestrator + 3 workers + extra = 5, at quota) */
-    sys_waitpid(extra_pid);
-
-    /* Now try to fork again — should fail (at or past quota) */
-    /* Note: the extra child exited, so quota should have decremented.
-     * Let's test with a tighter scenario: set quota to current count */
-    sys_ns_setquota(ns, NS_QUOTA_PROCS, 4);  /* tighten to exactly current */
+     * We have 3 workers tracked in the namespace (ns_join doesn't count
+     * the orchestrator, only forked children with inherited ns_id).
+     * Tighten quota to exactly the current count, then fork should fail. */
+    sys_ns_setquota(ns, NS_QUOTA_PROCS, 3);  /* tighten to exactly current (3 workers) */
     long over_pid = sys_fork();
     if (over_pid == 0) {
         sys_exit(0);

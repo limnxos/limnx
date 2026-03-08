@@ -402,11 +402,13 @@ static void schedule_smp(void) {
 
     /* Link dead threads onto dead list for reap_dead() */
     if (old->state == THREAD_DEAD && old != idle_thread) {
-        /* Signal process completion BEFORE do_switch, so parent's waitpid
-         * can see exited=1. do_switch won't access old->process for DEAD
-         * threads (uses kernel PML4 instead). */
-        if (old->process)
+        /* Set exited=1 for SIGKILL'd threads (normal exit sets it in sys_exit).
+         * Null the process pointer to prevent use-after-free: once exited=1,
+         * the parent's waitpid may kfree the process on another CPU. */
+        if (old->process) {
             old->process->exited = 1;
+            old->process = NULL;
+        }
         link_dead(old);
     }
 
@@ -414,8 +416,10 @@ static void schedule_smp(void) {
      * THREAD_DEAD after we dequeued it, or between dequeue and here),
      * don't schedule it — handle it as dead immediately. */
     if (next->state == THREAD_DEAD && next != idle_thread) {
-        if (next->process)
+        if (next->process) {
             next->process->exited = 1;
+            next->process = NULL;
+        }
         link_dead(next);
         /* Try to find another thread */
         next = local_dequeue(pc);
@@ -469,15 +473,19 @@ static void schedule_single(void) {
 
     /* Link dead threads onto dead list for reap_dead() */
     if (old->state == THREAD_DEAD && old != idle_thread) {
-        if (old->process)
+        if (old->process) {
             old->process->exited = 1;
+            old->process = NULL;
+        }
         link_dead(old);
     }
 
     /* If the dequeued thread was killed while in the queue, handle as dead */
     if (next->state == THREAD_DEAD && next != idle_thread) {
-        if (next->process)
+        if (next->process) {
             next->process->exited = 1;
+            next->process = NULL;
+        }
         link_dead(next);
         next = dequeue();
         if (!next)
