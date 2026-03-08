@@ -3837,6 +3837,53 @@ static int64_t sys_infer_route(uint64_t name_ptr, uint64_t a2,
     return (int64_t)svc->provider_pid;
 }
 
+/* --- SYS_AGENT_SEND: send message to named agent with optional token delegation --- */
+static int64_t sys_agent_send(uint64_t name_ptr, uint64_t msg_buf,
+                                uint64_t msg_len, uint64_t token_id, uint64_t a5) {
+    (void)a5;
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    char name[AGENT_NAME_MAX];
+    if (copy_string_from_user((const char *)name_ptr, name, AGENT_NAME_MAX) != 0)
+        return -EFAULT;
+    if (msg_len > AGENT_MSG_MAX) msg_len = AGENT_MSG_MAX;
+    if (msg_len > 0 && validate_user_ptr(msg_buf, msg_len) != 0)
+        return -EFAULT;
+
+    return agent_send(name, proc->ns_id, proc->pid, proc->capabilities,
+                      (const uint8_t *)msg_buf, (uint32_t)msg_len,
+                      (uint32_t)token_id);
+}
+
+/* --- SYS_AGENT_RECV: receive message from own mailbox --- */
+static int64_t sys_agent_recv(uint64_t msg_buf, uint64_t msg_len,
+                                uint64_t sender_pid_ptr, uint64_t token_id_ptr,
+                                uint64_t a5) {
+    (void)a5;
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    if (msg_len > 0 && validate_user_ptr(msg_buf, msg_len) != 0)
+        return -EFAULT;
+    if (sender_pid_ptr && validate_user_ptr(sender_pid_ptr, sizeof(uint64_t)) != 0)
+        return -EFAULT;
+    if (token_id_ptr && validate_user_ptr(token_id_ptr, sizeof(uint32_t)) != 0)
+        return -EFAULT;
+
+    uint64_t sender_pid = 0;
+    uint32_t token_id = 0;
+    int r = agent_recv(proc->pid, &sender_pid, &token_id,
+                       (uint8_t *)msg_buf, (uint32_t)msg_len);
+    if (r >= 0) {
+        if (sender_pid_ptr) *(uint64_t *)sender_pid_ptr = sender_pid;
+        if (token_id_ptr) *(uint32_t *)token_id_ptr = token_id;
+    }
+    return r;
+}
+
 /* Syscall dispatch table */
 typedef int64_t (*syscall_fn_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
@@ -3942,6 +3989,8 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_NS_SETQUOTA]    = sys_ns_setquota,
     [SYS_INFER_HEALTH]   = sys_infer_health,
     [SYS_INFER_ROUTE]    = sys_infer_route,
+    [SYS_AGENT_SEND]     = sys_agent_send,
+    [SYS_AGENT_RECV]     = sys_agent_recv,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).

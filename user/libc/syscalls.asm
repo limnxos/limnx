@@ -737,3 +737,19 @@ sys_infer_route:
     mov rax, 100        ; SYS_INFER_ROUTE
     syscall
     ret
+
+; --- sys_agent_send(name, msg_buf, msg_len, token_id) ---
+global sys_agent_send
+sys_agent_send:
+    mov r10, rcx        ; 4th arg: rcx → r10
+    mov rax, 101        ; SYS_AGENT_SEND
+    syscall
+    ret
+
+; --- sys_agent_recv(msg_buf, msg_len, sender_pid_ptr, token_id_ptr) ---
+global sys_agent_recv
+sys_agent_recv:
+    mov r10, rcx        ; 4th arg: rcx → r10
+    mov rax, 102        ; SYS_AGENT_RECV
+    syscall
+    ret

@@ -2,6 +2,7 @@
 #include "blk/virtio_blk.h"
 #include "sched/sched.h"
 #include "sched/thread.h"
+#include "sync/spinlock.h"
 #include "serial.h"
 
 #define SECTORS_PER_BLOCK (BLOCK_SIZE / VIRTIO_BLK_SECTOR_SIZE)  /* 8 */
@@ -25,6 +26,7 @@ static int16_t lru_tail = -1;   /* least recently used (eviction candidate) */
 static int16_t hash_table[HASH_BUCKETS];  /* head of each hash chain, -1 = empty */
 static uint64_t cache_hits = 0;
 static uint64_t cache_misses = 0;
+static spinlock_t bcache_lock = SPINLOCK_INIT;
 
 /* --- DLL helpers --- */
 
@@ -130,6 +132,8 @@ void bcache_init(void) {
 }
 
 int bcache_read(uint32_t block_no, void *buf) {
+    spin_lock(&bcache_lock);
+
     /* Hash lookup for cache hit */
     int16_t idx = hash_find(block_no);
     if (idx >= 0) {
@@ -141,14 +145,17 @@ int bcache_read(uint32_t block_no, void *buf) {
         uint8_t *dst = (uint8_t *)buf;
         for (int j = 0; j < BLOCK_SIZE; j++)
             dst[j] = src[j];
+        spin_unlock(&bcache_lock);
         return 0;
     }
 
     /* Miss: evict LRU tail */
     cache_misses++;
     int16_t victim = lru_tail;
-    if (victim < 0)
+    if (victim < 0) {
+        spin_unlock(&bcache_lock);
         return -1;  /* should never happen */
+    }
 
     /* Write back dirty victim before eviction */
     if (cache[victim].valid && cache[victim].dirty)
@@ -162,8 +169,10 @@ int bcache_read(uint32_t block_no, void *buf) {
     uint64_t sector = (uint64_t)block_no * SECTORS_PER_BLOCK;
     uint8_t *dst = cache[victim].data;
     for (int s = 0; s < SECTORS_PER_BLOCK; s++) {
-        if (virtio_blk_read(sector + s, dst + s * VIRTIO_BLK_SECTOR_SIZE) != 0)
+        if (virtio_blk_read(sector + s, dst + s * VIRTIO_BLK_SECTOR_SIZE) != 0) {
+            spin_unlock(&bcache_lock);
             return -1;
+        }
     }
     cache[victim].tag = block_no;
     cache[victim].valid = 1;
@@ -178,11 +187,14 @@ int bcache_read(uint32_t block_no, void *buf) {
     uint8_t *out = (uint8_t *)buf;
     for (int j = 0; j < BLOCK_SIZE; j++)
         out[j] = dst[j];
+
+    spin_unlock(&bcache_lock);
     return 0;
 }
 
 int bcache_write(uint32_t block_no, const void *buf) {
     const uint8_t *src = (const uint8_t *)buf;
+    spin_lock(&bcache_lock);
 
     /* Update cache — write-back: mark dirty, don't write to disk */
     int16_t idx = hash_find(block_no);
@@ -202,9 +214,12 @@ int bcache_write(uint32_t block_no, const void *buf) {
             uint64_t sector = (uint64_t)block_no * SECTORS_PER_BLOCK;
             for (int s = 0; s < SECTORS_PER_BLOCK; s++) {
                 if (virtio_blk_write(sector + s,
-                        src + s * VIRTIO_BLK_SECTOR_SIZE) != 0)
+                        src + s * VIRTIO_BLK_SECTOR_SIZE) != 0) {
+                    spin_unlock(&bcache_lock);
                     return -1;
+                }
             }
+            spin_unlock(&bcache_lock);
             return 0;
         }
 
@@ -227,10 +242,13 @@ int bcache_write(uint32_t block_no, const void *buf) {
         dll_push_head(victim);
     }
 
+    spin_unlock(&bcache_lock);
     return 0;
 }
 
 void bcache_invalidate(uint32_t block_no) {
+    spin_lock(&bcache_lock);
+
     int16_t idx = hash_find(block_no);
     if (idx >= 0) {
         /* Write back if dirty before invalidating */
@@ -251,27 +269,37 @@ void bcache_invalidate(uint32_t block_no) {
         if (lru_head < 0)
             lru_head = idx;
     }
+
+    spin_unlock(&bcache_lock);
 }
 
 void bcache_flush(void) {
+    /* Flush one entry at a time, releasing the lock between entries
+     * to avoid blocking concurrent I/O for extended periods. */
     for (int i = 0; i < BCACHE_ENTRIES; i++) {
+        spin_lock(&bcache_lock);
         if (cache[i].valid && cache[i].dirty)
             writeback_entry((int16_t)i);
+        spin_unlock(&bcache_lock);
     }
 }
 
 uint32_t bcache_dirty_count(void) {
+    spin_lock(&bcache_lock);
     uint32_t count = 0;
     for (int i = 0; i < BCACHE_ENTRIES; i++) {
         if (cache[i].valid && cache[i].dirty)
             count++;
     }
+    spin_unlock(&bcache_lock);
     return count;
 }
 
 void bcache_stats(uint64_t *hits, uint64_t *misses) {
+    spin_lock(&bcache_lock);
     *hits = cache_hits;
     *misses = cache_misses;
+    spin_unlock(&bcache_lock);
 }
 
 /* --- Kernel flusher thread --- */

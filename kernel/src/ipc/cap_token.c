@@ -109,6 +109,10 @@ int cap_token_delegate(uint32_t parent_id, uint64_t caller_pid,
     if (parent->target_pid != 0 && parent->target_pid != caller_pid)
         return -1; /* -EPERM */
 
+    /* 0 means inherit all parent perms */
+    if (perms == 0)
+        perms = parent->perms;
+
     /* Sub-token perms must be subset of parent perms */
     if (perms & ~parent->perms)
         return -1;

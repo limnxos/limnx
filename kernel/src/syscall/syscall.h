@@ -105,7 +105,9 @@
 #define SYS_NS_SETQUOTA    98
 #define SYS_INFER_HEALTH   99
 #define SYS_INFER_ROUTE   100
-#define SYS_NR            101
+#define SYS_AGENT_SEND    101
+#define SYS_AGENT_RECV    102
+#define SYS_NR            103
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

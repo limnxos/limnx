@@ -258,13 +258,12 @@ int main(void) {
     {
         long child_pid = sys_fork();
         if (child_pid == 0) {
-            /* Child: drop FS_READ, try to open, fail, then exit */
+            /* Child: drop FS_READ, wait for parent to create token, then try open */
             long caps = sys_getcap();
             sys_setcap(0, caps & ~0x80);
-            /* The parent should have created a token for us */
-            /* Try to read a file */
-            sys_create("/agent_data.txt");
-            /* Can't create without CAP_FS_WRITE... just try open */
+            /* Yield to let parent create the file and token first */
+            for (int i = 0; i < 30; i++)
+                sys_yield();
             long fd = sys_open("/agent_data.txt", 0);
             sys_exit(fd >= 0 ? 0 : 1);
         }
