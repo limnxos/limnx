@@ -568,6 +568,7 @@ long sys_ns_create(const char *name);
 long sys_ns_join(long ns_id);
 long sys_futex_wait(volatile unsigned int *addr, unsigned int expected);
 long sys_futex_wake(volatile unsigned int *addr, unsigned int max_wake);
+long sys_mmap_file(long fd, long offset, long num_pages);
 
 /* --- Userspace sleeping mutex (built on futex) --- */
 

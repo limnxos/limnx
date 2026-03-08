@@ -109,7 +109,8 @@
 #define SYS_AGENT_RECV    102
 #define SYS_FUTEX_WAIT    103
 #define SYS_FUTEX_WAKE    104
-#define SYS_NR            105
+#define SYS_MMAP_FILE     105
+#define SYS_NR            106
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

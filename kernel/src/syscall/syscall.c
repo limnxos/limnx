@@ -1038,6 +1038,8 @@ static int64_t sys_mmap(uint64_t num_pages, uint64_t a2,
     proc->mmap_table[slot].num_pages = (uint32_t)num_pages;
     proc->mmap_table[slot].used = 1;
     proc->mmap_table[slot].shm_id = -1;
+    proc->mmap_table[slot].vfs_node = -1;
+    proc->mmap_table[slot].file_offset = 0;
 
     /* Bump next address */
     proc->mmap_next_addr = virt + num_pages * PAGE_SIZE;
@@ -1324,6 +1326,8 @@ static int64_t sys_fmmap(uint64_t fd, uint64_t a2,
     proc->mmap_table[slot].num_pages = (uint32_t)num_pages;
     proc->mmap_table[slot].used = 1;
     proc->mmap_table[slot].shm_id = -1;
+    proc->mmap_table[slot].vfs_node = -1;
+    proc->mmap_table[slot].file_offset = 0;
     proc->mmap_next_addr = virt + num_pages * PAGE_SIZE;
 
     return (int64_t)virt;
@@ -1948,6 +1952,8 @@ static int64_t sys_shmat(uint64_t shmid, uint64_t a2,
     proc->mmap_table[slot].num_pages = npages;
     proc->mmap_table[slot].used = 1;
     proc->mmap_table[slot].shm_id = (int32_t)shmid;
+    proc->mmap_table[slot].vfs_node = -1;
+    proc->mmap_table[slot].file_offset = 0;
     proc->mmap_next_addr = virt + (uint64_t)npages * PAGE_SIZE;
     shm_table[shmid].ref_count++;
 
@@ -2797,7 +2803,28 @@ int page_fault_handler(uint64_t fault_addr, uint64_t err_code,
             uint64_t region_start = me->virt_addr;
             uint64_t region_end = region_start + (uint64_t)me->num_pages * 4096;
             if (page_addr >= region_start && page_addr < region_end) {
-                if (demand_page_fault(proc->cr3, page_addr) == 0) {
+                if (me->vfs_node >= 0) {
+                    /* File-backed demand page: allocate and fill from file */
+                    uint64_t new_phys = pmm_alloc_page();
+                    if (new_phys == 0) goto kill;
+                    uint8_t *dst = (uint8_t *)PHYS_TO_VIRT(new_phys);
+
+                    uint64_t page_offset_in_region = page_addr - region_start;
+                    uint64_t file_off = me->file_offset + page_offset_in_region;
+                    int64_t got = vfs_read(me->vfs_node, file_off, dst, 4096);
+                    if (got < 0) got = 0;
+                    /* Zero-pad remainder (past EOF or short read) */
+                    for (int64_t j = got; j < 4096; j++)
+                        dst[j] = 0;
+
+                    /* Map read-only (file-backed pages are read-only) */
+                    if (vmm_map_page_in(proc->cr3, page_addr, new_phys,
+                                        PTE_USER | PTE_NX) == 0) {
+                        invlpg_addr(page_addr);
+                        return 0;
+                    }
+                    pmm_free_page(new_phys);
+                } else if (demand_page_fault(proc->cr3, page_addr) == 0) {
                     invlpg_addr(page_addr);
                     return 0;
                 }
@@ -3548,6 +3575,8 @@ static int64_t sys_mmap2(uint64_t num_pages, uint64_t mmap_flags,
         proc->mmap_table[slot].used = 1;
         proc->mmap_table[slot].shm_id = -1;
         proc->mmap_table[slot].demand = 1;
+        proc->mmap_table[slot].vfs_node = -1;
+        proc->mmap_table[slot].file_offset = 0;
         proc->mmap_next_addr = virt + num_pages * 4096;
         proc->used_mem_pages += num_pages;
         return (int64_t)virt;
@@ -3573,6 +3602,8 @@ static int64_t sys_mmap2(uint64_t num_pages, uint64_t mmap_flags,
     proc->mmap_table[slot].used = 1;
     proc->mmap_table[slot].shm_id = -1;
     proc->mmap_table[slot].demand = 0;
+    proc->mmap_table[slot].vfs_node = -1;
+    proc->mmap_table[slot].file_offset = 0;
     proc->mmap_next_addr = virt + num_pages * 4096;
     proc->used_mem_pages += num_pages;
     return (int64_t)virt;
@@ -3906,6 +3937,48 @@ static int64_t sys_futex_wake(uint64_t uaddr, uint64_t max_wake,
     return futex_wake(t->process->pid, (uint32_t *)uaddr, (uint32_t)max_wake);
 }
 
+/* --- File-backed mmap --- */
+
+static int64_t sys_mmap_file(uint64_t fd, uint64_t offset,
+                              uint64_t num_pages, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+    if (fd >= MAX_FDS || num_pages == 0 || num_pages > MMAP_MAX_PAGES)
+        return -1;
+
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    fd_entry_t *entry = &proc->fd_table[fd];
+    if (entry->node == (void *)0) return -1;
+
+    vfs_node_t *node = entry->node;
+    int node_idx = vfs_node_index(node);
+    if (node_idx < 0) return -1;
+
+    /* Find free mmap slot */
+    int slot = -1;
+    for (int i = 0; i < MMAP_MAX_ENTRIES; i++) {
+        if (!proc->mmap_table[i].used) { slot = i; break; }
+    }
+    if (slot < 0) return -12;  /* -ENOMEM */
+
+    uint64_t virt = proc->mmap_next_addr;
+
+    /* Reserve virtual address space — no physical pages allocated */
+    proc->mmap_table[slot].virt_addr = virt;
+    proc->mmap_table[slot].phys_addr = 0;
+    proc->mmap_table[slot].num_pages = (uint32_t)num_pages;
+    proc->mmap_table[slot].used = 1;
+    proc->mmap_table[slot].shm_id = -1;
+    proc->mmap_table[slot].demand = 1;
+    proc->mmap_table[slot].vfs_node = (int32_t)node_idx;
+    proc->mmap_table[slot].file_offset = offset;
+    proc->mmap_next_addr = virt + num_pages * PAGE_SIZE;
+
+    return (int64_t)virt;
+}
+
 /* Syscall dispatch table */
 typedef int64_t (*syscall_fn_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
@@ -4015,6 +4088,7 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_AGENT_RECV]     = sys_agent_recv,
     [SYS_FUTEX_WAIT]     = sys_futex_wait,
     [SYS_FUTEX_WAKE]     = sys_futex_wake,
+    [SYS_MMAP_FILE]      = sys_mmap_file,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).

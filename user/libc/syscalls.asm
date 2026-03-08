@@ -767,3 +767,10 @@ sys_futex_wake:
     mov rax, 104        ; SYS_FUTEX_WAKE
     syscall
     ret
+
+; --- sys_mmap_file(fd, offset, num_pages) ---
+global sys_mmap_file
+sys_mmap_file:
+    mov rax, 105        ; SYS_MMAP_FILE
+    syscall
+    ret

@@ -43,6 +43,8 @@ typedef struct mmap_entry {
     uint32_t used;        /* 1 = active, 0 = free slot */
     int32_t  shm_id;      /* -1 = private, >=0 = shared memory region */
     uint8_t  demand;      /* 1 = demand-paged (no physical backing until fault) */
+    int32_t  vfs_node;    /* VFS node index for file-backed mmap, -1 = anonymous */
+    uint64_t file_offset; /* starting offset in file */
 } mmap_entry_t;
 
 /* Saved user-mode registers for fork child return */
