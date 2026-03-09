@@ -189,10 +189,14 @@ static void do_switch(thread_t *old, thread_t *next, uint64_t flags) {
 
     /* Switch address space if the new thread belongs to a different process.
      * For DEAD threads, cr3 was already zeroed by sys_exit — don't access
-     * old->process (may be freed by parent's waitpid on another CPU). */
+     * old->process (may be freed by parent's waitpid on another CPU).
+     * Safety: if a process's cr3 is 0 (freed by sys_exit), fall back to
+     * kernel PML4 to avoid loading CR3=0 which would triple-fault. */
     uint64_t old_cr3 = (old->state == THREAD_DEAD) ? vmm_get_kernel_pml4()
                      : (old->process ? old->process->cr3 : vmm_get_kernel_pml4());
     uint64_t new_cr3 = next->process ? next->process->cr3 : vmm_get_kernel_pml4();
+    if (old_cr3 == 0) old_cr3 = vmm_get_kernel_pml4();
+    if (new_cr3 == 0) new_cr3 = vmm_get_kernel_pml4();
     if (old_cr3 != new_cr3)
         __asm__ volatile ("mov %0, %%cr3" : : "r"(new_cr3) : "memory");
 

@@ -624,6 +624,21 @@ run: $(ISO) $(DISK_IMG)
 		-drive file=$(DISK_IMG),format=raw,if=none,id=disk0 \
 		-device virtio-blk-pci,drive=disk0
 
+# --- Test (boot + run 'test all' via shell) ---
+
+test: $(ISO) $(DISK_IMG)
+	@echo "=== Running all tests ==="
+	qemu-system-x86_64 \
+		-M q35 \
+		-cdrom $(ISO) \
+		-m 4G \
+		-smp 2 \
+		-serial stdio \
+		-display none \
+		-no-reboot \
+		-drive file=$(DISK_IMG),format=raw,if=none,id=disk0 \
+		-device virtio-blk-pci,drive=disk0
+
 # --- Clean ---
 
 clean:

@@ -417,6 +417,130 @@ static int parse_pipeline(char *line, command_t *cmds, int max_cmds) {
 
 /* --- Built-in commands --- */
 
+/* --- Test runner --- */
+
+typedef struct {
+    const char *name;
+    const char *elf;
+    const char *arg;  /* optional extra arg (e.g. "--test") */
+} test_entry_t;
+
+static const test_entry_t tests[] = {
+    {"hello",      "/hello.elf",       NULL},
+    {"cat",        "/cat.elf",         NULL},
+    {"writetest",  "/writetest.elf",   NULL},
+    {"mathtest",   "/mathtest.elf",    NULL},
+    {"agenttest",  "/agenttest.elf",   NULL},
+    {"agentrt",    "/agentrt.elf",     NULL},
+    {"infertest",  "/infertest.elf",   NULL},
+    {"pipetest",   "/pipetest.elf",    NULL},
+    {"generate",   "/generate.elf",    "--test"},
+    {"toolagent",  "/toolagent.elf",   "--test"},
+    {"memtest",    "/memtest.elf",     NULL},
+    {"ragtest",    "/ragtest.elf",     NULL},
+    {"fstest",     "/fstest.elf",      NULL},
+    {"fstest2",    "/fstest2.elf",     NULL},
+    {"lmstest",    "/lmstest.elf",     NULL},
+    {"gguftest",   "/gguftest.elf",    NULL},
+    {"gguf2test",  "/gguf2test.elf",   NULL},
+    {"agenttest2", "/agenttest2.elf",  NULL},
+    {"ostest",     "/ostest.elf",      NULL},
+    {"s25",        "/s25test.elf",     NULL},
+    {"multiagent", "/multiagent.elf",  NULL},
+    {"s26",        "/s26test.elf",     NULL},
+    {"s27",        "/s27test.elf",     NULL},
+    {"s28",        "/s28test.elf",     "--test"},
+    {"s29",        "/s29test.elf",     NULL},
+    {"s30",        "/s30test.elf",     NULL},
+    {"s31",        "/s31test.elf",     NULL},
+    {"s32",        "/s32test.elf",     NULL},
+    {"s33",        "/s33test.elf",     NULL},
+    {"s34",        "/s34test.elf",     NULL},
+    {"s35",        "/s35test.elf",     NULL},
+    {"s36",        "/s36test.elf",     NULL},
+    {"s37",        "/s37test.elf",     NULL},
+    {"s38",        "/s38test.elf",     NULL},
+    {"s39",        "/s39test.elf",     NULL},
+    {"s41",        "/s41test.elf",     NULL},
+    {"s42",        "/s42test.elf",     NULL},
+    {"s44",        "/s44test.elf",     NULL},
+    {"s45",        "/s45test.elf",     NULL},
+    {"s47",        "/s47test.elf",     NULL},
+    {"s48",        "/s48test.elf",     NULL},
+    {"s49",        "/s49test.elf",     NULL},
+    {"s50",        "/s50test.elf",     NULL},
+    {"s51",        "/s51test.elf",     NULL},
+    {"s52",        "/s52test.elf",     NULL},
+    {"s53",        "/s53test.elf",     NULL},
+    {"s54",        "/s54test.elf",     NULL},
+    {"s55",        "/s55test.elf",     NULL},
+    {"s56",        "/s56test.elf",     NULL},
+    {"s57",        "/s57test.elf",     NULL},
+    {"s58",        "/s58test.elf",     NULL},
+    {"s59",        "/s59test.elf",     NULL},
+    {NULL, NULL, NULL}
+};
+
+static int run_one_test(const test_entry_t *t) {
+    const char *argv[3];
+    /* Use basename for argv[0] */
+    const char *base = t->elf + 1;  /* skip leading '/' */
+    argv[0] = base;
+    argv[1] = t->arg;
+    argv[2] = NULL;
+
+    long pid = sys_exec(t->elf, argv);
+    if (pid <= 0) {
+        printf("  SKIP %s (not found)\n", t->name);
+        return -1;
+    }
+    long st = sys_waitpid(pid);
+    return (int)st;
+}
+
+static void cmd_test(int argc, char **argv) {
+    if (argc < 2) {
+        /* List available tests */
+        printf("Usage: test <name>    Run a single test\n");
+        printf("       test all       Run all tests\n");
+        printf("\nAvailable tests:\n");
+        int col = 0;
+        for (int i = 0; tests[i].name; i++) {
+            printf("  %-12s", tests[i].name);
+            col++;
+            if (col == 5) { printf("\n"); col = 0; }
+        }
+        if (col) printf("\n");
+        return;
+    }
+
+    if (strcmp(argv[1], "all") == 0) {
+        int passed = 0, failed = 0, skipped = 0;
+        for (int i = 0; tests[i].name; i++) {
+            printf("[test] Running %s...\n", tests[i].name);
+            int st = run_one_test(&tests[i]);
+            if (st < 0)
+                skipped++;
+            else if (st == 0)
+                passed++;
+            else
+                failed++;
+        }
+        printf("\n=== Test Summary: %d passed, %d failed, %d skipped ===\n",
+               passed, failed, skipped);
+        return;
+    }
+
+    /* Find and run a single test */
+    for (int i = 0; tests[i].name; i++) {
+        if (strcmp(argv[1], tests[i].name) == 0) {
+            run_one_test(&tests[i]);
+            return;
+        }
+    }
+    printf("test: unknown test '%s'\n", argv[1]);
+}
+
 static int is_builtin(const char *cmd) {
     return strcmp(cmd, "help") == 0 || strcmp(cmd, "echo") == 0 ||
            strcmp(cmd, "ls") == 0 || strcmp(cmd, "cd") == 0 ||
@@ -428,7 +552,8 @@ static int is_builtin(const char *cmd) {
            strcmp(cmd, "touch") == 0 || strcmp(cmd, "stat") == 0 ||
            strcmp(cmd, "kill") == 0 || strcmp(cmd, "jobs") == 0 ||
            strcmp(cmd, "write") == 0 || strcmp(cmd, "ps") == 0 ||
-           strcmp(cmd, "df") == 0 || strcmp(cmd, "mount") == 0;
+           strcmp(cmd, "df") == 0 || strcmp(cmd, "mount") == 0 ||
+           strcmp(cmd, "test") == 0;
 }
 
 static void cmd_help(void) {
@@ -454,6 +579,7 @@ static void cmd_help(void) {
     printf("  pid                  Show shell PID\n");
     printf("  history              Show command history\n");
     printf("  jobs                 Show background jobs\n");
+    printf("  test [name|all]      Run test(s)\n");
     printf("  exit                 Exit shell\n");
     printf("\nFeatures: pipes (|), redirection (> >> <),\n");
     printf("  variables ($VAR $? $$), quoting ('...' \"...\"),\n");
@@ -724,6 +850,8 @@ static int run_builtin(command_t *cmd, int *should_exit) {
         cmd_df();
     } else if (strcmp(name, "mount") == 0) {
         cmd_mount();
+    } else if (strcmp(name, "test") == 0) {
+        cmd_test(argc, argv);
     } else if (strcmp(name, "exit") == 0) {
         printf("Goodbye.\n");
         *should_exit = 1;

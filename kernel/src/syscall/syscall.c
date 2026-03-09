@@ -309,6 +309,14 @@ static int64_t sys_exit(uint64_t status, uint64_t a2,
         }
     }
     serial_printf("[proc] Process exited with status %lu\n", status);
+    /* CRITICAL: Disable interrupts from here until thread_exit().
+     * After cr3 is zeroed above, if a timer interrupt preempts us and the
+     * scheduler context-switches to another thread, when we're later
+     * re-scheduled, do_switch() would load CR3=0 from process->cr3,
+     * causing a triple fault (looks like a hang with -no-reboot).
+     * Disabling interrupts ensures we reach thread_exit() atomically,
+     * which sets THREAD_DEAD so the scheduler won't re-enqueue us. */
+    __asm__ volatile ("cli");
     /* Mark process as exited BEFORE thread_exit, so parent's waitpid sees
      * it immediately. Previously this was only set in schedule_smp() when
      * switching away from the DEAD thread, which created an SMP race where
@@ -4332,6 +4340,11 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
                     vmm_free_user_pages(proc->cr3);
                     proc->cr3 = 0;
                 }
+                /* Disable interrupts before thread_exit to prevent
+                 * preemption with cr3=0 (same fix as sys_exit). */
+                __asm__ volatile ("cli");
+                proc->exited = 1;
+                t->process = NULL;
                 thread_exit();
             }
 
