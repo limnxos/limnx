@@ -258,6 +258,29 @@ char *strstr(const char *haystack, const char *needle);
 int puts(const char *s);
 int printf(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 
+/* --- Buffered file I/O --- */
+
+typedef struct _FILE FILE;
+
+extern FILE *stdin;
+extern FILE *stdout;
+extern FILE *stderr;
+
+FILE  *fopen(const char *path, const char *mode);
+int    fclose(FILE *fp);
+size_t fread(void *buf, size_t size, size_t count, FILE *fp);
+size_t fwrite(const void *buf, size_t size, size_t count, FILE *fp);
+char  *fgets(char *buf, int size, FILE *fp);
+int    fputs(const char *s, FILE *fp);
+int    fputc(int c, FILE *fp);
+int    fgetc(FILE *fp);
+int    fprintf(FILE *fp, const char *fmt, ...);
+int    fflush(FILE *fp);
+int    feof(FILE *fp);
+int    ferror(FILE *fp);
+int    fseek(FILE *fp, long offset, int whence);
+int    fileno(FILE *fp);
+
 /* --- Math functions (float, compiled with -msse2) --- */
 
 float fabsf(float x);
