@@ -555,7 +555,10 @@ int tcp_accept(int listen_idx) {
         sched_yield();
     }
 
-    if (nc->state != TCP_ESTABLISHED) {
+    /* Accept CLOSE_WAIT too: with SMP loopback, the remote side can
+     * connect, send, and close before we check, transitioning the
+     * connection past ESTABLISHED into CLOSE_WAIT. */
+    if (nc->state != TCP_ESTABLISHED && nc->state != TCP_CLOSE_WAIT) {
         nc->state = TCP_CLOSED;
         nc->in_use = 0;
         return -1;
@@ -578,8 +581,15 @@ int64_t tcp_send(int conn_idx, const uint8_t *buf, uint32_t len) {
     c->tx_buf_len = len;
     c->tx_buf_seq = c->snd_nxt;
 
-    tcp_send_segment(c, TCP_ACK | TCP_PSH, buf, len);
+    /* Increment snd_nxt before sending so loopback ACKs (which arrive
+     * synchronously) see the correct range.  Temporarily restore the
+     * old value so tcp_send_segment puts the right seq in the header. */
+    uint32_t orig_nxt = c->snd_nxt;
     c->snd_nxt += len;
+    uint32_t new_nxt = c->snd_nxt;
+    c->snd_nxt = orig_nxt;
+    tcp_send_segment(c, TCP_ACK | TCP_PSH, buf, len);
+    c->snd_nxt = new_nxt;
     c->rto_tick = pit_get_ticks() + 18;
     c->retransmit_count = 0;
 

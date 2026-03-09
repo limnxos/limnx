@@ -867,7 +867,7 @@ void kmain(void) {
             }
             /* Set LIMNX_VERSION env on shell */
             {
-                const char *env_entry = "LIMNX_VERSION=0.61";
+                const char *env_entry = "LIMNX_VERSION=0.62";
                 int elen = 0;
                 while (env_entry[elen]) elen++;
                 for (int i = 0; i <= elen; i++)
@@ -875,6 +875,20 @@ void kmain(void) {
                 sh_proc->env_buf_len = elen + 1;
                 sh_proc->env_count = 1;
             }
+#ifdef RUN_BOOT_TESTS
+            /* Auto-test mode: pass --test-all to shell */
+            {
+                const char *a0 = "shell.elf";
+                const char *a1 = "--test-all";
+                int pos = 0;
+                while (*a0) sh_proc->argv_buf[pos++] = *a0++;
+                sh_proc->argv_buf[pos++] = '\0';
+                while (*a1) sh_proc->argv_buf[pos++] = *a1++;
+                sh_proc->argv_buf[pos++] = '\0';
+                sh_proc->argc = 2;
+                sh_proc->argv_buf_len = pos;
+            }
+#endif
             serial_printf("[init] shell.elf spawned (pid %lu)\n",
                           sh_proc->pid);
             sched_add(sh_proc->main_thread);

@@ -5,11 +5,12 @@ CC       := x86_64-elf-gcc
 LD       := x86_64-elf-ld
 NASM     := nasm
 GCC_INCL := $(shell $(CC) -print-file-name=include)
+EXTRA_CFLAGS ?=
 CFLAGS   := -ffreestanding -nostdinc -isystem $(GCC_INCL) \
             -fno-stack-protector -fno-pic \
             -mno-red-zone -mcmodel=kernel -mno-sse -mno-mmx -mno-sse2 \
             -Wall -Wextra -O2 -g \
-            -Ikernel/deps -Ikernel/src
+            -Ikernel/deps -Ikernel/src $(EXTRA_CFLAGS)
 LDFLAGS  := -nostdlib -static -T kernel/linker.ld
 NASMFLAGS := -f elf64 -g
 
@@ -634,7 +635,11 @@ run: $(ISO) $(DISK_IMG)
 
 # --- Test (boot + run 'test all' via shell) ---
 
-test: $(ISO) $(DISK_IMG)
+test:
+	@echo "=== Building with RUN_BOOT_TESTS ==="
+	$(MAKE) clean
+	$(MAKE) EXTRA_CFLAGS=-DRUN_BOOT_TESTS
+	$(MAKE) disk
 	@echo "=== Running all tests ==="
 	qemu-system-x86_64 \
 		-M q35 \
