@@ -1543,7 +1543,7 @@ void kmain(void) {
         process_t *s34_proc = load_elf_from_vfs("/s34test.elf");
         if (s34_proc) {
             /* Set LIMNX_VERSION env var on test process */
-            const char *env_entry = "LIMNX_VERSION=0.58";
+            const char *env_entry = "LIMNX_VERSION=0.59";
             int elen = 0;
             while (env_entry[elen]) elen++;
             for (int i = 0; i <= elen; i++)
@@ -1982,6 +1982,26 @@ void kmain(void) {
     serial_puts("  Stage 58 init complete\n");
     serial_puts("========================================\n");
 
+    /* --- Stage 59 init --- */
+    serial_puts("\n--- Stage 59 init ---\n\n");
+
+    serial_puts("[test] Loading s59test.elf...\n");
+    {
+        process_t *s59_proc = load_and_run_elf("/s59test.elf");
+        if (s59_proc) {
+            serial_printf("[test] s59test.elf spawned (pid %lu)\n",
+                          (unsigned long)s59_proc->pid);
+            process_reap(s59_proc);
+            serial_puts("[test] s59test.elf completed\n");
+        } else {
+            serial_puts("[test] s59test.elf not found or failed to load\n");
+        }
+    }
+
+    serial_puts("\n========================================\n");
+    serial_puts("  Stage 59 init complete\n");
+    serial_puts("========================================\n");
+
     /* Start bcache flusher kernel thread (periodic write-back).
      * Launched after all boot-time disk syncing is complete to
      * avoid data races with the non-locked bcache. */
@@ -2029,7 +2049,7 @@ void kmain(void) {
             }
             /* Set LIMNX_VERSION env on shell */
             {
-                const char *env_entry = "LIMNX_VERSION=0.58";
+                const char *env_entry = "LIMNX_VERSION=0.59";
                 int elen = 0;
                 while (env_entry[elen]) elen++;
                 for (int i = 0; i <= elen; i++)

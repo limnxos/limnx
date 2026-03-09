@@ -340,3 +340,238 @@ void *bsearch(const void *key, const void *base, size_t nmemb, size_t size,
     }
     return NULL;
 }
+
+/* --- sscanf --- */
+
+/* Variadic argument support */
+typedef __builtin_va_list _va_list;
+#define _va_start(ap, last) __builtin_va_start(ap, last)
+#define _va_end(ap)         __builtin_va_end(ap)
+#define _va_arg(ap, type)   __builtin_va_arg(ap, type)
+
+int sscanf(const char *str, const char *fmt, ...) {
+    _va_list ap;
+    _va_start(ap, fmt);
+
+    int matched = 0;
+    const char *s = str;
+
+    while (*fmt) {
+        /* Literal whitespace in format: skip whitespace in input */
+        if (isspace(*fmt)) {
+            while (isspace(*s)) s++;
+            while (isspace(*fmt)) fmt++;
+            continue;
+        }
+
+        /* Literal character match */
+        if (*fmt != '%') {
+            if (*s != *fmt) break;
+            s++;
+            fmt++;
+            continue;
+        }
+
+        fmt++; /* skip '%' */
+
+        /* %% literal */
+        if (*fmt == '%') {
+            if (*s != '%') break;
+            s++;
+            fmt++;
+            continue;
+        }
+
+        /* Assignment suppression */
+        int suppress = 0;
+        if (*fmt == '*') { suppress = 1; fmt++; }
+
+        /* Width */
+        int width = 0;
+        while (*fmt >= '0' && *fmt <= '9') {
+            width = width * 10 + (*fmt - '0');
+            fmt++;
+        }
+
+        /* Length modifier */
+        int is_long = 0;
+        if (*fmt == 'l') { is_long = 1; fmt++; }
+
+        switch (*fmt) {
+        case 'd': {
+            /* Skip leading whitespace */
+            while (isspace(*s)) s++;
+            if (!*s) goto done;
+
+            int neg = 0;
+            if (*s == '-') { neg = 1; s++; }
+            else if (*s == '+') s++;
+
+            if (!isdigit(*s)) goto done;
+
+            long val = 0;
+            int count = 0;
+            while (isdigit(*s) && (width == 0 || count < width)) {
+                val = val * 10 + (*s - '0');
+                s++;
+                count++;
+            }
+            if (neg) val = -val;
+
+            if (!suppress) {
+                if (is_long) *_va_arg(ap, long *) = val;
+                else *_va_arg(ap, int *) = (int)val;
+                matched++;
+            }
+            break;
+        }
+        case 'u': {
+            while (isspace(*s)) s++;
+            if (!*s) goto done;
+
+            unsigned long val = 0;
+            int count = 0;
+            if (!isdigit(*s)) goto done;
+            while (isdigit(*s) && (width == 0 || count < width)) {
+                val = val * 10 + (unsigned long)(*s - '0');
+                s++;
+                count++;
+            }
+
+            if (!suppress) {
+                if (is_long) *_va_arg(ap, unsigned long *) = val;
+                else *_va_arg(ap, unsigned int *) = (unsigned int)val;
+                matched++;
+            }
+            break;
+        }
+        case 'x': {
+            while (isspace(*s)) s++;
+            if (!*s) goto done;
+
+            /* Skip optional 0x prefix */
+            if (s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s += 2;
+
+            unsigned long val = 0;
+            int count = 0;
+            int any = 0;
+            while ((width == 0 || count < width)) {
+                int digit;
+                if (*s >= '0' && *s <= '9') digit = *s - '0';
+                else if (*s >= 'a' && *s <= 'f') digit = *s - 'a' + 10;
+                else if (*s >= 'A' && *s <= 'F') digit = *s - 'A' + 10;
+                else break;
+                val = val * 16 + (unsigned long)digit;
+                s++;
+                count++;
+                any = 1;
+            }
+            if (!any) goto done;
+
+            if (!suppress) {
+                if (is_long) *_va_arg(ap, unsigned long *) = val;
+                else *_va_arg(ap, unsigned int *) = (unsigned int)val;
+                matched++;
+            }
+            break;
+        }
+        case 's': {
+            while (isspace(*s)) s++;
+            if (!*s) goto done;
+
+            if (!suppress) {
+                char *dst = _va_arg(ap, char *);
+                int count = 0;
+                while (*s && !isspace(*s) && (width == 0 || count < width)) {
+                    dst[count++] = *s++;
+                }
+                dst[count] = '\0';
+                matched++;
+            } else {
+                int count = 0;
+                while (*s && !isspace(*s) && (width == 0 || count < width)) {
+                    s++;
+                    count++;
+                }
+            }
+            break;
+        }
+        case 'c': {
+            if (!*s) goto done;
+
+            int count = (width > 0) ? width : 1;
+            if (!suppress) {
+                char *dst = _va_arg(ap, char *);
+                for (int i = 0; i < count && *s; i++)
+                    dst[i] = *s++;
+                matched++;
+            } else {
+                for (int i = 0; i < count && *s; i++)
+                    s++;
+            }
+            break;
+        }
+        case 'n': {
+            if (!suppress) {
+                int *dst = _va_arg(ap, int *);
+                *dst = (int)(s - str);
+            }
+            /* %n does not count as a matched item */
+            break;
+        }
+        case '[': {
+            fmt++; /* skip '[' */
+            int negate = 0;
+            if (*fmt == '^') { negate = 1; fmt++; }
+
+            /* Build scanset */
+            char scanset[256];
+            memset(scanset, 0, sizeof(scanset));
+            /* Handle ']' as first char in set */
+            if (*fmt == ']') {
+                scanset[(unsigned char)']'] = 1;
+                fmt++;
+            }
+            while (*fmt && *fmt != ']') {
+                scanset[(unsigned char)*fmt] = 1;
+                fmt++;
+            }
+            /* fmt now points at ']' or '\0' */
+
+            if (!*s) goto done;
+
+            if (!suppress) {
+                char *dst = _va_arg(ap, char *);
+                int count = 0;
+                while (*s && (width == 0 || count < width)) {
+                    int in_set = scanset[(unsigned char)*s];
+                    if (negate) in_set = !in_set;
+                    if (!in_set) break;
+                    dst[count++] = *s++;
+                }
+                if (count == 0) goto done;
+                dst[count] = '\0';
+                matched++;
+            } else {
+                int count = 0;
+                while (*s && (width == 0 || count < width)) {
+                    int in_set = scanset[(unsigned char)*s];
+                    if (negate) in_set = !in_set;
+                    if (!in_set) break;
+                    s++;
+                    count++;
+                }
+                if (count == 0) goto done;
+            }
+            break;
+        }
+        default:
+            goto done;
+        }
+        fmt++;
+    }
+
+done:
+    _va_end(ap);
+    return matched;
+}

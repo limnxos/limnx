@@ -330,6 +330,8 @@ int    fseek(FILE *fp, long offset, int whence);
 int    fileno(FILE *fp);
 int    snprintf(char *buf, size_t size, const char *fmt, ...);
 int    sprintf(char *buf, const char *fmt, ...);
+ssize_t getline(char **lineptr, size_t *n, FILE *stream);
+int    sscanf(const char *str, const char *fmt, ...);
 
 /* --- Math functions (float, compiled with -msse2) --- */
 

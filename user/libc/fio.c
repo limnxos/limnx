@@ -450,3 +450,38 @@ void perror(const char *msg) {
     else
         fprintf(stderr, "%s\n", strerror(errno));
 }
+
+ssize_t getline(char **lineptr, size_t *n, FILE *stream) {
+    if (!lineptr || !n || !stream) return -1;
+
+    /* Allocate initial buffer if needed */
+    if (*lineptr == NULL || *n == 0) {
+        *n = 128;
+        *lineptr = (char *)malloc(*n);
+        if (!*lineptr) return -1;
+    }
+
+    size_t pos = 0;
+    for (;;) {
+        int c = fgetc(stream);
+        if (c < 0) {
+            if (pos == 0) return -1; /* EOF with no data */
+            break;
+        }
+
+        /* Grow buffer if needed */
+        if (pos + 2 > *n) {
+            size_t new_n = *n * 2;
+            char *new_buf = (char *)realloc(*lineptr, new_n);
+            if (!new_buf) return -1;
+            *lineptr = new_buf;
+            *n = new_n;
+        }
+
+        (*lineptr)[pos++] = (char)c;
+        if (c == '\n') break;
+    }
+
+    (*lineptr)[pos] = '\0';
+    return (ssize_t)pos;
+}
