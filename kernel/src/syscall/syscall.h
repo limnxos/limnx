@@ -112,7 +112,8 @@
 #define SYS_MMAP_FILE     105
 #define SYS_MPROTECT      106
 #define SYS_MMAP_GUARD    107
-#define SYS_NR            108
+#define SYS_SIGPROCMASK   108
+#define SYS_NR            109
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

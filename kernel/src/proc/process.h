@@ -18,9 +18,27 @@
 #define SIG_IGN  1
 #define MAX_SIGNALS 32
 
+/* sigprocmask operations */
+#define SIG_BLOCK   0
+#define SIG_UNBLOCK 1
+#define SIG_SETMASK 2
+
+/* sigaction flags */
+#define SA_RESTART  (1 << 0)
+
 typedef struct {
     uint64_t sa_handler;  /* user function pointer, or SIG_DFL/SIG_IGN */
+    uint32_t sa_flags;    /* SA_RESTART etc. */
 } sigaction_t;
+
+/* Signal queue for preventing signal loss */
+#define SIG_QUEUE_SIZE 16
+typedef struct {
+    int signum[SIG_QUEUE_SIZE];
+    int head;
+    int tail;
+    int count;
+} signal_queue_t;
 
 #define MAX_PROCS         64
 #define USER_CODE_BASE    0x0000000000400000ULL
@@ -78,8 +96,10 @@ typedef struct process {
     mmap_entry_t  mmap_table[MMAP_MAX_ENTRIES];
     uint64_t      mmap_next_addr;
     char          cwd[MAX_PATH];  /* per-process working directory */
-    uint32_t      pending_signals; /* bitfield of pending signals */
+    uint32_t      pending_signals;  /* bitfield of pending signals */
+    uint32_t      signal_mask;      /* blocked signals bitmask */
     sigaction_t   sig_handlers[MAX_SIGNALS];
+    signal_queue_t sig_queue;       /* queue for duplicate signals */
     uint64_t      signal_frame_addr; /* for sigreturn validation */
     int           argc;
     int           argv_buf_len;

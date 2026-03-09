@@ -109,6 +109,7 @@ USER_C_ELFS := build/user/mathtest.elf build/user/agenttest.elf build/user/agent
                build/user/s58test.elf \
                build/user/s59test.elf \
                build/user/s61test.elf \
+               build/user/s63test.elf \
                build/user/inferd.elf
 
 USER_ELFS := $(USER_ASM_ELFS) $(USER_C_ELFS)
@@ -562,6 +563,13 @@ build/user/s61test.o: user/s61test.c user/libc/libc.h
 	$(CC) $(USER_CFLAGS) -c $< -o $@
 
 build/user/s61test.elf: build/user/s61test.o $(LIBC_OBJS) user/libc/linker.ld
+	$(LD) -nostdlib -static -T user/libc/linker.ld $(LIBC_OBJS) $< -o $@
+
+build/user/s63test.o: user/s63test.c user/libc/libc.h
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+build/user/s63test.elf: build/user/s63test.o $(LIBC_OBJS) user/libc/linker.ld
 	$(LD) -nostdlib -static -T user/libc/linker.ld $(LIBC_OBJS) $< -o $@
 
 build/user/inferd.o: user/inferd.c user/libc/libc.h

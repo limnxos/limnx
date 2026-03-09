@@ -305,7 +305,7 @@ static int64_t sys_exit(uint64_t status, uint64_t a2,
             process_t *parent = process_lookup(t->process->parent_pid);
             if (parent && !parent->exited &&
                 parent->sig_handlers[SIGCHLD].sa_handler > SIG_IGN)
-                parent->pending_signals |= (1U << SIGCHLD);
+                process_deliver_signal(parent, SIGCHLD);
         }
     }
     serial_printf("[proc] Process exited with status %lu\n", status);
@@ -2104,8 +2104,8 @@ static int64_t sys_fork(uint64_t a1, uint64_t a2,
 }
 
 static int64_t sys_sigaction(uint64_t signum, uint64_t handler,
-                               uint64_t a3, uint64_t a4, uint64_t a5) {
-    (void)a3; (void)a4; (void)a5;
+                               uint64_t flags, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
 
     thread_t *t = thread_get_current();
     process_t *proc = t->process;
@@ -2113,6 +2113,7 @@ static int64_t sys_sigaction(uint64_t signum, uint64_t handler,
     if (signum == SIGKILL || signum == SIGSTOP) return -1;  /* can't catch */
 
     proc->sig_handlers[signum].sa_handler = handler;
+    proc->sig_handlers[signum].sa_flags = (uint32_t)flags;
     return 0;
 }
 
@@ -2142,6 +2143,44 @@ static int64_t sys_sigreturn(uint64_t a1, uint64_t a2,
     kstack_top[-3] = orig_rflags;
 
     return (int64_t)orig_rax;
+}
+
+static int64_t sys_sigprocmask(uint64_t how, uint64_t new_mask,
+                                uint64_t old_mask_ptr, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+
+    thread_t *t = thread_get_current();
+    process_t *proc = t ? t->process : (void *)0;
+    if (!proc) return -1;
+
+    /* Return old mask if pointer provided */
+    if (old_mask_ptr) {
+        uint64_t *pte = vmm_get_pte(proc->cr3, old_mask_ptr);
+        if (pte && (*pte & PTE_PRESENT)) {
+            uint64_t phys = (*pte & PTE_ADDR_MASK) + (old_mask_ptr & 0xFFF);
+            uint32_t *out = (uint32_t *)PHYS_TO_VIRT(phys);
+            *out = proc->signal_mask;
+        }
+    }
+
+    /* SIGKILL and SIGSTOP cannot be blocked */
+    uint32_t safe_mask = (uint32_t)new_mask & ~((1U << SIGKILL) | (1U << SIGSTOP));
+
+    switch (how) {
+    case SIG_BLOCK:
+        proc->signal_mask |= safe_mask;
+        break;
+    case SIG_UNBLOCK:
+        proc->signal_mask &= ~safe_mask;
+        break;
+    case SIG_SETMASK:
+        proc->signal_mask = safe_mask;
+        break;
+    default:
+        return -1;
+    }
+
+    return 0;
 }
 
 /* --- Stage 32 syscalls --- */
@@ -4272,6 +4311,7 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_MMAP_FILE]      = sys_mmap_file,
     [SYS_MPROTECT]       = sys_mprotect,
     [SYS_MMAP_GUARD]     = sys_mmap_guard,
+    [SYS_SIGPROCMASK]    = sys_sigprocmask,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).
@@ -4324,7 +4364,26 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
         process_t *proc = t->process;
         for (int sig = 1; sig < MAX_SIGNALS; sig++) {
             if (!(proc->pending_signals & (1U << sig))) continue;
+            /* Skip masked (blocked) signals — they stay pending */
+            if (proc->signal_mask & (1U << sig)) continue;
             proc->pending_signals &= ~(1U << sig);
+
+            /* Re-pend from queue if there are duplicates queued */
+            signal_queue_t *sq = &proc->sig_queue;
+            for (int qi = 0; qi < sq->count; qi++) {
+                int idx = (sq->head + qi) % SIG_QUEUE_SIZE;
+                if (sq->signum[idx] == sig) {
+                    /* Remove this entry by shifting */
+                    for (int j = qi; j < sq->count - 1; j++) {
+                        int from = (sq->head + j + 1) % SIG_QUEUE_SIZE;
+                        int to = (sq->head + j) % SIG_QUEUE_SIZE;
+                        sq->signum[to] = sq->signum[from];
+                    }
+                    sq->count--;
+                    proc->pending_signals |= (1U << sig);  /* re-pend */
+                    break;
+                }
+            }
 
             uint64_t handler = proc->sig_handlers[sig].sa_handler;
             if (handler == SIG_IGN) continue;

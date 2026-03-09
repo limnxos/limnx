@@ -244,8 +244,14 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
 
     /* Initialize signals */
     proc->pending_signals = 0;
-    for (int i = 0; i < MAX_SIGNALS; i++)
+    proc->signal_mask = 0;
+    for (int i = 0; i < MAX_SIGNALS; i++) {
         proc->sig_handlers[i].sa_handler = SIG_DFL;
+        proc->sig_handlers[i].sa_flags = 0;
+    }
+    proc->sig_queue.head = 0;
+    proc->sig_queue.tail = 0;
+    proc->sig_queue.count = 0;
     proc->signal_frame_addr = 0;
 
     /* Initialize argv */
@@ -418,8 +424,14 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
 
     /* Initialize signals */
     proc->pending_signals = 0;
-    for (int i = 0; i < MAX_SIGNALS; i++)
+    proc->signal_mask = 0;
+    for (int i = 0; i < MAX_SIGNALS; i++) {
         proc->sig_handlers[i].sa_handler = SIG_DFL;
+        proc->sig_handlers[i].sa_flags = 0;
+    }
+    proc->sig_queue.head = 0;
+    proc->sig_queue.tail = 0;
+    proc->sig_queue.count = 0;
     proc->signal_frame_addr = 0;
 
     /* Initialize argv */
@@ -549,6 +561,10 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     child->user_entry = parent->user_entry;
     child->user_stack_top = parent->user_stack_top;
     child->pending_signals = 0;
+    child->signal_mask = parent->signal_mask;  /* inherit signal mask */
+    child->sig_queue.head = 0;
+    child->sig_queue.tail = 0;
+    child->sig_queue.count = 0;
     child->signal_frame_addr = 0;
     child->fork_ctx = *ctx;  /* per-child saved user context */
     for (int i = 0; i < 32; i++) child->name[i] = parent->name[i];
@@ -612,17 +628,12 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
 int process_deliver_signal(process_t *proc, int signum) {
     if (!proc || !proc->main_thread)
         return -1;
+    if (signum < 1 || signum >= MAX_SIGNALS)
+        return -1;
 
-    switch (signum) {
-    case SIGKILL:
+    /* SIGKILL and SIGSTOP cannot be blocked or caught */
+    if (signum == SIGKILL) {
         proc->exit_status = -(int64_t)signum;
-        /* Try to remove from ready queue. Only set exited=1 if we
-         * actually found and removed the thread — this proves it's not
-         * currently running on any CPU. If sched_remove returns 0, the
-         * thread was already dequeued by another CPU's scheduler and is
-         * either running or about to run; schedule() will set exited=1
-         * when it sees THREAD_DEAD. Setting exited=1 prematurely would
-         * let waitpid kfree the process while schedule() still uses it. */
         if (proc->main_thread->state == THREAD_READY) {
             if (sched_remove(proc->main_thread))
                 proc->exited = 1;
@@ -630,28 +641,38 @@ int process_deliver_signal(process_t *proc, int signum) {
         proc->main_thread->state = THREAD_DEAD;
         serial_printf("[proc] Process %lu killed (SIGKILL)\n", proc->pid);
         return 0;
-    case SIGTERM:
-    case SIGINT:
-    case SIGCHLD:
-        proc->pending_signals |= (1U << (uint32_t)signum);
-        return 0;
-    case SIGSTOP:
+    }
+    if (signum == SIGSTOP) {
         if (proc->main_thread->state == THREAD_READY) {
             sched_remove(proc->main_thread);
         }
         proc->main_thread->state = THREAD_STOPPED;
         serial_printf("[proc] Process %lu stopped (SIGSTOP)\n", proc->pid);
         return 0;
-    case SIGCONT:
+    }
+    if (signum == SIGCONT) {
         if (proc->main_thread->state == THREAD_STOPPED) {
             proc->main_thread->state = THREAD_READY;
             sched_add(proc->main_thread);
             serial_printf("[proc] Process %lu continued (SIGCONT)\n", proc->pid);
         }
         return 0;
-    default:
-        return -1;
     }
+
+    /* If signal is already pending and queue has space, enqueue duplicate */
+    uint32_t bit = 1U << (uint32_t)signum;
+    if (proc->pending_signals & bit) {
+        signal_queue_t *q = &proc->sig_queue;
+        if (q->count < SIG_QUEUE_SIZE) {
+            q->signum[q->tail] = signum;
+            q->tail = (q->tail + 1) % SIG_QUEUE_SIZE;
+            q->count++;
+        }
+        /* else: queue full, signal lost (best effort) */
+    } else {
+        proc->pending_signals |= bit;
+    }
+    return 0;
 }
 
 int process_kill_group(uint64_t pgid, int signum) {

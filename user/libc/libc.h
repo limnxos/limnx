@@ -62,7 +62,9 @@ long sys_shmat(long shmid);
 long sys_shmdt(long addr);
 long sys_fork(void);
 long sys_sigaction(int signum, void (*handler)(int));
+long sys_sigaction3(int signum, void (*handler)(int), int flags);
 long sys_sigreturn(void);
+long sys_sigprocmask(int how, unsigned int new_mask, unsigned int *old_mask);
 long sys_openpty(long *master_fd, long *slave_fd);
 long sys_tcp_socket(void);
 long sys_tcp_connect(long conn, unsigned int ip, int port);
@@ -132,6 +134,14 @@ typedef struct {
 /* Signal handler constants */
 #define SIG_DFL  ((void (*)(int))0)
 #define SIG_IGN  ((void (*)(int))1)
+
+/* sigprocmask operations */
+#define SIG_BLOCK   0
+#define SIG_UNBLOCK 1
+#define SIG_SETMASK 2
+
+/* sigaction flags */
+#define SA_RESTART  (1 << 0)
 
 /* Open flags */
 #define O_RDONLY  0

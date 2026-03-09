@@ -336,6 +336,25 @@ void tcp_rx(uint32_t src_ip, const uint8_t *data, uint32_t len) {
         }
         return;
 
+    case TCP_CLOSE_WAIT:
+        /* Handle retransmitted FINs and ACKs while waiting for app close */
+        if (flags & TCP_RST) {
+            conn->rst_received = 1;
+            conn->state = TCP_CLOSED;
+            conn->in_use = 0;
+            return;
+        }
+        if (flags & TCP_ACK) {
+            if (ack > conn->snd_una && ack <= conn->snd_nxt)
+                conn->snd_una = ack;
+            conn->snd_wnd = ntohs(hdr->window);
+        }
+        if (flags & TCP_FIN) {
+            /* Retransmitted FIN — re-ACK */
+            tcp_send_ack(conn);
+        }
+        return;
+
     case TCP_LAST_ACK:
         if ((flags & TCP_ACK) && ack == conn->snd_nxt) {
             conn->state = TCP_CLOSED;
@@ -643,14 +662,21 @@ int tcp_close(int conn_idx) {
     if (!c->in_use) return -1;
 
     if (c->state == TCP_ESTABLISHED) {
-        /* Send FIN-ACK */
-        tcp_send_segment(c, TCP_FIN | TCP_ACK, 0, 0);
-        c->snd_nxt++;
+        /* Set state and increment snd_nxt BEFORE sending so that
+         * synchronous loopback ACKs are handled in the correct state.
+         * Use save/restore to keep the correct seq in the FIN header. */
+        uint32_t fin_seq = c->snd_nxt;
+        c->snd_nxt = fin_seq + 1;
         c->state = TCP_FIN_WAIT_1;
         c->rto_tick = pit_get_ticks() + 18;
         c->retransmit_count = 0;
         c->tx_buf_len = 0;
-        c->tx_buf_seq = c->snd_nxt - 1;
+        c->tx_buf_seq = fin_seq;
+
+        uint32_t saved_nxt = c->snd_nxt;
+        c->snd_nxt = fin_seq;
+        tcp_send_segment(c, TCP_FIN | TCP_ACK, 0, 0);
+        c->snd_nxt = saved_nxt;
 
         /* Yield until closed */
         int timeout = 10000;
@@ -660,13 +686,19 @@ int tcp_close(int conn_idx) {
             sched_yield();
         }
     } else if (c->state == TCP_CLOSE_WAIT) {
-        tcp_send_segment(c, TCP_FIN | TCP_ACK, 0, 0);
-        c->snd_nxt++;
+        /* Same save/restore pattern for CLOSE_WAIT → LAST_ACK */
+        uint32_t fin_seq = c->snd_nxt;
+        c->snd_nxt = fin_seq + 1;
         c->state = TCP_LAST_ACK;
         c->rto_tick = pit_get_ticks() + 18;
         c->retransmit_count = 0;
         c->tx_buf_len = 0;
-        c->tx_buf_seq = c->snd_nxt - 1;
+        c->tx_buf_seq = fin_seq;
+
+        uint32_t saved_nxt = c->snd_nxt;
+        c->snd_nxt = fin_seq;
+        tcp_send_segment(c, TCP_FIN | TCP_ACK, 0, 0);
+        c->snd_nxt = saved_nxt;
 
         int timeout = 10000;
         while (c->state == TCP_LAST_ACK) {

@@ -788,3 +788,17 @@ sys_mmap_guard:
     mov rax, 107        ; SYS_MMAP_GUARD
     syscall
     ret
+
+; --- sys_sigaction3(signum, handler, flags) ---
+global sys_sigaction3
+sys_sigaction3:
+    mov rax, 41         ; SYS_SIGACTION (same syscall, 3rd arg = flags)
+    syscall
+    ret
+
+; --- sys_sigprocmask(how, new_mask, old_mask_ptr) ---
+global sys_sigprocmask
+sys_sigprocmask:
+    mov rax, 108        ; SYS_SIGPROCMASK
+    syscall
+    ret
