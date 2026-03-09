@@ -15,17 +15,7 @@ static void check(int ok, const char *name) {
     }
 }
 
-/* Helper: convert decimal string to long */
-static long atol(const char *s) {
-    long val = 0;
-    int neg = 0;
-    if (*s == '-') { neg = 1; s++; }
-    while (*s >= '0' && *s <= '9') {
-        val = val * 10 + (*s - '0');
-        s++;
-    }
-    return neg ? -val : val;
-}
+
 
 /* Helper: convert long to decimal string */
 static void ltoa(long val, char *buf) {

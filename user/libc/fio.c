@@ -287,20 +287,17 @@ static int _render_hex(char *tmp, unsigned long val) {
     return i;
 }
 
-int fprintf(FILE *fp, const char *fmt, ...) {
-    if (!fp) return -1;
-    _stdio_init();
-
-    va_list ap;
-    va_start(ap, fmt);
-
-    /* Format into a local buffer, then fwrite */
-    char out[1024];
+/* Core format engine: writes to buf of max_len, returns total chars that
+ * would be written (may exceed max_len). Does NOT null-terminate. */
+static int _vformat(char *buf, int max_len, const char *fmt, va_list ap) {
     int pos = 0;
+    int lim = max_len;
 
-    while (*fmt && pos < 1020) {
+    while (*fmt) {
         if (*fmt != '%') {
-            out[pos++] = *fmt++;
+            if (pos < lim) buf[pos] = *fmt;
+            pos++;
+            fmt++;
             continue;
         }
         fmt++;
@@ -338,25 +335,33 @@ int fprintf(FILE *fp, const char *fmt, ...) {
             else uval = (unsigned long)val;
             len = _render_uint(tmp + (neg ? 1 : 0), uval);
             if (neg) { tmp[0] = '-'; len++; }
-            /* Pad */
-            for (int i = len; i < width && pos < 1020; i++) out[pos++] = pad;
-            for (int i = 0; i < len && pos < 1020; i++) out[pos++] = tmp[i];
+            if (!left_align)
+                for (int i = len; i < width; i++) { if (pos < lim) buf[pos] = pad; pos++; }
+            for (int i = 0; i < len; i++) { if (pos < lim) buf[pos] = tmp[i]; pos++; }
+            if (left_align)
+                for (int i = len; i < width; i++) { if (pos < lim) buf[pos] = ' '; pos++; }
             break;
         }
         case 'u': {
             unsigned long val = is_long ? va_arg(ap, unsigned long)
                                         : (unsigned long)va_arg(ap, unsigned int);
             len = _render_uint(tmp, val);
-            for (int i = len; i < width && pos < 1020; i++) out[pos++] = pad;
-            for (int i = 0; i < len && pos < 1020; i++) out[pos++] = tmp[i];
+            if (!left_align)
+                for (int i = len; i < width; i++) { if (pos < lim) buf[pos] = pad; pos++; }
+            for (int i = 0; i < len; i++) { if (pos < lim) buf[pos] = tmp[i]; pos++; }
+            if (left_align)
+                for (int i = len; i < width; i++) { if (pos < lim) buf[pos] = ' '; pos++; }
             break;
         }
         case 'x': {
             unsigned long val = is_long ? va_arg(ap, unsigned long)
                                         : (unsigned long)va_arg(ap, unsigned int);
             len = _render_hex(tmp, val);
-            for (int i = len; i < width && pos < 1020; i++) out[pos++] = pad;
-            for (int i = 0; i < len && pos < 1020; i++) out[pos++] = tmp[i];
+            if (!left_align)
+                for (int i = len; i < width; i++) { if (pos < lim) buf[pos] = pad; pos++; }
+            for (int i = 0; i < len; i++) { if (pos < lim) buf[pos] = tmp[i]; pos++; }
+            if (left_align)
+                for (int i = len; i < width; i++) { if (pos < lim) buf[pos] = ' '; pos++; }
             break;
         }
         case 's': {
@@ -365,32 +370,75 @@ int fprintf(FILE *fp, const char *fmt, ...) {
             int slen = 0;
             while (s[slen]) slen++;
             if (!left_align)
-                for (int i = slen; i < width && pos < 1020; i++) out[pos++] = ' ';
-            for (int i = 0; i < slen && pos < 1020; i++) out[pos++] = s[i];
+                for (int i = slen; i < width; i++) { if (pos < lim) buf[pos] = ' '; pos++; }
+            for (int i = 0; i < slen; i++) { if (pos < lim) buf[pos] = s[i]; pos++; }
             if (left_align)
-                for (int i = slen; i < width && pos < 1020; i++) out[pos++] = ' ';
+                for (int i = slen; i < width; i++) { if (pos < lim) buf[pos] = ' '; pos++; }
             break;
         }
-        case 'c':
-            out[pos++] = (char)va_arg(ap, int);
+        case 'c': {
+            char c = (char)va_arg(ap, int);
+            if (pos < lim) buf[pos] = c;
+            pos++;
             break;
+        }
         case '%':
-            out[pos++] = '%';
+            if (pos < lim) buf[pos] = '%';
+            pos++;
             break;
         default:
-            out[pos++] = '%';
-            if (is_long && pos < 1020) out[pos++] = 'l';
-            if (pos < 1020) out[pos++] = *fmt;
+            if (pos < lim) buf[pos] = '%';
+            pos++;
+            if (is_long) { if (pos < lim) buf[pos] = 'l'; pos++; }
+            if (pos < lim) buf[pos] = *fmt;
+            pos++;
             break;
         }
         fmt++;
     }
 
-    /* Write the formatted output via fwrite */
+    return pos;
+}
+
+int fprintf(FILE *fp, const char *fmt, ...) {
+    if (!fp) return -1;
+    _stdio_init();
+
+    va_list ap;
+    va_start(ap, fmt);
+
+    char out[1024];
+    int pos = _vformat(out, 1024, fmt, ap);
+    if (pos > 1024) pos = 1024;
+
     if (pos > 0)
         fwrite(out, 1, pos, fp);
     fflush(fp);
 
     va_end(ap);
     return pos;
+}
+
+int snprintf(char *buf, size_t size, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+
+    int n = _vformat(buf, (int)(size > 0 ? size - 1 : 0), fmt, ap);
+
+    va_end(ap);
+
+    if (size > 0)
+        buf[n < (int)(size - 1) ? n : (int)(size - 1)] = '\0';
+    return n;
+}
+
+int sprintf(char *buf, const char *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+
+    int n = _vformat(buf, 0x7FFFFFFF, fmt, ap);
+    buf[n] = '\0';
+
+    va_end(ap);
+    return n;
 }
