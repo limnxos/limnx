@@ -60,7 +60,7 @@ LIBC_ASM_SRCS := user/libc/start.asm user/libc/syscalls.asm
 LIBC_C_SRCS   := user/libc/string.c user/libc/stdio.c user/libc/math.c user/libc/tensor.c \
                  user/libc/vecstore.c user/libc/agent.c user/libc/transformer.c \
                  user/libc/tokenizer.c user/libc/gguf.c user/libc/dequant.c \
-                 user/libc/http.c user/libc/tooldispatch.c
+                 user/libc/http.c user/libc/tooldispatch.c user/libc/malloc.c
 LIBC_ASM_OBJS := $(patsubst user/libc/%.asm,build/user/libc/%.o,$(LIBC_ASM_SRCS))
 LIBC_C_OBJS   := $(patsubst user/libc/%.c,build/user/libc/%.o,$(LIBC_C_SRCS))
 LIBC_OBJS     := $(LIBC_ASM_OBJS) $(LIBC_C_OBJS)
@@ -101,6 +101,7 @@ USER_C_ELFS := build/user/mathtest.elf build/user/agenttest.elf build/user/agent
                build/user/s52test.elf \
                build/user/s53test.elf \
                build/user/s54test.elf \
+               build/user/s55test.elf \
                build/user/inferd.elf
 
 USER_ELFS := $(USER_ASM_ELFS) $(USER_C_ELFS)
@@ -512,6 +513,13 @@ build/user/s54test.o: user/s54test.c user/libc/libc.h
 	$(CC) $(USER_CFLAGS) -c $< -o $@
 
 build/user/s54test.elf: build/user/s54test.o $(LIBC_OBJS) user/libc/linker.ld
+	$(LD) -nostdlib -static -T user/libc/linker.ld $(LIBC_OBJS) $< -o $@
+
+build/user/s55test.o: user/s55test.c user/libc/libc.h
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+build/user/s55test.elf: build/user/s55test.o $(LIBC_OBJS) user/libc/linker.ld
 	$(LD) -nostdlib -static -T user/libc/linker.ld $(LIBC_OBJS) $< -o $@
 
 build/user/inferd.o: user/inferd.c user/libc/libc.h

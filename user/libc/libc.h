@@ -236,6 +236,13 @@ typedef struct dirent {
     uint64_t size;
 } dirent_t;
 
+/* --- Heap allocator --- */
+
+void *malloc(size_t size);
+void  free(void *ptr);
+void *realloc(void *ptr, size_t new_size);
+void *calloc(size_t count, size_t size);
+
 /* --- String functions --- */
 
 void *memcpy(void *dst, const void *src, size_t n);
