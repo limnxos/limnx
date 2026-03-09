@@ -442,3 +442,11 @@ int sprintf(char *buf, const char *fmt, ...) {
     va_end(ap);
     return n;
 }
+
+void perror(const char *msg) {
+    _stdio_init();
+    if (msg && msg[0])
+        fprintf(stderr, "%s: %s\n", msg, strerror(errno));
+    else
+        fprintf(stderr, "%s\n", strerror(errno));
+}

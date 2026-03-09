@@ -2,6 +2,31 @@
 
 int errno = 0;
 
+const char *strerror(int errnum) {
+    switch (errnum) {
+    case 0:            return "Success";
+    case EPERM:        return "Operation not permitted";
+    case ENOENT:       return "No such file or directory";
+    case ESRCH:        return "No such process";
+    case EINTR:        return "Interrupted system call";
+    case EIO:          return "Input/output error";
+    case EBADF:        return "Bad file descriptor";
+    case EAGAIN:       return "Resource temporarily unavailable";
+    case ENOMEM:       return "Cannot allocate memory";
+    case EACCES:       return "Permission denied";
+    case EFAULT:       return "Bad address";
+    case EEXIST:       return "File exists";
+    case EINVAL:       return "Invalid argument";
+    case EMFILE:       return "Too many open files";
+    case ENOSYS:       return "Function not implemented";
+    case EADDRINUSE:   return "Address already in use";
+    case ENOBUFS:      return "No buffer space available";
+    case ENOTCONN:     return "Transport endpoint not connected";
+    case ECONNREFUSED: return "Connection refused";
+    default:           return "Unknown error";
+    }
+}
+
 void *memcpy(void *dst, const void *src, size_t n) {
     uint8_t *d = (uint8_t *)dst;
     const uint8_t *s = (const uint8_t *)src;

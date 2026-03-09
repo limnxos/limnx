@@ -160,18 +160,30 @@ typedef struct {
 #define ESRCH    3
 #define EINTR    4
 #define EIO      5
+#define EBADF    9
+#define EAGAIN  11
 #define ENOMEM  12
 #define EACCES  13
 #define EFAULT  14
+#define EEXIST  17
 #define EINVAL  22
 #define EMFILE  24
 #define ENOSYS  38
-#define EAGAIN  11
 #define EADDRINUSE  98
+#define ENOBUFS    105
 #define ENOTCONN   107
 #define ECONNREFUSED 111
 
 extern int errno;
+
+const char *strerror(int errnum);
+void perror(const char *msg);
+
+/* Helper: if ret < 0, set errno = -ret and return -1; else return ret */
+static inline long __set_errno(long ret) {
+    if (ret < 0) { errno = (int)(-ret); return -1; }
+    return ret;
+}
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)
