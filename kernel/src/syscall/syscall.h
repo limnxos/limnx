@@ -113,7 +113,12 @@
 #define SYS_MPROTECT      106
 #define SYS_MMAP_GUARD    107
 #define SYS_SIGPROCMASK   108
-#define SYS_NR            109
+#define SYS_ARCH_PRCTL    109
+#define SYS_SELECT        110
+#define SYS_SUPER_CREATE  111
+#define SYS_SUPER_ADD     112
+#define SYS_SUPER_SET_POLICY 113
+#define SYS_NR            114
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

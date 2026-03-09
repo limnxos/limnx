@@ -35,6 +35,7 @@ typedef struct thread {
     uint32_t           last_cpu;     /* last CPU this thread ran on */
     uint8_t            fpu_state[FPU_STATE_SIZE] __attribute__((aligned(16)));
     uint64_t           ticks_used;   /* accumulated CPU ticks */
+    uint64_t           fs_base;      /* FS.base for TLS (per-thread) */
 } thread_t;
 
 thread_t *thread_create(void (*entry)(void), uint64_t stack_size);

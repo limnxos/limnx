@@ -89,3 +89,8 @@
 %define SYS_TOKEN_LIST     86
 %define SYS_NS_CREATE      87
 %define SYS_NS_JOIN        88
+%define SYS_ARCH_PRCTL     109
+%define SYS_SELECT         110
+%define SYS_SUPER_CREATE   111
+%define SYS_SUPER_ADD      112
+%define SYS_SUPER_SET_POLICY 113

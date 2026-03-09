@@ -764,6 +764,26 @@ long sys_token_delegate(long parent_id, long target_pid, long perms,
 
 long sys_ns_setquota(long ns_id, long resource, long limit);
 
+/* arch_prctl */
+#define ARCH_SET_FS 0x1002
+#define ARCH_GET_FS 0x1003
+long sys_arch_prctl(long code, long addr);
+
+/* select */
+typedef struct { uint64_t bits; } fd_set_t;
+#define FD_ZERO(s)    ((s)->bits = 0)
+#define FD_SET(fd, s) ((s)->bits |= (1ULL << (fd)))
+#define FD_CLR(fd, s) ((s)->bits &= ~(1ULL << (fd)))
+#define FD_ISSET(fd, s) (((s)->bits >> (fd)) & 1)
+long sys_select(long nfds, fd_set_t *readfds, fd_set_t *writefds, long timeout_us);
+
+/* Supervisor trees */
+#define SUPER_ONE_FOR_ONE 0
+#define SUPER_ONE_FOR_ALL 1
+long sys_super_create(const char *name);
+long sys_super_add(long super_id, const char *elf_path, long ns_id, long caps);
+long sys_super_set_policy(long super_id, long policy);
+
 /* --- HTTP types and functions --- */
 
 typedef struct http_request {

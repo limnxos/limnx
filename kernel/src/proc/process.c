@@ -517,6 +517,14 @@ static void fork_child_entry(void) {
         }
     }
 
+    /* Restore FS.base (TLS) for child — inherited from parent */
+    {
+        uint64_t fb = t->fs_base;
+        uint32_t lo = (uint32_t)fb;
+        uint32_t hi = (uint32_t)(fb >> 32);
+        __asm__ volatile ("wrmsr" : : "c"((uint32_t)0xC0000100), "a"(lo), "d"(hi));
+    }
+
     /* Load per-child fork context address into rax, then restore all regs.
      * Order matters: rsp must be loaded last (before sysretq). */
     __asm__ volatile (
@@ -615,6 +623,7 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     thread_t *ct = thread_create(fork_child_entry, 0);
     if (!ct) { kfree(child); return NULL; }
     ct->process = child;
+    ct->fs_base = parent->main_thread->fs_base;  /* inherit TLS */
     child->main_thread = ct;
 
     process_register(child);

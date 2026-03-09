@@ -23,6 +23,7 @@
 #include "blk/limnfs.h"
 #include "blk/bcache.h"
 #include "sync/futex.h"
+#include "ipc/supervisor.h"
 #include "net/netstor.h"
 #include "fb/fbcon.h"
 #include "pty/pty.h"
@@ -804,6 +805,7 @@ void kmain(void) {
     pty_init();
     tcp_init();
     futex_init();
+    supervisor_init();
 
     /* Initialize SMP (per-CPU data, LAPIC, AP bootstrap) */
     smp_init();

@@ -205,9 +205,26 @@ static void do_switch(thread_t *old, thread_t *next, uint64_t flags) {
      * After context_switch, we're on the resumed thread's stack; release
      * the lock on the new thread's behalf. */
 
-    if (old != next)
+    if (old != next) {
+        /* Save/restore FS.base (TLS) across context switch */
+        {
+            uint32_t lo, hi;
+            __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"((uint32_t)0xC0000100));
+            old->fs_base = ((uint64_t)hi << 32) | lo;
+        }
         context_switch(&old->context, &next->context,
                        old->fpu_state, next->fpu_state);
+        /* After switch, 'next' is now the current thread.
+         * Restore its FS.base. Note: after context_switch, local vars
+         * belong to the resumed thread, so we use thread_get_current(). */
+        {
+            thread_t *cur = thread_get_current();
+            uint64_t fb = cur->fs_base;
+            uint32_t lo = (uint32_t)fb;
+            uint32_t hi = (uint32_t)(fb >> 32);
+            __asm__ volatile ("wrmsr" : : "c"((uint32_t)0xC0000100), "a"(lo), "d"(hi));
+        }
+    }
 
     /* Now on the resumed thread's stack. Release the lock.
      * In SMP mode, the per-CPU rq_lock is released.

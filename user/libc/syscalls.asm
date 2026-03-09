@@ -802,3 +802,40 @@ sys_sigprocmask:
     mov rax, 108        ; SYS_SIGPROCMASK
     syscall
     ret
+
+; --- sys_arch_prctl(code, addr) ---
+global sys_arch_prctl
+sys_arch_prctl:
+    mov rax, 109        ; SYS_ARCH_PRCTL
+    syscall
+    ret
+
+; --- sys_select(nfds, readfds, writefds, timeout_us) ---
+global sys_select
+sys_select:
+    mov r10, rcx        ; 4th arg: rcx → r10
+    mov rax, 110        ; SYS_SELECT
+    syscall
+    ret
+
+; --- sys_super_create(name) ---
+global sys_super_create
+sys_super_create:
+    mov rax, 111        ; SYS_SUPER_CREATE
+    syscall
+    ret
+
+; --- sys_super_add(super_id, elf_path, ns_id, caps) ---
+global sys_super_add
+sys_super_add:
+    mov r10, rcx        ; 4th arg: rcx → r10
+    mov rax, 112        ; SYS_SUPER_ADD
+    syscall
+    ret
+
+; --- sys_super_set_policy(super_id, policy) ---
+global sys_super_set_policy
+sys_super_set_policy:
+    mov rax, 113        ; SYS_SUPER_SET_POLICY
+    syscall
+    ret

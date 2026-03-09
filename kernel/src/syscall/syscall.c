@@ -21,6 +21,7 @@
 #include "ipc/agent_ns.h"
 #include "sync/futex.h"
 #include "ipc/taskgraph.h"
+#include "ipc/supervisor.h"
 #include "mm/swap.h"
 #include "blk/limnfs.h"
 #include "smp/percpu.h"
@@ -296,6 +297,8 @@ static int64_t sys_exit(uint64_t status, uint64_t a2,
             vmm_free_user_pages(t->process->cr3);
             t->process->cr3 = 0;
         }
+        /* Notify supervisors about exit */
+        supervisor_on_exit(t->process->pid, (int)status);
         /* Deliver SIGCHLD to parent if parent has a user handler.
          * Only set pending bit — actual delivery happens on kernel→user return.
          * Guard: parent must exist, not exited, and have a real handler (not DFL/IGN).
@@ -2181,6 +2184,173 @@ static int64_t sys_sigprocmask(uint64_t how, uint64_t new_mask,
     }
 
     return 0;
+}
+
+/* --- Stage 64 syscalls --- */
+
+#define ARCH_SET_FS 0x1002
+#define ARCH_GET_FS 0x1003
+
+static int64_t sys_arch_prctl(uint64_t code, uint64_t addr,
+                               uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+
+    thread_t *t = thread_get_current();
+    if (!t) return -1;
+
+    switch (code) {
+    case ARCH_SET_FS:
+        t->fs_base = addr;
+        /* Apply immediately */
+        {
+            uint32_t lo = (uint32_t)addr;
+            uint32_t hi = (uint32_t)(addr >> 32);
+            __asm__ volatile ("wrmsr" : : "c"((uint32_t)0xC0000100), "a"(lo), "d"(hi));
+        }
+        return 0;
+    case ARCH_GET_FS:
+        if (t->process && addr) {
+            uint64_t *pte = vmm_get_pte(t->process->cr3, addr);
+            if (pte && (*pte & PTE_PRESENT)) {
+                uint64_t phys = (*pte & PTE_ADDR_MASK) + (addr & 0xFFF);
+                uint64_t *out = (uint64_t *)PHYS_TO_VIRT(phys);
+                *out = t->fs_base;
+            }
+        }
+        return 0;
+    default:
+        return -1;
+    }
+}
+
+/* Forward declaration for poll_check_fd (defined in Stage 34 section) */
+static int16_t poll_check_fd(process_t *proc, int fd, int16_t events);
+
+/* select() fd_set is a 64-bit bitmask (supports fds 0-63) */
+typedef struct { uint64_t bits; } fd_set_kern_t;
+
+static int64_t sys_select(uint64_t nfds, uint64_t readfds_ptr,
+                            uint64_t writefds_ptr, uint64_t timeout_us,
+                            uint64_t a5) {
+    (void)a5;
+
+    thread_t *t = thread_get_current();
+    process_t *proc = t ? t->process : (void *)0;
+    if (!proc) return -1;
+    if (nfds > MAX_FDS) nfds = MAX_FDS;
+
+    /* Read fd_sets from user space */
+    uint64_t rfds = 0, wfds = 0;
+    if (readfds_ptr) {
+        uint64_t *pte = vmm_get_pte(proc->cr3, readfds_ptr);
+        if (pte && (*pte & PTE_PRESENT)) {
+            uint64_t phys = (*pte & PTE_ADDR_MASK) + (readfds_ptr & 0xFFF);
+            rfds = *(uint64_t *)PHYS_TO_VIRT(phys);
+        }
+    }
+    if (writefds_ptr) {
+        uint64_t *pte = vmm_get_pte(proc->cr3, writefds_ptr);
+        if (pte && (*pte & PTE_PRESENT)) {
+            uint64_t phys = (*pte & PTE_ADDR_MASK) + (writefds_ptr & 0xFFF);
+            wfds = *(uint64_t *)PHYS_TO_VIRT(phys);
+        }
+    }
+
+    /* Calculate timeout in PIT ticks */
+    uint64_t deadline = 0;
+    int has_timeout = (timeout_us != (uint64_t)-1);
+    if (has_timeout && timeout_us > 0) {
+        uint64_t delay_ticks = (timeout_us * 18) / 1000000;
+        if (delay_ticks == 0) delay_ticks = 1;
+        deadline = pit_get_ticks() + delay_ticks;
+    }
+
+    /* Poll loop */
+    for (;;) {
+        uint64_t r_out = 0, w_out = 0;
+        int ready = 0;
+
+        for (uint64_t fd = 0; fd < nfds; fd++) {
+            int16_t events = 0;
+            if (rfds & (1ULL << fd)) events |= POLLIN;
+            if (wfds & (1ULL << fd)) events |= POLLOUT;
+            if (!events) continue;
+
+            int16_t revents = poll_check_fd(proc, (int)fd, events);
+            if (revents & (POLLIN | POLLERR | POLLHUP))
+                if (rfds & (1ULL << fd)) { r_out |= (1ULL << fd); ready++; }
+            if (revents & (POLLOUT | POLLERR))
+                if (wfds & (1ULL << fd)) { w_out |= (1ULL << fd); ready++; }
+        }
+
+        if (ready > 0 || (has_timeout && timeout_us == 0)) {
+            /* Write results back */
+            if (readfds_ptr) {
+                uint64_t *pte = vmm_get_pte(proc->cr3, readfds_ptr);
+                if (pte && (*pte & PTE_PRESENT)) {
+                    uint64_t phys = (*pte & PTE_ADDR_MASK) + (readfds_ptr & 0xFFF);
+                    *(uint64_t *)PHYS_TO_VIRT(phys) = r_out;
+                }
+            }
+            if (writefds_ptr) {
+                uint64_t *pte = vmm_get_pte(proc->cr3, writefds_ptr);
+                if (pte && (*pte & PTE_PRESENT)) {
+                    uint64_t phys = (*pte & PTE_ADDR_MASK) + (writefds_ptr & 0xFFF);
+                    *(uint64_t *)PHYS_TO_VIRT(phys) = w_out;
+                }
+            }
+            return ready;
+        }
+
+        if (has_timeout && pit_get_ticks() >= deadline)
+            return 0;  /* timeout */
+
+        sched_yield();
+    }
+}
+
+/* --- Supervisor syscalls --- */
+
+static int64_t sys_super_create(uint64_t name_ptr, uint64_t a2,
+                                 uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;
+
+    const char *name = "supervisor";
+    if (name_ptr) {
+        uint64_t *pte = vmm_get_pte(t->process->cr3, name_ptr);
+        if (pte && (*pte & PTE_PRESENT)) {
+            uint64_t phys = (*pte & PTE_ADDR_MASK) + (name_ptr & 0xFFF);
+            name = (const char *)PHYS_TO_VIRT(phys);
+        }
+    }
+
+    return supervisor_create(t->process->pid, name);
+}
+
+static int64_t sys_super_add(uint64_t super_id, uint64_t elf_path_ptr,
+                              uint64_t ns_id, uint64_t caps, uint64_t a5) {
+    (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;
+
+    const char *path = "";
+    if (elf_path_ptr) {
+        uint64_t *pte = vmm_get_pte(t->process->cr3, elf_path_ptr);
+        if (pte && (*pte & PTE_PRESENT)) {
+            uint64_t phys = (*pte & PTE_ADDR_MASK) + (elf_path_ptr & 0xFFF);
+            path = (const char *)PHYS_TO_VIRT(phys);
+        }
+    }
+
+    return supervisor_add_child((uint32_t)super_id, path, (int64_t)ns_id, caps);
+}
+
+static int64_t sys_super_set_policy(uint64_t super_id, uint64_t policy,
+                                     uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    return supervisor_set_policy((uint32_t)super_id, (uint8_t)policy);
 }
 
 /* --- Stage 32 syscalls --- */
@@ -4312,6 +4482,11 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_MPROTECT]       = sys_mprotect,
     [SYS_MMAP_GUARD]     = sys_mmap_guard,
     [SYS_SIGPROCMASK]    = sys_sigprocmask,
+    [SYS_ARCH_PRCTL]     = sys_arch_prctl,
+    [SYS_SELECT]         = sys_select,
+    [SYS_SUPER_CREATE]   = sys_super_create,
+    [SYS_SUPER_ADD]      = sys_super_add,
+    [SYS_SUPER_SET_POLICY] = sys_super_set_policy,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).
