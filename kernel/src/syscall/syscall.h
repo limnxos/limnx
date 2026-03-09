@@ -111,7 +111,8 @@
 #define SYS_FUTEX_WAKE    104
 #define SYS_MMAP_FILE     105
 #define SYS_MPROTECT      106
-#define SYS_NR            107
+#define SYS_MMAP_GUARD    107
+#define SYS_NR            108
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

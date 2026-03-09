@@ -570,6 +570,7 @@ long sys_futex_wait(volatile unsigned int *addr, unsigned int expected);
 long sys_futex_wake(volatile unsigned int *addr, unsigned int max_wake);
 long sys_mmap_file(long fd, long offset, long num_pages);
 long sys_mprotect(long virt_addr, long num_pages, long prot);
+long sys_mmap_guard(long num_pages);
 
 /* mprotect protection flags */
 #define PROT_NONE   0

@@ -1041,8 +1041,8 @@ static int64_t sys_mmap(uint64_t num_pages, uint64_t a2,
     proc->mmap_table[slot].vfs_node = -1;
     proc->mmap_table[slot].file_offset = 0;
 
-    /* Bump next address */
-    proc->mmap_next_addr = virt + num_pages * PAGE_SIZE;
+    /* Bump next address (+1 guard gap page) */
+    proc->mmap_next_addr = virt + (num_pages + 1) * PAGE_SIZE;
     proc->used_mem_pages += num_pages;
 
     return (int64_t)virt;
@@ -1328,7 +1328,7 @@ static int64_t sys_fmmap(uint64_t fd, uint64_t a2,
     proc->mmap_table[slot].shm_id = -1;
     proc->mmap_table[slot].vfs_node = -1;
     proc->mmap_table[slot].file_offset = 0;
-    proc->mmap_next_addr = virt + num_pages * PAGE_SIZE;
+    proc->mmap_next_addr = virt + (num_pages + 1) * PAGE_SIZE;
 
     return (int64_t)virt;
 }
@@ -1955,7 +1955,7 @@ static int64_t sys_shmat(uint64_t shmid, uint64_t a2,
     proc->mmap_table[slot].shm_id = (int32_t)shmid;
     proc->mmap_table[slot].vfs_node = -1;
     proc->mmap_table[slot].file_offset = 0;
-    proc->mmap_next_addr = virt + (uint64_t)npages * PAGE_SIZE;
+    proc->mmap_next_addr = virt + (uint64_t)(npages + 1) * PAGE_SIZE;
     shm_table[shmid].ref_count++;
 
     return (int64_t)virt;
@@ -2851,8 +2851,33 @@ int page_fault_handler(uint64_t fault_addr, uint64_t err_code,
     }
 
 kill:
-    serial_printf("[fault] Process %lu killed: fault at %lx (err=%lx, rip=%lx)\n",
-        proc->pid, fault_addr, err_code, frame->rip);
+    /* Detect stack overflow: fault in the guard page below the stack */
+    {
+        uint64_t stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
+        uint64_t guard_start = stack_bottom - PAGE_SIZE;
+        if (fault_addr >= guard_start && fault_addr < stack_bottom) {
+            serial_printf("[fault] Stack overflow detected (pid %lu, addr=%lx, rip=%lx)\n",
+                proc->pid, fault_addr, frame->rip);
+        } else {
+            /* Check if fault is in an mmap guard gap */
+            int in_guard_gap = 0;
+            for (int i = 0; i < MMAP_MAX_ENTRIES; i++) {
+                mmap_entry_t *me = &proc->mmap_table[i];
+                if (!me->used) continue;
+                uint64_t region_end = me->virt_addr + (uint64_t)me->num_pages * PAGE_SIZE;
+                uint64_t gap_end = region_end + PAGE_SIZE;
+                if (fault_addr >= region_end && fault_addr < gap_end) {
+                    serial_printf("[fault] Guard page hit (pid %lu, addr=%lx past mmap %lx+%u, rip=%lx)\n",
+                        proc->pid, fault_addr, me->virt_addr, me->num_pages, frame->rip);
+                    in_guard_gap = 1;
+                    break;
+                }
+            }
+            if (!in_guard_gap)
+                serial_printf("[fault] Process %lu killed: fault at %lx (err=%lx, rip=%lx)\n",
+                    proc->pid, fault_addr, err_code, frame->rip);
+        }
+    }
     proc->exit_status = -11;  /* SIGSEGV */
     vmm_free_user_pages(proc->cr3);
     proc->cr3 = 0;
@@ -3595,7 +3620,7 @@ static int64_t sys_mmap2(uint64_t num_pages, uint64_t mmap_flags,
         proc->mmap_table[slot].demand = 1;
         proc->mmap_table[slot].vfs_node = -1;
         proc->mmap_table[slot].file_offset = 0;
-        proc->mmap_next_addr = virt + num_pages * 4096;
+        proc->mmap_next_addr = virt + (num_pages + 1) * 4096;
         proc->used_mem_pages += num_pages;
         return (int64_t)virt;
     }
@@ -3622,7 +3647,7 @@ static int64_t sys_mmap2(uint64_t num_pages, uint64_t mmap_flags,
     proc->mmap_table[slot].demand = 0;
     proc->mmap_table[slot].vfs_node = -1;
     proc->mmap_table[slot].file_offset = 0;
-    proc->mmap_next_addr = virt + num_pages * 4096;
+    proc->mmap_next_addr = virt + (num_pages + 1) * 4096;
     proc->used_mem_pages += num_pages;
     return (int64_t)virt;
 }
@@ -3992,7 +4017,7 @@ static int64_t sys_mmap_file(uint64_t fd, uint64_t offset,
     proc->mmap_table[slot].demand = 1;
     proc->mmap_table[slot].vfs_node = (int32_t)node_idx;
     proc->mmap_table[slot].file_offset = offset;
-    proc->mmap_next_addr = virt + num_pages * PAGE_SIZE;
+    proc->mmap_next_addr = virt + (num_pages + 1) * PAGE_SIZE;
 
     return (int64_t)virt;
 }
@@ -4070,6 +4095,61 @@ static int64_t sys_mprotect(uint64_t virt_addr, uint64_t num_pages,
     }
 
     return 0;
+}
+
+/* --- mmap_guard: allocate region with explicit trailing guard page --- */
+
+static int64_t sys_mmap_guard(uint64_t num_pages, uint64_t a2,
+                               uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+
+    if (num_pages == 0 || num_pages > MMAP_MAX_PAGES)
+        return -EINVAL;
+
+    thread_t *t = thread_get_current();
+    process_t *proc = t ? t->process : NULL;
+    if (!proc) return -EINVAL;
+
+    if (proc->rlimit_mem_pages > 0 &&
+        proc->used_mem_pages + num_pages > proc->rlimit_mem_pages)
+        return -ENOMEM;
+
+    int slot = -1;
+    for (int i = 0; i < MMAP_MAX_ENTRIES; i++) {
+        if (!proc->mmap_table[i].used) { slot = i; break; }
+    }
+    if (slot < 0) return -ENOMEM;
+
+    uint64_t phys = pmm_alloc_contiguous((uint32_t)num_pages);
+    if (phys == 0) return -ENOMEM;
+
+    uint64_t virt = proc->mmap_next_addr;
+    for (uint64_t i = 0; i < num_pages; i++) {
+        uint64_t page_phys = phys + i * PAGE_SIZE;
+        uint64_t page_virt = virt + i * PAGE_SIZE;
+        uint8_t *dst = (uint8_t *)PHYS_TO_VIRT(page_phys);
+        for (uint64_t j = 0; j < PAGE_SIZE; j++) dst[j] = 0;
+        if (vmm_map_page_in(proc->cr3, page_virt, page_phys,
+                            PTE_USER | PTE_WRITABLE | PTE_NX) != 0) {
+            for (uint64_t k = 0; k < num_pages; k++)
+                pmm_free_page(phys + k * PAGE_SIZE);
+            return -ENOMEM;
+        }
+    }
+
+    proc->mmap_table[slot].virt_addr = virt;
+    proc->mmap_table[slot].phys_addr = phys;
+    proc->mmap_table[slot].num_pages = (uint32_t)num_pages;
+    proc->mmap_table[slot].used = 1;
+    proc->mmap_table[slot].shm_id = -1;
+    proc->mmap_table[slot].demand = 0;
+    proc->mmap_table[slot].vfs_node = -1;
+    proc->mmap_table[slot].file_offset = 0;
+    /* Skip 1 guard page after the usable region */
+    proc->mmap_next_addr = virt + (num_pages + 1) * PAGE_SIZE;
+    proc->used_mem_pages += num_pages;
+
+    return (int64_t)virt;
 }
 
 /* Syscall dispatch table */
@@ -4183,6 +4263,7 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_FUTEX_WAKE]     = sys_futex_wake,
     [SYS_MMAP_FILE]      = sys_mmap_file,
     [SYS_MPROTECT]       = sys_mprotect,
+    [SYS_MMAP_GUARD]     = sys_mmap_guard,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).

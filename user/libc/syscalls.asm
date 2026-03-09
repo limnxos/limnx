@@ -781,3 +781,10 @@ sys_mprotect:
     mov rax, 106        ; SYS_MPROTECT
     syscall
     ret
+
+; --- sys_mmap_guard(num_pages) ---
+global sys_mmap_guard
+sys_mmap_guard:
+    mov rax, 107        ; SYS_MMAP_GUARD
+    syscall
+    ret
