@@ -107,6 +107,7 @@ USER_C_ELFS := build/user/mathtest.elf build/user/agenttest.elf build/user/agent
                build/user/s57test.elf \
                build/user/s58test.elf \
                build/user/s59test.elf \
+               build/user/s61test.elf \
                build/user/inferd.elf
 
 USER_ELFS := $(USER_ASM_ELFS) $(USER_C_ELFS)
@@ -555,6 +556,13 @@ build/user/s59test.o: user/s59test.c user/libc/libc.h
 build/user/s59test.elf: build/user/s59test.o $(LIBC_OBJS) user/libc/linker.ld
 	$(LD) -nostdlib -static -T user/libc/linker.ld $(LIBC_OBJS) $< -o $@
 
+build/user/s61test.o: user/s61test.c user/libc/libc.h
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+build/user/s61test.elf: build/user/s61test.o $(LIBC_OBJS) user/libc/linker.ld
+	$(LD) -nostdlib -static -T user/libc/linker.ld $(LIBC_OBJS) $< -o $@
+
 build/user/inferd.o: user/inferd.c user/libc/libc.h
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_CFLAGS) -c $< -o $@
@@ -636,6 +644,8 @@ test: $(ISO) $(DISK_IMG)
 		-serial stdio \
 		-display none \
 		-no-reboot \
+		-device virtio-net-pci,netdev=net0 \
+		-netdev user,id=net0 \
 		-drive file=$(DISK_IMG),format=raw,if=none,id=disk0 \
 		-device virtio-blk-pci,drive=disk0
 
