@@ -2770,12 +2770,18 @@ int page_fault_handler(uint64_t fault_addr, uint64_t err_code,
         /* Page present but not writable — check COW */
         uint64_t *pte = vmm_get_pte(proc->cr3, fault_addr);
         if (pte && (*pte & PTE_COW)) {
+            /* If page was not originally writable (mprotect RO), this is a
+             * genuine protection fault — don't resolve COW */
+            if (!(*pte & PTE_WAS_WRITABLE))
+                goto kill;
+
             uint64_t old_phys = *pte & PTE_ADDR_MASK;
             uint64_t old_flags = *pte & ~PTE_ADDR_MASK;
+            uint64_t clean_flags = old_flags & ~(PTE_COW | PTE_WAS_WRITABLE);
 
             if (pmm_ref_get(old_phys) == 1) {
                 /* Last reference — just make writable */
-                *pte = old_phys | ((old_flags & ~PTE_COW) | PTE_WRITABLE | PTE_PRESENT);
+                *pte = old_phys | (clean_flags | PTE_WRITABLE | PTE_PRESENT);
                 invlpg_addr(fault_addr & ~0xFFFULL);
                 return 0;
             }
@@ -2788,7 +2794,7 @@ int page_fault_handler(uint64_t fault_addr, uint64_t err_code,
             uint8_t *dst = (uint8_t *)PHYS_TO_VIRT(new_phys);
             for (int i = 0; i < 4096; i++) dst[i] = src[i];
 
-            *pte = new_phys | ((old_flags & ~PTE_COW) | PTE_WRITABLE | PTE_PRESENT);
+            *pte = new_phys | (clean_flags | PTE_WRITABLE | PTE_PRESENT);
             invlpg_addr(fault_addr & ~0xFFFULL);
 
             pmm_ref_dec(old_phys);
@@ -3991,6 +3997,81 @@ static int64_t sys_mmap_file(uint64_t fd, uint64_t offset,
     return (int64_t)virt;
 }
 
+/* --- mprotect --- */
+
+static inline void flush_page(uint64_t addr) {
+    __asm__ volatile ("invlpg (%0)" : : "r"(addr) : "memory");
+}
+
+static int64_t sys_mprotect(uint64_t virt_addr, uint64_t num_pages,
+                             uint64_t prot, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+
+    thread_t *t = thread_get_current();
+    process_t *proc = t ? t->process : NULL;
+    if (!proc) return -EINVAL;
+
+    if (virt_addr & 0xFFF) return -EINVAL;  /* not page-aligned */
+    if (num_pages == 0) return -EINVAL;
+
+    uint64_t range_end = virt_addr + num_pages * PAGE_SIZE;
+
+    /* Validate: entire range must be within a single mmap entry */
+    int found = 0;
+    for (int i = 0; i < MMAP_MAX_ENTRIES; i++) {
+        if (!proc->mmap_table[i].used) continue;
+        uint64_t entry_start = proc->mmap_table[i].virt_addr;
+        uint64_t entry_end = entry_start + (uint64_t)proc->mmap_table[i].num_pages * PAGE_SIZE;
+        if (virt_addr >= entry_start && range_end <= entry_end) {
+            found = 1;
+            break;
+        }
+    }
+    if (!found) return -EINVAL;
+
+    /* Convert prot flags to PTE flags */
+    uint64_t new_flags = PTE_PRESENT | PTE_USER;
+    if (prot == PROT_NONE) {
+        new_flags = PTE_USER;  /* no PTE_PRESENT — page inaccessible */
+    } else {
+        if (prot & PROT_WRITE)
+            new_flags |= PTE_WRITABLE;
+        if (!(prot & PROT_EXEC))
+            new_flags |= PTE_NX;
+    }
+
+    /* Walk PTEs and update flags */
+    for (uint64_t pg = 0; pg < num_pages; pg++) {
+        uint64_t va = virt_addr + pg * PAGE_SIZE;
+        uint64_t *pte = vmm_get_pte(proc->cr3, va);
+        if (!pte) continue;  /* demand page not yet faulted — skip */
+        uint64_t old = *pte;
+        if (!(old & PTE_PRESENT) && !(old & PTE_SWAP)) continue;  /* not mapped yet */
+
+        uint64_t phys = old & PTE_ADDR_MASK;
+        /* Preserve COW bit if set (don't grant write on COW page via mprotect) */
+        uint64_t cow = old & PTE_COW;
+        uint64_t final_flags = new_flags | cow;
+        if (cow) {
+            if (final_flags & PTE_WRITABLE) {
+                /* COW page: don't actually make writable yet — keep COW semantics.
+                 * But mark WAS_WRITABLE so COW handler knows to grant write later. */
+                final_flags &= ~PTE_WRITABLE;
+                final_flags |= PTE_WAS_WRITABLE;
+            } else {
+                /* Making COW page read-only: clear WAS_WRITABLE so COW handler
+                 * knows this is a genuine protection fault */
+                final_flags &= ~PTE_WAS_WRITABLE;
+            }
+        }
+
+        *pte = phys | final_flags;
+        flush_page(va);
+    }
+
+    return 0;
+}
+
 /* Syscall dispatch table */
 typedef int64_t (*syscall_fn_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
@@ -4101,6 +4182,7 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_FUTEX_WAIT]     = sys_futex_wait,
     [SYS_FUTEX_WAKE]     = sys_futex_wake,
     [SYS_MMAP_FILE]      = sys_mmap_file,
+    [SYS_MPROTECT]       = sys_mprotect,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).
@@ -4186,19 +4268,20 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
             uint64_t *pte = vmm_get_pte(proc->cr3, frame_rsp);
             if (!pte || !(*pte & PTE_PRESENT)) break;  /* stack not mapped */
 
-            /* Handle COW: if page is COW, copy it before writing */
+            /* Handle COW: if page is COW, copy it before writing signal frame */
             if (*pte & PTE_COW) {
                 uint64_t old_phys = *pte & PTE_ADDR_MASK;
                 uint64_t old_flags = *pte & ~PTE_ADDR_MASK;
+                uint64_t clean = old_flags & ~(PTE_COW | PTE_WAS_WRITABLE);
                 if (pmm_ref_get(old_phys) == 1) {
-                    *pte = old_phys | ((old_flags & ~PTE_COW) | PTE_WRITABLE | PTE_PRESENT);
+                    *pte = old_phys | (clean | PTE_WRITABLE | PTE_PRESENT);
                 } else {
                     uint64_t new_phys = pmm_alloc_page();
                     if (new_phys == 0) break;
                     uint8_t *src = (uint8_t *)PHYS_TO_VIRT(old_phys);
                     uint8_t *dst = (uint8_t *)PHYS_TO_VIRT(new_phys);
                     for (int i = 0; i < 4096; i++) dst[i] = src[i];
-                    *pte = new_phys | ((old_flags & ~PTE_COW) | PTE_WRITABLE | PTE_PRESENT);
+                    *pte = new_phys | (clean | PTE_WRITABLE | PTE_PRESENT);
                     pmm_ref_dec(old_phys);
                 }
                 invlpg_addr(frame_rsp & ~0xFFFULL);

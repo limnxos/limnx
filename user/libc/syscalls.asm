@@ -774,3 +774,10 @@ sys_mmap_file:
     mov rax, 105        ; SYS_MMAP_FILE
     syscall
     ret
+
+; --- sys_mprotect(virt_addr, num_pages, prot) ---
+global sys_mprotect
+sys_mprotect:
+    mov rax, 106        ; SYS_MPROTECT
+    syscall
+    ret

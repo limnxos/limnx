@@ -284,6 +284,9 @@ uint64_t vmm_clone_cow(uint64_t parent_cr3,
                     } else {
                         /* Private page: mark both parent and child as COW */
                         uint64_t cow_flags = (flags & ~PTE_WRITABLE) | PTE_COW;
+                        /* Track if page was originally writable (not just COW from mprotect RO) */
+                        if (flags & PTE_WRITABLE)
+                            cow_flags |= PTE_WAS_WRITABLE;
                         parent_pt[i1] = phys | cow_flags;
 
                         vmm_map_page_in(child_cr3, virt, phys,

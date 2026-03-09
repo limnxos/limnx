@@ -569,6 +569,13 @@ long sys_ns_join(long ns_id);
 long sys_futex_wait(volatile unsigned int *addr, unsigned int expected);
 long sys_futex_wake(volatile unsigned int *addr, unsigned int max_wake);
 long sys_mmap_file(long fd, long offset, long num_pages);
+long sys_mprotect(long virt_addr, long num_pages, long prot);
+
+/* mprotect protection flags */
+#define PROT_NONE   0
+#define PROT_READ   1
+#define PROT_WRITE  2
+#define PROT_EXEC   4
 
 /* --- Userspace sleeping mutex (built on futex) --- */
 

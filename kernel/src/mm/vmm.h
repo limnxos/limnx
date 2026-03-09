@@ -15,6 +15,7 @@
 #define PTE_GLOBAL       (1ULL << 8)
 #define PTE_COW          (1ULL << 9)   /* Copy-on-write (available bit) */
 #define PTE_SWAP         (1ULL << 10)  /* Page swapped to disk (available bit) */
+#define PTE_WAS_WRITABLE (1ULL << 11)  /* Page was writable before COW (available bit) */
 #define PTE_NX           (1ULL << 63)
 
 #define PTE_ADDR_MASK    0x000FFFFFFFFFF000ULL
