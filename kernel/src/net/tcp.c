@@ -715,6 +715,13 @@ int tcp_close(int conn_idx) {
         tcp_send_segment(c, TCP_FIN | TCP_ACK, 0, 0);
         c->snd_nxt = saved_nxt;
 
+        /* Nonblock: send FIN and return, let state machine finish async */
+        if (c->nonblock) {
+            /* If loopback already completed the close, clean up */
+            if (c->state == TCP_CLOSED) { c->in_use = 0; }
+            return 0;
+        }
+
         /* Yield until closed */
         int timeout = 10000;
         while (c->state != TCP_CLOSED && c->state != TCP_TIME_WAIT) {
@@ -736,6 +743,12 @@ int tcp_close(int conn_idx) {
         c->snd_nxt = fin_seq;
         tcp_send_segment(c, TCP_FIN | TCP_ACK, 0, 0);
         c->snd_nxt = saved_nxt;
+
+        /* Nonblock: send FIN and return, let state machine finish async */
+        if (c->nonblock) {
+            if (c->state == TCP_CLOSED) { c->in_use = 0; }
+            return 0;
+        }
 
         int timeout = 10000;
         while (c->state == TCP_LAST_ACK) {
