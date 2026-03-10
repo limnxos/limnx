@@ -140,7 +140,8 @@ static void resolve_user_path(process_t *proc, const char *path, char *out) {
 static int fd_is_free(fd_entry_t *e) {
     return e->node == (void *)0 && e->pipe == (void *)0 && e->pty == (void *)0
         && e->unix_sock == (void *)0 && e->eventfd == (void *)0
-        && e->epoll == (void *)0 && e->uring == (void *)0;
+        && e->epoll == (void *)0 && e->uring == (void *)0
+        && e->tcp_conn_idx < 0;
 }
 
 /* --- Permission helper --- */
@@ -609,6 +610,14 @@ static int64_t sys_close(uint64_t fd, uint64_t a2,
         if (ur_idx >= 0)
             uring_close(ur_idx);
         entry->uring = (void *)0;
+        return 0;
+    }
+
+    /* TCP fd close — just release the fd, don't close the TCP conn */
+    if (entry->tcp_conn_idx >= 0) {
+        entry->tcp_conn_idx = -1;
+        entry->open_flags = 0;
+        entry->fd_flags = 0;
         return 0;
     }
 
@@ -2619,6 +2628,34 @@ static int64_t sys_tcp_close(uint64_t conn_idx, uint64_t a2,
     return r;
 }
 
+static int64_t sys_tcp_setopt(uint64_t conn_idx, uint64_t opt, uint64_t value,
+                               uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+    /* opt 1 = O_NONBLOCK */
+    if (opt == 1)
+        return tcp_set_nonblock((int)conn_idx, (int)value);
+    return -EINVAL;
+}
+
+static int64_t sys_tcp_to_fd(uint64_t conn_idx, uint64_t a2,
+                              uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    if (conn_idx >= MAX_TCP_CONNS) return -EINVAL;
+    thread_t *t = thread_get_current();
+    process_t *proc = t ? t->process : (void *)0;
+    if (!proc) return -1;
+    for (int fd = 0; fd < MAX_FDS; fd++) {
+        if (fd_is_free(&proc->fd_table[fd])) {
+            fd_entry_t *e = &proc->fd_table[fd];
+            e->tcp_conn_idx = (int16_t)conn_idx;
+            e->open_flags = O_RDWR;
+            e->fd_flags = 0;
+            return fd;
+        }
+    }
+    return -EMFILE;
+}
+
 /* --- Stage 34 syscalls --- */
 
 static int64_t sys_clock_gettime(uint64_t clockid, uint64_t ts_ptr,
@@ -2848,6 +2885,12 @@ static int16_t poll_check_fd(process_t *proc, int fd, int16_t events) {
                 revents |= POLLOUT;
         }
         return revents;
+    }
+
+    /* TCP connection fd */
+    if (entry->tcp_conn_idx >= 0) {
+        int tcp_events = tcp_poll(entry->tcp_conn_idx);
+        return (int16_t)(tcp_events & events);
     }
 
     /* epoll/uring fds — not pollable */
@@ -4633,6 +4676,8 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_SUPER_SET_POLICY] = sys_super_set_policy,
     [SYS_PIPE2]            = sys_pipe2,
     [SYS_SUPER_START]      = sys_super_start,
+    [SYS_TCP_SETOPT]       = sys_tcp_setopt,
+    [SYS_TCP_TO_FD]        = sys_tcp_to_fd,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).

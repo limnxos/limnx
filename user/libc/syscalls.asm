@@ -853,3 +853,17 @@ sys_super_start:
     mov rax, 115        ; SYS_SUPER_START
     syscall
     ret
+
+; --- sys_tcp_setopt(conn, opt, value) ---
+global sys_tcp_setopt
+sys_tcp_setopt:
+    mov rax, 116        ; SYS_TCP_SETOPT
+    syscall
+    ret
+
+; --- sys_tcp_to_fd(conn) ---
+global sys_tcp_to_fd
+sys_tcp_to_fd:
+    mov rax, 117        ; SYS_TCP_TO_FD
+    syscall
+    ret

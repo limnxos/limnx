@@ -227,6 +227,7 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
         proc->fd_table[i].eventfd = (void *)0;
         proc->fd_table[i].epoll = (void *)0;
         proc->fd_table[i].uring = (void *)0;
+        proc->fd_table[i].tcp_conn_idx = -1;
         proc->fd_table[i].open_flags = 0;
         proc->fd_table[i].fd_flags = 0;
     }
@@ -409,6 +410,7 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
         proc->fd_table[i].eventfd = (void *)0;
         proc->fd_table[i].epoll = (void *)0;
         proc->fd_table[i].uring = (void *)0;
+        proc->fd_table[i].tcp_conn_idx = -1;
         proc->fd_table[i].open_flags = 0;
         proc->fd_table[i].fd_flags = 0;
     }

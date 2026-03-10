@@ -73,6 +73,7 @@ typedef struct fd_entry {
     void    *eventfd;           /* eventfd_t* if eventfd */
     void    *epoll;             /* epoll_instance_t* if epoll fd */
     void    *uring;             /* uring_instance_t* if uring fd */
+    int16_t  tcp_conn_idx;      /* TCP conn index if TCP fd, -1 otherwise */
     uint8_t  open_flags;        /* O_RDONLY/O_WRONLY/O_RDWR/O_APPEND (low bits) */
     uint8_t  fd_flags;          /* FD_CLOEXEC, O_NONBLOCK (bit 1) */
 } fd_entry_t;

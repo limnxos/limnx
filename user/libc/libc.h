@@ -73,6 +73,8 @@ long sys_tcp_accept(long listen_conn);
 long sys_tcp_send(long conn, const void *buf, long len);
 long sys_tcp_recv(long conn, void *buf, long len);
 long sys_tcp_close(long conn);
+long sys_tcp_setopt(long conn, long opt, long value);
+long sys_tcp_to_fd(long conn);
 long sys_ioctl(long fd, long cmd, long arg);
 long sys_clock_gettime(long clockid, void *timespec_ptr);
 long sys_nanosleep(const void *timespec_ptr);
@@ -183,6 +185,7 @@ typedef struct {
 #define ENOBUFS    105
 #define ENOTCONN   107
 #define ECONNREFUSED 111
+#define EINPROGRESS  115
 
 extern int errno;
 
@@ -788,6 +791,9 @@ long sys_super_start(long super_id);
 /* pipe2 flags */
 #define O_CLOEXEC 0x01
 long sys_pipe2(long *rfd_ptr, long *wfd_ptr, long flags);
+
+/* TCP socket options */
+#define TCP_OPT_NONBLOCK 1
 
 /* --- HTTP types and functions --- */
 

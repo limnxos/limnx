@@ -120,7 +120,9 @@
 #define SYS_SUPER_SET_POLICY 113
 #define SYS_PIPE2         114
 #define SYS_SUPER_START   115
-#define SYS_NR            116
+#define SYS_TCP_SETOPT    116
+#define SYS_TCP_TO_FD     117
+#define SYS_NR            118
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

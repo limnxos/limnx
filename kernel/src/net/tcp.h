@@ -72,6 +72,7 @@ typedef struct tcp_conn {
     volatile int accepted;
     volatile int fin_received;
     volatile int rst_received;
+    uint8_t nonblock;
 
     uint64_t time_wait_tick;
 } tcp_conn_t;
@@ -88,5 +89,7 @@ int     tcp_accept(int listen_idx);
 int64_t tcp_send(int conn_idx, const uint8_t *buf, uint32_t len);
 int64_t tcp_recv(int conn_idx, uint8_t *buf, uint32_t len);
 int     tcp_close(int conn_idx);
+int     tcp_set_nonblock(int conn_idx, int nb);
+int     tcp_poll(int conn_idx);
 
 #endif

@@ -7,6 +7,15 @@
 #ifndef EINTR
 #define EINTR 4
 #endif
+#ifndef EAGAIN
+#define EAGAIN 11
+#endif
+
+/* Poll event bits for tcp_poll */
+#define POLLIN   0x001
+#define POLLOUT  0x004
+#define POLLERR  0x008
+#define POLLHUP  0x010
 
 static tcp_conn_t tcp_conns[MAX_TCP_CONNS];
 static uint16_t tcp_ephemeral_port = 49152;
@@ -473,6 +482,10 @@ int tcp_connect(int conn_idx, uint32_t remote_ip, uint16_t remote_port) {
     c->tx_buf_len = 0;
     c->tx_buf_seq = c->snd_iss;
 
+    /* Non-blocking: return immediately after sending SYN */
+    if (c->nonblock)
+        return -115;  /* EINPROGRESS */
+
     /* Yield loop until ESTABLISHED or failure */
     int timeout = 10000;
     while (c->state == TCP_SYN_SENT && !c->rst_received) {
@@ -530,6 +543,7 @@ int tcp_accept(int listen_idx) {
             }
         }
         if (!found) {
+            if (lc->nonblock) return -EAGAIN;
             tcp_timer_check();
             if (--timeout <= 0) return -1;
             if (sched_has_pending_signal()) return -EINTR;
@@ -638,6 +652,10 @@ int64_t tcp_recv(int conn_idx, uint8_t *buf, uint32_t len) {
     tcp_conn_t *c = &tcp_conns[conn_idx];
     if (!c->in_use) return -1;
 
+    /* Non-blocking: return immediately if no data */
+    if (c->nonblock && c->rx_count == 0 && !c->fin_received && !c->rst_received)
+        return -EAGAIN;
+
     /* Yield until data, FIN, or RST */
     int timeout = 50000;
     while (c->rx_count == 0 && !c->fin_received && !c->rst_received) {
@@ -734,4 +752,42 @@ int tcp_close(int conn_idx) {
     }
 
     return 0;
+}
+
+int tcp_set_nonblock(int conn_idx, int nb) {
+    if (conn_idx < 0 || conn_idx >= MAX_TCP_CONNS) return -1;
+    tcp_conn_t *c = &tcp_conns[conn_idx];
+    if (!c->in_use) return -1;
+    c->nonblock = nb ? 1 : 0;
+    return 0;
+}
+
+int tcp_poll(int conn_idx) {
+    if (conn_idx < 0 || conn_idx >= MAX_TCP_CONNS) return 0;
+    tcp_conn_t *c = &tcp_conns[conn_idx];
+    if (!c->in_use) return POLLERR;
+
+    int events = 0;
+
+    /* Listener: readable when backlog has a pending connection */
+    if (c->state == TCP_LISTEN) {
+        for (int i = 0; i < TCP_BACKLOG_SIZE; i++) {
+            if (c->backlog[i].valid) { events |= POLLIN; break; }
+        }
+        return events;
+    }
+
+    /* Readable: data available or FIN received */
+    if (c->rx_count > 0 || c->fin_received)
+        events |= POLLIN;
+
+    /* Writable: established and not reset */
+    if (c->state == TCP_ESTABLISHED && !c->rst_received)
+        events |= POLLOUT;
+
+    /* Error/hangup */
+    if (c->rst_received) events |= POLLERR;
+    if (c->fin_received) events |= POLLHUP;
+
+    return events;
 }
