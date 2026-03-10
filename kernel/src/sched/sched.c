@@ -425,10 +425,17 @@ static void schedule_smp(void) {
     if (old->state == THREAD_DEAD && old != idle_thread) {
         /* Set exited=1 for SIGKILL'd threads (normal exit sets it in sys_exit).
          * Null the process pointer to prevent use-after-free: once exited=1,
-         * the parent's waitpid may kfree the process on another CPU. */
+         * the parent's waitpid may kfree the process on another CPU.
+         * Wake any waiter inline (can't call sched_wake — we hold rq_lock). */
         if (old->process) {
+            thread_t *waiter = old->process->wait_thread;
+            old->process->wait_thread = NULL;
             old->process->exited = 1;
             old->process = NULL;
+            if (waiter && waiter->state == THREAD_BLOCKED) {
+                waiter->state = THREAD_READY;
+                local_enqueue(pc, waiter);
+            }
         }
         link_dead(old);
     }
@@ -438,8 +445,14 @@ static void schedule_smp(void) {
      * don't schedule it — handle it as dead immediately. */
     if (next->state == THREAD_DEAD && next != idle_thread) {
         if (next->process) {
+            thread_t *waiter = next->process->wait_thread;
+            next->process->wait_thread = NULL;
             next->process->exited = 1;
             next->process = NULL;
+            if (waiter && waiter->state == THREAD_BLOCKED) {
+                waiter->state = THREAD_READY;
+                local_enqueue(pc, waiter);
+            }
         }
         link_dead(next);
         /* Try to find another thread */
@@ -495,8 +508,14 @@ static void schedule_single(void) {
     /* Link dead threads onto dead list for reap_dead() */
     if (old->state == THREAD_DEAD && old != idle_thread) {
         if (old->process) {
+            thread_t *waiter = old->process->wait_thread;
+            old->process->wait_thread = NULL;
             old->process->exited = 1;
             old->process = NULL;
+            if (waiter && waiter->state == THREAD_BLOCKED) {
+                waiter->state = THREAD_READY;
+                enqueue(waiter);
+            }
         }
         link_dead(old);
     }
@@ -504,8 +523,14 @@ static void schedule_single(void) {
     /* If the dequeued thread was killed while in the queue, handle as dead */
     if (next->state == THREAD_DEAD && next != idle_thread) {
         if (next->process) {
+            thread_t *waiter = next->process->wait_thread;
+            next->process->wait_thread = NULL;
             next->process->exited = 1;
             next->process = NULL;
+            if (waiter && waiter->state == THREAD_BLOCKED) {
+                waiter->state = THREAD_READY;
+                enqueue(waiter);
+            }
         }
         link_dead(next);
         next = dequeue();

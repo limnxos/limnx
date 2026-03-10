@@ -89,6 +89,7 @@ typedef struct process {
     volatile uint8_t exited;      /* set to 1 by sys_exit, safe to check after thread freed */
     uint64_t      cr3;            /* physical address of this process's PML4 */
     thread_t     *main_thread;
+    thread_t     *wait_thread;    /* thread blocked in waitpid on this process */
     fork_context_t fork_ctx;      /* saved user regs for fork child */
     uint64_t      user_entry;
     uint64_t      user_stack_top;
@@ -96,7 +97,7 @@ typedef struct process {
     mmap_entry_t  mmap_table[MMAP_MAX_ENTRIES];
     uint64_t      mmap_next_addr;
     char          cwd[MAX_PATH];  /* per-process working directory */
-    uint32_t      pending_signals;  /* bitfield of pending signals */
+    volatile uint32_t pending_signals;  /* bitfield of pending signals */
     uint32_t      signal_mask;      /* blocked signals bitmask */
     sigaction_t   sig_handlers[MAX_SIGNALS];
     signal_queue_t sig_queue;       /* queue for duplicate signals */

@@ -320,16 +320,19 @@ static int64_t sys_exit(uint64_t status, uint64_t a2,
      * Disabling interrupts ensures we reach thread_exit() atomically,
      * which sets THREAD_DEAD so the scheduler won't re-enqueue us. */
     __asm__ volatile ("cli");
-    /* Mark process as exited BEFORE thread_exit, so parent's waitpid sees
-     * it immediately. Previously this was only set in schedule_smp() when
-     * switching away from the DEAD thread, which created an SMP race where
-     * the parent's spin loop could miss the update.
-     * Null the thread's process pointer to prevent use-after-free: after
-     * exited=1, the parent may kfree the process at any time. The scheduler
-     * already handles NULL process pointers for DEAD threads. */
+    /* Mark process as exited and wake any waitpid waiter BEFORE thread_exit.
+     * Save wait_thread before setting exited=1, because after exited=1 the
+     * waiter may kfree the process at any time. */
     if (t->process) {
+        thread_t *waiter = t->process->wait_thread;
+        t->process->wait_thread = NULL;
+        __asm__ volatile ("" ::: "memory");  /* compiler barrier */
         t->process->exited = 1;
         t->process = NULL;
+        /* Wake the waiter. sched_wake acquires rq_lock with irqsave,
+         * which is safe even with interrupts disabled (cli). */
+        if (waiter)
+            sched_wake(waiter);
     }
     thread_exit();
     /* Never returns */
@@ -1177,9 +1180,32 @@ static int64_t sys_waitpid(uint64_t pid, uint64_t flags,
     thread_t *wt = thread_get_current();
     process_t *wproc = wt ? wt->process : (void *)0;
     while (!child->exited) {
-        if (wproc && (wproc->pending_signals & ~wproc->signal_mask))
-            return -EINTR;
-        sched_yield();
+        /* Check for interrupting signals, but filter out SIGCHLD —
+         * waitpid is logically waiting for child state changes, so
+         * SIGCHLD should not cause -EINTR here (matches POSIX). */
+        if (wproc) {
+            uint32_t interruptible = (wproc->pending_signals & ~wproc->signal_mask)
+                                     & ~(1U << SIGCHLD);
+            if (interruptible)
+                return -EINTR;
+        }
+        /* Register as waiter and block instead of spin-yielding.
+         * Double-check pattern: set wait_thread, barrier, re-check exited. */
+        child->wait_thread = wt;
+        __asm__ volatile ("" ::: "memory");  /* compiler barrier */
+        if (child->exited) {
+            child->wait_thread = NULL;
+            break;
+        }
+        sched_block(wt);
+        child->wait_thread = NULL;
+        /* Re-check signals after wake */
+        if (wproc) {
+            uint32_t interruptible = (wproc->pending_signals & ~wproc->signal_mask)
+                                     & ~(1U << SIGCHLD);
+            if (interruptible)
+                return -EINTR;
+        }
     }
     int64_t status = child->exit_status;
     process_unregister(pid);

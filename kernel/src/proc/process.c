@@ -188,6 +188,7 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
     proc->parent_pid = (caller && caller->process) ? caller->process->pid : 0;
     proc->exit_status = 0;
     proc->exited = 0;
+    proc->wait_thread = NULL;
 
     /* Initialize process group — inherit parent's pgid */
     {
@@ -369,6 +370,7 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
     proc->parent_pid = (caller && caller->process) ? caller->process->pid : 0;
     proc->exit_status = 0;
     proc->exited = 0;
+    proc->wait_thread = NULL;
 
     /* Initialize process group — inherit parent's pgid */
     {
@@ -494,8 +496,17 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
 
 void process_reap(process_t *proc) {
     if (!proc) return;
-    while (!proc->exited)
-        sched_yield();
+    thread_t *me = thread_get_current();
+    while (!proc->exited) {
+        proc->wait_thread = me;
+        __asm__ volatile ("" ::: "memory");  /* compiler barrier */
+        if (proc->exited) {
+            proc->wait_thread = NULL;
+            break;
+        }
+        sched_block(me);
+        proc->wait_thread = NULL;
+    }
     process_unregister(proc->pid);
     kfree(proc);
 }
@@ -567,6 +578,7 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     child->audit_flags = parent->audit_flags;
     child->exit_status = 0;
     child->exited = 0;
+    child->wait_thread = NULL;
     child->ns_id = parent->ns_id;
     child->user_entry = parent->user_entry;
     child->user_stack_top = parent->user_stack_top;
@@ -650,6 +662,12 @@ int process_deliver_signal(process_t *proc, int signum) {
                 proc->exited = 1;
         }
         proc->main_thread->state = THREAD_DEAD;
+        /* Wake any thread blocked in waitpid for this process */
+        if (proc->exited && proc->wait_thread) {
+            thread_t *waiter = proc->wait_thread;
+            proc->wait_thread = NULL;
+            sched_wake(waiter);
+        }
         serial_printf("[proc] Process %lu killed (SIGKILL)\n", proc->pid);
         return 0;
     }
