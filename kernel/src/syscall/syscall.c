@@ -861,6 +861,8 @@ static int64_t sys_fwrite(uint64_t fd, uint64_t buf_ptr, uint64_t len,
             } else {
                 if (entry->fd_flags & 0x02)  /* O_NONBLOCK */
                     return total > 0 ? (int64_t)total : -1;
+                if (proc->pending_signals & ~proc->signal_mask)
+                    return total > 0 ? (int64_t)total : -EINTR;
                 sched_yield();
             }
         }
@@ -1151,11 +1153,15 @@ static int64_t sys_getchar(uint64_t a1, uint64_t a2,
     (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
     char ch;
     /* Try serial first (COM1 via -serial stdio), fall back to PS/2 keyboard */
+    thread_t *gc_t = thread_get_current();
+    process_t *gc_proc = gc_t ? gc_t->process : (void *)0;
     while (1) {
         ch = serial_getchar();
         if (ch) return (int64_t)(uint8_t)ch;
         ch = kbd_getchar();
         if (ch) return (int64_t)(uint8_t)ch;
+        if (gc_proc && (gc_proc->pending_signals & ~gc_proc->signal_mask))
+            return -EINTR;
         sched_yield();
     }
 }
@@ -2398,6 +2404,8 @@ static int64_t sys_select(uint64_t nfds, uint64_t readfds_ptr,
         if (has_timeout && pit_get_ticks() >= deadline)
             return 0;  /* timeout */
 
+        if (proc->pending_signals & ~proc->signal_mask)
+            return -EINTR;
         sched_yield();
     }
 }
@@ -2616,8 +2624,13 @@ static int64_t sys_nanosleep(uint64_t ts_ptr, uint64_t a2,
     if (delay_ticks == 0) delay_ticks = 1;
 
     uint64_t deadline = pit_get_ticks() + delay_ticks;
-    while (pit_get_ticks() < deadline)
+    thread_t *ns_t = thread_get_current();
+    process_t *ns_proc = ns_t ? ns_t->process : (void *)0;
+    while (pit_get_ticks() < deadline) {
+        if (ns_proc && (ns_proc->pending_signals & ~ns_proc->signal_mask))
+            return -EINTR;
         sched_yield();
+    }
     return 0;
 }
 
@@ -2867,6 +2880,8 @@ static int64_t sys_poll(uint64_t fds_ptr, uint64_t nfds, uint64_t timeout_ms,
         if (timeout_ms > 0 && pit_get_ticks() >= deadline)
             return 0;
 
+        if (proc->pending_signals & ~proc->signal_mask)
+            return -EINTR;
         sched_yield();
     }
 }
@@ -3324,6 +3339,8 @@ static int64_t sys_unix_accept(uint64_t fd, uint64_t a2,
         if (server_idx >= 0) break;
         if (entry->fd_flags & 0x02)  /* O_NONBLOCK */
             return -EAGAIN;
+        if (proc->pending_signals & ~proc->signal_mask)
+            return -EINTR;
         sched_yield();
     }
 
@@ -3596,6 +3613,8 @@ static int64_t sys_epoll_wait(uint64_t epfd, uint64_t events_ptr,
         if (timeout_ms > 0 && pit_get_ticks() >= deadline)
             return 0;
 
+        if (proc->pending_signals & ~proc->signal_mask)
+            return -EINTR;
         sched_yield();
     }
 }
