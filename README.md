@@ -1,12 +1,12 @@
 # Limnx
 
-The Limnx kernel — an AI-native operating system designed to run AI agent workloads as first-class citizens.
+The Limnx kernel — the first AI-native operating system designed to run AI agent and inference workloads as first-class citizens.
 
 ## What is Limnx?
 
 Limnx is an operating system where AI agents are the primary inhabitants, not an afterthought. Every layer — from the scheduler to IPC to security — is built with autonomous agent workflows in mind: sandboxed tool execution, capability-based isolation, kernel-routed inference, and structured inter-agent communication.
 
-It boots on real hardware (BIOS and UEFI), runs a preemptive SMP kernel, and provides a syscall interface with 84 system calls.
+It boots on real hardware (BIOS and UEFI), runs a preemptive SMP kernel, and provides a syscall interface with over 100 system calls.
 
 ## Features
 
@@ -26,7 +26,8 @@ It boots on real hardware (BIOS and UEFI), runs a preemptive SMP kernel, and pro
 - Capability tokens (8 capabilities: NET_BIND, KILL, EXEC, FS_READ, ...)
 - Per-process seccomp filters, resource limits, UID/GID isolation
 - Sandboxed tool dispatch (fork + capability drop + pipe)
-- Kernel-routed inference service registry
+- Kernel-routed inference service registry with health monitoring
+- Supervisor trees (auto-restart, ONE_FOR_ONE / ONE_FOR_ALL policies)
 - io_uring-style async I/O
 
 **User Space**
@@ -71,4 +72,4 @@ make run               # boot in QEMU with virtio-net + virtio-blk
 
 ## License
 
-All rights reserved.
+This project is licensed under the [GNU General Public License v3.0](LICENSE).
