@@ -9,6 +9,14 @@
 static int stdin_is_pty = 0;
 static int last_exit_status = 0;
 
+/* Retry waitpid on -EINTR */
+static long waitpid_retry(long pid) {
+    long st;
+    while ((st = sys_waitpid(pid)) == -EINTR)
+        ;
+    return st;
+}
+
 /* --- History --- */
 static char history[HISTORY_MAX][MAX_LINE];
 static int history_count = 0;
@@ -705,6 +713,7 @@ static const test_entry_t tests[] = {
     {"s64",        "/s64test.elf",     NULL},
     {"s65",        "/s65test.elf",     NULL},
     {"s66",        "/s66test.elf",     NULL},
+    {"s67",        "/s67test.elf",     NULL},
     {NULL, NULL, NULL}
 };
 
@@ -721,7 +730,7 @@ static int run_one_test(const test_entry_t *t) {
         printf("  SKIP %s (not found)\n", t->name);
         return -1;
     }
-    long st = sys_waitpid(pid);
+    long st = waitpid_retry(pid);
     return (int)st;
 }
 
@@ -1290,7 +1299,7 @@ static void execute_pipeline(command_t *cmds, int ncmds) {
             jobs_add(pid, cmds[0].argv[0]);
             last_exit_status = 0;
         } else {
-            long st = sys_waitpid(pid);
+            long st = waitpid_retry(pid);
             last_exit_status = (int)st;
         }
         return;
@@ -1377,7 +1386,7 @@ static void execute_pipeline(command_t *cmds, int ncmds) {
                 printf("%s: command not found\n", cmds[i].argv[0]);
                 sys_exit(127);
             }
-            long st = sys_waitpid(exec_pid);
+            long st = waitpid_retry(exec_pid);
             sys_exit((int)st);
         }
 
@@ -1397,7 +1406,7 @@ static void execute_pipeline(command_t *cmds, int ncmds) {
         last_exit_status = 0;
     } else {
         for (int i = 0; i < ncmds; i++) {
-            long st = sys_waitpid(pids[i]);
+            long st = waitpid_retry(pids[i]);
             if (i == ncmds - 1)
                 last_exit_status = (int)st;
         }
