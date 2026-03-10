@@ -545,6 +545,17 @@ int tcp_accept(int listen_idx) {
             break;
         }
     }
+    /* Reclaim a TIME_WAIT slot if no free slots available */
+    if (new_idx < 0) {
+        for (int i = 0; i < MAX_TCP_CONNS; i++) {
+            if (tcp_conns[i].in_use && tcp_conns[i].state == TCP_TIME_WAIT) {
+                tcp_conns[i].state = TCP_CLOSED;
+                tcp_conns[i].in_use = 0;
+                new_idx = i;
+                break;
+            }
+        }
+    }
     if (new_idx < 0) return -1;
 
     tcp_conn_t *nc = &tcp_conns[new_idx];

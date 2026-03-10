@@ -3,7 +3,7 @@
 
 #include <stdint.h>
 
-#define MAX_TCP_CONNS    8
+#define MAX_TCP_CONNS    32
 #define TCP_RX_BUF_SIZE  8192
 #define TCP_MSS          1460
 #define TCP_WINDOW       8192

@@ -117,8 +117,10 @@ USER_C_ELFS := build/user/mathtest.elf build/user/agenttest.elf build/user/agent
                build/user/s68test.elf \
                build/user/s69test.elf \
                build/user/s70test.elf \
+               build/user/s71test.elf \
                build/user/crasher.elf \
-               build/user/inferd.elf
+               build/user/inferd.elf \
+               build/user/netagent.elf
 
 USER_ELFS := $(USER_ASM_ELFS) $(USER_C_ELFS)
 
@@ -634,6 +636,20 @@ build/user/crasher.o: user/crasher.c user/libc/libc.h
 	$(CC) $(USER_CFLAGS) -c $< -o $@
 
 build/user/crasher.elf: build/user/crasher.o $(LIBC_OBJS) user/libc/linker.ld
+	$(LD) -nostdlib -static -T user/libc/linker.ld $(LIBC_OBJS) $< -o $@
+
+build/user/s71test.o: user/s71test.c user/libc/libc.h
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+build/user/s71test.elf: build/user/s71test.o $(LIBC_OBJS) user/libc/linker.ld
+	$(LD) -nostdlib -static -T user/libc/linker.ld $(LIBC_OBJS) $< -o $@
+
+build/user/netagent.o: user/netagent.c user/libc/libc.h
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+build/user/netagent.elf: build/user/netagent.o $(LIBC_OBJS) user/libc/linker.ld
 	$(LD) -nostdlib -static -T user/libc/linker.ld $(LIBC_OBJS) $< -o $@
 
 build/user/inferd.o: user/inferd.c user/libc/libc.h
