@@ -37,4 +37,8 @@ int  infer_health(uint64_t pid, uint32_t load);
  * Returns index or -1 if none available. */
 int  infer_route(const char *name);
 
+/* Periodic health check: mark services with stale heartbeats as unhealthy.
+ * Called from sched_tick. Returns number of services marked unhealthy. */
+int  infer_health_check(void);
+
 #endif

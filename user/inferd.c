@@ -14,6 +14,7 @@ int main(int argc, char **argv) {
     const char *svc_name = "default";
     const char *sock_path = "/tmp/inferd.sock";
     int max_requests = 4;  /* default: serve 4 then exit */
+    int crash_mode = 0;    /* if 1, exit with status 1 (simulates crash) */
 
     if (argc >= 2) svc_name = argv[1];
     if (argc >= 3) sock_path = argv[2];
@@ -22,6 +23,9 @@ int main(int argc, char **argv) {
         max_requests = 0;
         for (int i = 0; argv[3][i]; i++)
             max_requests = max_requests * 10 + (argv[3][i] - '0');
+    }
+    if (argc >= 5 && argv[4][0] == 'c') {
+        crash_mode = 1;  /* argv[4] == "crash" → exit with 1 */
     }
 
     printf("[inferd] Starting inference daemon '%s'...\n", svc_name);
@@ -92,6 +96,10 @@ int main(int argc, char **argv) {
     sys_infer_health(9999);
 
     sys_close(sock_fd);
-    printf("[inferd] Daemon '%s' exiting\n", svc_name);
+    if (crash_mode) {
+        printf("[inferd] Daemon '%s' crashing (simulated)\n", svc_name);
+        return 1;  /* non-zero exit triggers supervisor restart */
+    }
+    printf("[inferd] Daemon '%s' exiting cleanly\n", svc_name);
     return 0;
 }

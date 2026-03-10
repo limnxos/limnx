@@ -112,6 +112,33 @@ int infer_health(uint64_t pid, uint32_t load) {
     return -1;  /* pid not registered */
 }
 
+int infer_health_check(void) {
+    uint64_t flags;
+    spin_lock_irqsave(&infer_lock, &flags);
+
+    uint32_t now = (uint32_t)pit_get_ticks();
+    int unhealthy_count = 0;
+
+    for (int i = 0; i < MAX_INFER_SERVICES; i++) {
+        if (!infer_table[i].used) continue;
+        if (!infer_table[i].healthy) continue;
+
+        /* Check if heartbeat is stale */
+        uint32_t elapsed = now - infer_table[i].last_heartbeat;
+        if (elapsed > INFER_HEALTH_TIMEOUT) {
+            infer_table[i].healthy = 0;
+            unhealthy_count++;
+            serial_printf("[infer] Service '%s' (pid %lu) marked unhealthy "
+                          "(no heartbeat for %u ticks)\n",
+                          infer_table[i].name,
+                          infer_table[i].provider_pid, elapsed);
+        }
+    }
+
+    spin_unlock_irqrestore(&infer_lock, flags);
+    return unhealthy_count;
+}
+
 int infer_route(const char *name) {
     uint64_t flags;
     spin_lock_irqsave(&infer_lock, &flags);

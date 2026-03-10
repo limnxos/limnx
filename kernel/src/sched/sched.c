@@ -8,6 +8,7 @@
 #include "smp/percpu.h"
 #include "blk/bcache.h"
 #include "net/tcp.h"
+#include "ipc/infer_svc.h"
 #include "serial.h"
 
 /* Per-CPU current_thread and idle_thread are in percpu_t.
@@ -617,6 +618,7 @@ void sched_tick(void) {
         flush_counter = 0;
         if (!smp_active || (smp_active && percpu_get()->cpu_id == 0)) {
             tcp_timer_check();
+            infer_health_check();
         }
     }
     schedule();
