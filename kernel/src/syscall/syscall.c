@@ -3738,7 +3738,33 @@ static int64_t sys_infer_request(uint64_t name_ptr, uint64_t req_buf,
 
     /* Route to best available service (load-balanced) */
     int svc_idx = infer_route(name);
-    if (svc_idx < 0) return -ENOENT;
+    if (svc_idx < 0) {
+        /* No provider available — queue the request and wait */
+        int slot = infer_queue_enqueue(name, proc->pid);
+        if (slot < 0) return -ENOBUFS;  /* queue full */
+
+        /* Block until provider becomes available or timeout */
+        for (;;) {
+            int status = infer_queue_check(slot);
+            if (status == 1) {
+                /* Provider available — retry route */
+                infer_queue_remove(slot);
+                svc_idx = infer_route(name);
+                if (svc_idx < 0) return -ENOENT;
+                break;
+            }
+            if (status == -EAGAIN) {
+                /* Timed out */
+                infer_queue_remove(slot);
+                return -EAGAIN;
+            }
+            if (proc->pending_signals & ~proc->signal_mask) {
+                infer_queue_remove(slot);
+                return -EINTR;
+            }
+            sched_yield();
+        }
+    }
 
     infer_service_t *svc = infer_get(svc_idx);
     if (!svc) return -ENOENT;
@@ -4323,6 +4349,18 @@ static int64_t sys_infer_set_policy(uint64_t policy, uint64_t a2,
     return infer_set_policy((uint8_t)policy);
 }
 
+static int64_t sys_infer_queue_stat(uint64_t stat_ptr, uint64_t a2,
+                                      uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+
+    if (validate_user_ptr(stat_ptr, sizeof(infer_queue_stat_t)) != 0)
+        return -EFAULT;
+
+    infer_queue_stat_t *out = (infer_queue_stat_t *)stat_ptr;
+    infer_queue_get_stat(out);
+    return 0;
+}
+
 /* --- SYS_AGENT_SEND: send message to named agent with optional token delegation --- */
 static int64_t sys_agent_send(uint64_t name_ptr, uint64_t msg_buf,
                                 uint64_t msg_len, uint64_t token_id, uint64_t a5) {
@@ -4686,6 +4724,7 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_TCP_SETOPT]       = sys_tcp_setopt,
     [SYS_TCP_TO_FD]        = sys_tcp_to_fd,
     [SYS_INFER_SET_POLICY] = sys_infer_set_policy,
+    [SYS_INFER_QUEUE_STAT] = sys_infer_queue_stat,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).

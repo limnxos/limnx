@@ -4,6 +4,10 @@
 #include "serial.h"
 #include "idt/idt.h"
 
+#ifndef EAGAIN
+#define EAGAIN 11
+#endif
+
 static infer_service_t infer_table[MAX_INFER_SERVICES];
 static spinlock_t infer_lock = SPINLOCK_INIT;
 
@@ -111,7 +115,12 @@ int infer_health(uint64_t pid, uint32_t load) {
             infer_table[i].load = load;
             infer_table[i].healthy = 1;
             infer_table[i].last_heartbeat = (uint32_t)pit_get_ticks();
+            /* Save name before releasing lock */
+            char name[INFER_NAME_MAX];
+            str_copy(name, infer_table[i].name, INFER_NAME_MAX);
             spin_unlock_irqrestore(&infer_lock, flags);
+            /* Drain queued requests for this service */
+            infer_queue_drain(name);
             return 0;
         }
     }
@@ -238,4 +247,119 @@ int infer_set_policy(uint8_t policy) {
 
 uint8_t infer_get_policy(void) {
     return route_policy;
+}
+
+/* --- Inference request queue --- */
+
+static infer_queue_entry_t infer_queue[INFER_QUEUE_SIZE];
+static uint32_t infer_queue_total_queued = 0;
+static uint32_t infer_queue_total_timeouts = 0;
+
+int infer_queue_enqueue(const char *name, uint64_t caller_pid) {
+    uint64_t flags;
+    spin_lock_irqsave(&infer_lock, &flags);
+
+    for (int i = 0; i < INFER_QUEUE_SIZE; i++) {
+        if (!infer_queue[i].used) {
+            infer_queue[i].used = 1;
+            str_copy(infer_queue[i].name, name, INFER_NAME_MAX);
+            infer_queue[i].caller_pid = caller_pid;
+            infer_queue[i].enqueue_tick = (uint32_t)pit_get_ticks();
+            infer_queue[i].ready = 0;
+            infer_queue[i].timed_out = 0;
+            infer_queue_total_queued++;
+            spin_unlock_irqrestore(&infer_lock, flags);
+            serial_printf("[infer] Queued request for '%s' from pid %lu (slot %d)\n",
+                          name, caller_pid, i);
+            return i;
+        }
+    }
+
+    spin_unlock_irqrestore(&infer_lock, flags);
+    return -1;  /* queue full */
+}
+
+int infer_queue_check(int slot) {
+    if (slot < 0 || slot >= INFER_QUEUE_SIZE) return -1;
+    if (!infer_queue[slot].used) return -1;
+    if (infer_queue[slot].ready) return 1;
+    if (infer_queue[slot].timed_out) return -EAGAIN;
+    return 0;  /* still waiting */
+}
+
+void infer_queue_remove(int slot) {
+    if (slot < 0 || slot >= INFER_QUEUE_SIZE) return;
+    uint64_t flags;
+    spin_lock_irqsave(&infer_lock, &flags);
+    infer_queue[slot].used = 0;
+    infer_queue[slot].ready = 0;
+    infer_queue[slot].timed_out = 0;
+    spin_unlock_irqrestore(&infer_lock, flags);
+}
+
+void infer_queue_drain(const char *name) {
+    /* Called when a provider reports health — wake the oldest queued caller */
+    uint64_t flags;
+    spin_lock_irqsave(&infer_lock, &flags);
+
+    uint32_t oldest_tick = 0xFFFFFFFF;
+    int oldest_slot = -1;
+
+    for (int i = 0; i < INFER_QUEUE_SIZE; i++) {
+        if (!infer_queue[i].used) continue;
+        if (infer_queue[i].ready || infer_queue[i].timed_out) continue;
+        if (!str_eq(infer_queue[i].name, name)) continue;
+
+        if (infer_queue[i].enqueue_tick < oldest_tick) {
+            oldest_tick = infer_queue[i].enqueue_tick;
+            oldest_slot = i;
+        }
+    }
+
+    if (oldest_slot >= 0) {
+        infer_queue[oldest_slot].ready = 1;
+        serial_printf("[infer] Draining queue slot %d for '%s' (pid %lu)\n",
+                      oldest_slot, name, infer_queue[oldest_slot].caller_pid);
+    }
+
+    spin_unlock_irqrestore(&infer_lock, flags);
+}
+
+void infer_queue_expire(void) {
+    uint64_t flags;
+    spin_lock_irqsave(&infer_lock, &flags);
+
+    uint32_t now = (uint32_t)pit_get_ticks();
+
+    for (int i = 0; i < INFER_QUEUE_SIZE; i++) {
+        if (!infer_queue[i].used) continue;
+        if (infer_queue[i].ready || infer_queue[i].timed_out) continue;
+
+        uint32_t elapsed = now - infer_queue[i].enqueue_tick;
+        if (elapsed > INFER_QUEUE_TIMEOUT) {
+            infer_queue[i].timed_out = 1;
+            infer_queue_total_timeouts++;
+            serial_printf("[infer] Queue slot %d timed out for '%s'\n",
+                          i, infer_queue[i].name);
+        }
+    }
+
+    spin_unlock_irqrestore(&infer_lock, flags);
+}
+
+void infer_queue_get_stat(infer_queue_stat_t *stat) {
+    uint64_t flags;
+    spin_lock_irqsave(&infer_lock, &flags);
+
+    stat->capacity = INFER_QUEUE_SIZE;
+    stat->pending = 0;
+    stat->total_queued = infer_queue_total_queued;
+    stat->total_timeouts = infer_queue_total_timeouts;
+
+    for (int i = 0; i < INFER_QUEUE_SIZE; i++) {
+        if (infer_queue[i].used && !infer_queue[i].ready && !infer_queue[i].timed_out)
+            stat->pending++;
+    }
+
+    spin_unlock_irqrestore(&infer_lock, flags);
 }

@@ -652,11 +652,20 @@ long sys_infer_request(const char *name, const void *req_buf, long req_len,
 long sys_infer_health(long load);
 long sys_infer_route(const char *name);
 long sys_infer_set_policy(long policy);
+long sys_infer_queue_stat(void *stat_ptr);
 
 /* Inference routing policies */
 #define INFER_ROUTE_LEAST_LOADED  0
 #define INFER_ROUTE_ROUND_ROBIN   1
 #define INFER_ROUTE_WEIGHTED      2
+
+/* Inference queue stat */
+typedef struct {
+    uint32_t capacity;
+    uint32_t pending;
+    uint32_t total_queued;
+    uint32_t total_timeouts;
+} infer_queue_stat_t;
 long sys_agent_send(const char *name, const void *msg_buf, long msg_len, long token_id);
 long sys_agent_recv(void *msg_buf, long msg_len, long *sender_pid_ptr, long *token_id_ptr);
 long sys_uring_setup(long entries, void *params);

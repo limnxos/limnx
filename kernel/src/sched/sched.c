@@ -619,6 +619,7 @@ void sched_tick(void) {
         if (!smp_active || (smp_active && percpu_get()->cpu_id == 0)) {
             tcp_timer_check();
             infer_health_check();
+            infer_queue_expire();
         }
     }
     schedule();

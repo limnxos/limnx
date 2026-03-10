@@ -874,3 +874,10 @@ sys_infer_set_policy:
     mov rax, 118        ; SYS_INFER_SET_POLICY
     syscall
     ret
+
+; --- sys_infer_queue_stat(stat_ptr) ---
+global sys_infer_queue_stat
+sys_infer_queue_stat:
+    mov rax, 119        ; SYS_INFER_QUEUE_STAT
+    syscall
+    ret

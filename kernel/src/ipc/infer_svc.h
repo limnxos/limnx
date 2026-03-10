@@ -53,4 +53,43 @@ uint8_t infer_get_policy(void);
  * Called from sched_tick. Returns number of services marked unhealthy. */
 int  infer_health_check(void);
 
+/* --- Inference request queue --- */
+
+#define INFER_QUEUE_SIZE     16
+#define INFER_QUEUE_TIMEOUT  90   /* ticks (~5 seconds at 18Hz) */
+
+typedef struct infer_queue_entry {
+    char     name[INFER_NAME_MAX];
+    uint64_t caller_pid;
+    uint32_t enqueue_tick;
+    volatile uint8_t  ready;     /* set to 1 when provider available */
+    volatile uint8_t  timed_out; /* set to 1 on timeout */
+    uint8_t  used;
+} infer_queue_entry_t;
+
+typedef struct infer_queue_stat {
+    uint32_t capacity;
+    uint32_t pending;
+    uint32_t total_queued;
+    uint32_t total_timeouts;
+} infer_queue_stat_t;
+
+/* Enqueue a request — returns queue slot index, or -1 if full */
+int  infer_queue_enqueue(const char *name, uint64_t caller_pid);
+
+/* Check if a queued entry is ready or timed out */
+int  infer_queue_check(int slot);
+
+/* Remove a queue entry */
+void infer_queue_remove(int slot);
+
+/* Drain: wake queued callers matching a service name (called from infer_health) */
+void infer_queue_drain(const char *name);
+
+/* Expire timed-out queue entries */
+void infer_queue_expire(void);
+
+/* Get queue statistics */
+void infer_queue_get_stat(infer_queue_stat_t *stat);
+
 #endif
