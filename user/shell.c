@@ -719,6 +719,7 @@ static const test_entry_t tests[] = {
     {"s70",        "/s70test.elf",     NULL},
     {"s71",        "/s71test.elf",     NULL},
     {"s72",        "/s72test.elf",     NULL},
+    {"s73",        "/s73test.elf",     NULL},
     {NULL, NULL, NULL}
 };
 

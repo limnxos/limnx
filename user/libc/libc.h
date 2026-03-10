@@ -651,6 +651,12 @@ long sys_infer_request(const char *name, const void *req_buf, long req_len,
                        void *resp_buf, long resp_len);
 long sys_infer_health(long load);
 long sys_infer_route(const char *name);
+long sys_infer_set_policy(long policy);
+
+/* Inference routing policies */
+#define INFER_ROUTE_LEAST_LOADED  0
+#define INFER_ROUTE_ROUND_ROBIN   1
+#define INFER_ROUTE_WEIGHTED      2
 long sys_agent_send(const char *name, const void *msg_buf, long msg_len, long token_id);
 long sys_agent_recv(void *msg_buf, long msg_len, long *sender_pid_ptr, long *token_id_ptr);
 long sys_uring_setup(long entries, void *params);

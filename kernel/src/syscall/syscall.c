@@ -3736,8 +3736,8 @@ static int64_t sys_infer_request(uint64_t name_ptr, uint64_t req_buf,
     if (resp_len > 0 && validate_user_ptr(resp_buf, resp_len) != 0)
         return -EFAULT;
 
-    /* Look up service */
-    int svc_idx = infer_lookup(name);
+    /* Route to best available service (load-balanced) */
+    int svc_idx = infer_route(name);
     if (svc_idx < 0) return -ENOENT;
 
     infer_service_t *svc = infer_get(svc_idx);
@@ -4316,6 +4316,13 @@ static int64_t sys_infer_route(uint64_t name_ptr, uint64_t a2,
     return (int64_t)svc->provider_pid;
 }
 
+/* --- SYS_INFER_SET_POLICY: set inference routing policy --- */
+static int64_t sys_infer_set_policy(uint64_t policy, uint64_t a2,
+                                      uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    return infer_set_policy((uint8_t)policy);
+}
+
 /* --- SYS_AGENT_SEND: send message to named agent with optional token delegation --- */
 static int64_t sys_agent_send(uint64_t name_ptr, uint64_t msg_buf,
                                 uint64_t msg_len, uint64_t token_id, uint64_t a5) {
@@ -4678,6 +4685,7 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_SUPER_START]      = sys_super_start,
     [SYS_TCP_SETOPT]       = sys_tcp_setopt,
     [SYS_TCP_TO_FD]        = sys_tcp_to_fd,
+    [SYS_INFER_SET_POLICY] = sys_infer_set_policy,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).

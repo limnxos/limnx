@@ -122,7 +122,8 @@
 #define SYS_SUPER_START   115
 #define SYS_TCP_SETOPT    116
 #define SYS_TCP_TO_FD     117
-#define SYS_NR            118
+#define SYS_INFER_SET_POLICY 118
+#define SYS_NR            119
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

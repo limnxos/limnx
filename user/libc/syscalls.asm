@@ -867,3 +867,10 @@ sys_tcp_to_fd:
     mov rax, 117        ; SYS_TCP_TO_FD
     syscall
     ret
+
+; --- sys_infer_set_policy(policy) ---
+global sys_infer_set_policy
+sys_infer_set_policy:
+    mov rax, 118        ; SYS_INFER_SET_POLICY
+    syscall
+    ret
