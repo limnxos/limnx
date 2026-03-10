@@ -19,4 +19,9 @@ void sched_wake(thread_t *t);
 /* Called by timer IRQ to trigger preemption */
 void sched_tick(void);
 
+/* Check if current thread's process has pending unmasked signals.
+ * Returns 1 if there are signals to deliver, 0 otherwise.
+ * Safe to call from net/tcp code that doesn't include process.h. */
+int sched_has_pending_signal(void);
+
 #endif

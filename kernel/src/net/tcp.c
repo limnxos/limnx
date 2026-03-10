@@ -4,6 +4,10 @@
 #include "sched/sched.h"
 #include "serial.h"
 
+#ifndef EINTR
+#define EINTR 4
+#endif
+
 static tcp_conn_t tcp_conns[MAX_TCP_CONNS];
 static uint16_t tcp_ephemeral_port = 49152;
 
@@ -478,6 +482,7 @@ int tcp_connect(int conn_idx, uint32_t remote_ip, uint16_t remote_port) {
             c->in_use = 0;
             return -1;
         }
+        if (sched_has_pending_signal()) return -EINTR;
         sched_yield();
     }
 
@@ -527,6 +532,7 @@ int tcp_accept(int listen_idx) {
         if (!found) {
             tcp_timer_check();
             if (--timeout <= 0) return -1;
+            if (sched_has_pending_signal()) return -EINTR;
             sched_yield();
         }
     }
@@ -571,6 +577,7 @@ int tcp_accept(int listen_idx) {
             nc->in_use = 0;
             return -1;
         }
+        if (sched_has_pending_signal()) return -EINTR;
         sched_yield();
     }
 
@@ -625,6 +632,7 @@ int64_t tcp_recv(int conn_idx, uint8_t *buf, uint32_t len) {
     while (c->rx_count == 0 && !c->fin_received && !c->rst_received) {
         tcp_timer_check();
         if (--timeout <= 0) return -1;
+        if (sched_has_pending_signal()) return -EINTR;
         sched_yield();
     }
 

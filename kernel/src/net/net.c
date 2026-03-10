@@ -3,6 +3,10 @@
 #include "serial.h"
 #include "sched/sched.h"
 
+#ifndef EINTR
+#define EINTR 4
+#endif
+
 /* --- Configuration (QEMU user-mode networking) --- */
 
 #define NET_IP      0x0A00020FU  /* 10.0.2.15 */
@@ -426,6 +430,7 @@ int net_recvfrom(int sockfd, void *buf, uint32_t len,
     while (!sockets[sockfd].rx_ready) {
         if (--timeout <= 0)
             return -1;  /* timed out */
+        if (sched_has_pending_signal()) return -EINTR;
         sched_yield();
     }
 

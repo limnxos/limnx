@@ -634,6 +634,14 @@ void sched_unlock_after_switch(void) {
     __asm__ volatile ("sti");
 }
 
+int sched_has_pending_signal(void) {
+    thread_t *t = get_current();
+    if (t && t->process) {
+        return (t->process->pending_signals & ~t->process->signal_mask) ? 1 : 0;
+    }
+    return 0;
+}
+
 thread_t *thread_get_current(void) {
     if (smp_active) {
         percpu_t *pc = percpu_get();
