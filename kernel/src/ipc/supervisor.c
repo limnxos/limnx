@@ -102,11 +102,26 @@ static void supervisor_restart_child(supervisor_t *sv, int child_idx) {
         return;
     }
 
+    proc->parent_pid = sv->owner_pid;
     proc->capabilities = (uint32_t)ch->caps;
     ch->pid = proc->pid;
     sched_add(proc->main_thread);
     serial_printf("[supervisor] Restarted %s as pid %lu\n",
                   ch->elf_path, proc->pid);
+}
+
+int supervisor_start(uint32_t super_id) {
+    if (super_id >= MAX_SUPERVISORS || !supervisors[super_id].used)
+        return -1;
+    supervisor_t *sv = &supervisors[super_id];
+    int launched = 0;
+    for (int i = 0; i < MAX_SUPER_CHILDREN; i++) {
+        if (sv->children[i].used && sv->children[i].pid == 0) {
+            supervisor_restart_child(sv, i);
+            launched++;
+        }
+    }
+    return launched;
 }
 
 void supervisor_on_exit(uint64_t pid, int exit_status) {

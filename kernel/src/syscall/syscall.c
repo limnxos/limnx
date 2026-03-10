@@ -459,7 +459,9 @@ static int64_t sys_read(uint64_t fd, uint64_t buf_ptr, uint64_t len,
             } else {
                 if (total > 0) break;  /* return what we have */
                 if (entry->fd_flags & 0x02)  /* O_NONBLOCK */
-                    return -1;               /* would block */
+                    return -EAGAIN;
+                if (proc->pending_signals & ~proc->signal_mask)
+                    return -EINTR;
                 sched_yield();
             }
         }
@@ -1166,8 +1168,13 @@ static int64_t sys_waitpid(uint64_t pid, uint64_t flags,
         return -1;
     if ((flags & WNOHANG) && !child->exited)
         return 0;
-    while (!child->exited)
+    thread_t *wt = thread_get_current();
+    process_t *wproc = wt ? wt->process : (void *)0;
+    while (!child->exited) {
+        if (wproc && (wproc->pending_signals & ~wproc->signal_mask))
+            return -EINTR;
         sched_yield();
+    }
     int64_t status = child->exit_status;
     process_unregister(pid);
     kfree(child);
@@ -1245,6 +1252,76 @@ static int64_t sys_pipe(uint64_t rfd_ptr, uint64_t wfd_ptr,
     *(long *)rfd_ptr = rfd;
     *(long *)wfd_ptr = wfd;
 
+    return 0;
+}
+
+static int64_t sys_pipe2(uint64_t rfd_ptr, uint64_t wfd_ptr,
+                          uint64_t flags, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+    if (validate_user_ptr(rfd_ptr, sizeof(long)) != 0 ||
+        validate_user_ptr(wfd_ptr, sizeof(long)) != 0)
+        return -1;
+
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    if (proc->rlimit_nfds > 0 &&
+        (uint32_t)(count_open_fds(proc) + 2) > proc->rlimit_nfds)
+        return -EMFILE;
+
+    int slot = -1;
+    for (int i = 0; i < MAX_PIPES; i++) {
+        if (!pipes[i].used) { slot = i; break; }
+    }
+    if (slot < 0) return -1;
+
+    pipe_t *pp = &pipes[slot];
+    pp->read_pos = 0;
+    pp->write_pos = 0;
+    pp->count = 0;
+    pp->closed_read = 0;
+    pp->closed_write = 0;
+    pp->used = 1;
+    pp->read_refs = 1;
+    pp->write_refs = 1;
+
+    int rfd = -1, wfd = -1;
+    for (int fd = 0; fd < MAX_FDS; fd++) {
+        if (fd_is_free(&proc->fd_table[fd])) {
+            if (rfd < 0) rfd = fd;
+            else if (wfd < 0) { wfd = fd; break; }
+        }
+    }
+    if (rfd < 0 || wfd < 0) { pp->used = 0; return -1; }
+
+    proc->fd_table[rfd].node = (void *)0;
+    proc->fd_table[rfd].offset = 0;
+    proc->fd_table[rfd].pipe = (void *)pp;
+    proc->fd_table[rfd].pipe_write = 0;
+    proc->fd_table[rfd].pty = (void *)0;
+    proc->fd_table[rfd].pty_is_master = 0;
+    proc->fd_table[rfd].fd_flags = 0;
+
+    proc->fd_table[wfd].node = (void *)0;
+    proc->fd_table[wfd].offset = 0;
+    proc->fd_table[wfd].pipe = (void *)pp;
+    proc->fd_table[wfd].pipe_write = 1;
+    proc->fd_table[wfd].pty = (void *)0;
+    proc->fd_table[wfd].pty_is_master = 0;
+    proc->fd_table[wfd].fd_flags = 0;
+
+    if (flags & 0x01) {  /* O_CLOEXEC */
+        proc->fd_table[rfd].fd_flags |= 0x01;
+        proc->fd_table[wfd].fd_flags |= 0x01;
+    }
+    if (flags & 0x800) {  /* O_NONBLOCK */
+        proc->fd_table[rfd].fd_flags |= 0x02;
+        proc->fd_table[wfd].fd_flags |= 0x02;
+    }
+
+    *(long *)rfd_ptr = rfd;
+    *(long *)wfd_ptr = wfd;
     return 0;
 }
 
@@ -2139,6 +2216,22 @@ static int64_t sys_sigreturn(uint64_t a1, uint64_t a2,
 
     proc->signal_frame_addr = 0;
 
+    /* SA_RESTART: re-invoke the interrupted syscall after signal handler */
+    if (proc->restart_pending) {
+        proc->restart_pending = 0;
+        uint64_t snum = proc->restart_syscall_num;
+        if (snum < SYS_NR) {
+            uint64_t *kstack_top = (uint64_t *)(t->stack_base + t->stack_size);
+            kstack_top[-1] = orig_rsp;
+            kstack_top[-2] = orig_rip;
+            kstack_top[-3] = orig_rflags;
+            return syscall_dispatch(snum,
+                proc->restart_args[0], proc->restart_args[1],
+                proc->restart_args[2], proc->restart_args[3],
+                proc->restart_args[4]);
+        }
+    }
+
     /* Restore original context — modify kernel stack */
     uint64_t *kstack_top = (uint64_t *)(t->stack_base + t->stack_size);
     kstack_top[-1] = orig_rsp;
@@ -2351,6 +2444,12 @@ static int64_t sys_super_set_policy(uint64_t super_id, uint64_t policy,
                                      uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a3; (void)a4; (void)a5;
     return supervisor_set_policy((uint32_t)super_id, (uint8_t)policy);
+}
+
+static int64_t sys_super_start(uint64_t super_id, uint64_t a2,
+                               uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    return supervisor_start((uint32_t)super_id);
 }
 
 /* --- Stage 32 syscalls --- */
@@ -4487,6 +4586,8 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_SUPER_CREATE]   = sys_super_create,
     [SYS_SUPER_ADD]      = sys_super_add,
     [SYS_SUPER_SET_POLICY] = sys_super_set_policy,
+    [SYS_PIPE2]            = sys_pipe2,
+    [SYS_SUPER_START]      = sys_super_start,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).
@@ -4627,6 +4728,20 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
             frame[3] = (uint64_t)result;
 
             proc->signal_frame_addr = frame_rsp;
+
+            /* SA_RESTART: save syscall info if result was -EINTR */
+            if (result == -EINTR &&
+                (proc->sig_handlers[sig].sa_flags & SA_RESTART)) {
+                proc->restart_pending = 1;
+                proc->restart_syscall_num = num;
+                proc->restart_args[0] = arg1;
+                proc->restart_args[1] = arg2;
+                proc->restart_args[2] = arg3;
+                proc->restart_args[3] = arg4;
+                proc->restart_args[4] = arg5;
+            } else {
+                proc->restart_pending = 0;
+            }
 
             /* Redirect SYSRET to handler via per-CPU data.
              * The asm stub overrides RCX (→RIP) and RSP after pops. */

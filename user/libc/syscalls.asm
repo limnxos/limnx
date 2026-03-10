@@ -839,3 +839,17 @@ sys_super_set_policy:
     mov rax, 113        ; SYS_SUPER_SET_POLICY
     syscall
     ret
+
+; --- sys_pipe2(rfd_ptr, wfd_ptr, flags) ---
+global sys_pipe2
+sys_pipe2:
+    mov rax, 114        ; SYS_PIPE2
+    syscall
+    ret
+
+; --- sys_super_start(super_id) ---
+global sys_super_start
+sys_super_start:
+    mov rax, 115        ; SYS_SUPER_START
+    syscall
+    ret

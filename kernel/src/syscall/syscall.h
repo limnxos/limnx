@@ -118,7 +118,9 @@
 #define SYS_SUPER_CREATE  111
 #define SYS_SUPER_ADD     112
 #define SYS_SUPER_SET_POLICY 113
-#define SYS_NR            114
+#define SYS_PIPE2         114
+#define SYS_SUPER_START   115
+#define SYS_NR            116
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

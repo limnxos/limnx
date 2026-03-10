@@ -783,6 +783,11 @@ long sys_select(long nfds, fd_set_t *readfds, fd_set_t *writefds, long timeout_u
 long sys_super_create(const char *name);
 long sys_super_add(long super_id, const char *elf_path, long ns_id, long caps);
 long sys_super_set_policy(long super_id, long policy);
+long sys_super_start(long super_id);
+
+/* pipe2 flags */
+#define O_CLOEXEC 0x01
+long sys_pipe2(long *rfd_ptr, long *wfd_ptr, long flags);
 
 /* --- HTTP types and functions --- */
 

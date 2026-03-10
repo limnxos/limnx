@@ -253,6 +253,7 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
     proc->sig_queue.tail = 0;
     proc->sig_queue.count = 0;
     proc->signal_frame_addr = 0;
+    proc->restart_pending = 0;
 
     /* Initialize argv */
     proc->argc = 0;
@@ -433,6 +434,7 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
     proc->sig_queue.tail = 0;
     proc->sig_queue.count = 0;
     proc->signal_frame_addr = 0;
+    proc->restart_pending = 0;
 
     /* Initialize argv */
     proc->argc = 0;

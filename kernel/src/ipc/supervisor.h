@@ -34,6 +34,7 @@ int  supervisor_create(uint64_t owner_pid, const char *name);
 int  supervisor_add_child(uint32_t super_id, const char *elf_path,
                           int64_t ns_id, uint64_t caps);
 int  supervisor_set_policy(uint32_t super_id, uint8_t policy);
+int  supervisor_start(uint32_t super_id);
 void supervisor_on_exit(uint64_t pid, int exit_status);
 
 #endif
