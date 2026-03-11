@@ -683,6 +683,15 @@ typedef struct {
     uint32_t capacity;
     uint32_t ttl;
 } infer_cache_stat_t;
+
+/* Async inference */
+long sys_infer_submit(const char *name, const void *req_buf, long req_len, long eventfd_idx);
+long sys_infer_poll(long request_id);
+long sys_infer_result(long request_id, void *resp_buf, long resp_len);
+
+#define INFER_STATUS_PENDING  1
+#define INFER_STATUS_READY    2
+
 long sys_agent_send(const char *name, const void *msg_buf, long msg_len, long token_id);
 long sys_agent_recv(void *msg_buf, long msg_len, long *sender_pid_ptr, long *token_id_ptr);
 long sys_uring_setup(long entries, void *params);

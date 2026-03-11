@@ -132,4 +132,53 @@ void infer_queue_expire(void);
 /* Get queue statistics */
 void infer_queue_get_stat(infer_queue_stat_t *stat);
 
+/* --- Async inference --- */
+
+#define INFER_ASYNC_SIZE       16
+#define INFER_ASYNC_REQ_MAX    256
+#define INFER_ASYNC_RESP_MAX   256
+#define INFER_ASYNC_TIMEOUT    90   /* ticks (~5 seconds at 18Hz) */
+
+/* Async slot states */
+#define INFER_ASYNC_FREE       0
+#define INFER_ASYNC_PENDING    1
+#define INFER_ASYNC_READY      2
+#define INFER_ASYNC_ERROR      3
+
+typedef struct infer_async_entry {
+    char     name[INFER_NAME_MAX];
+    uint8_t  request[INFER_ASYNC_REQ_MAX];
+    uint32_t req_len;
+    uint8_t  response[INFER_ASYNC_RESP_MAX];
+    uint32_t resp_len;
+    uint64_t owner_pid;
+    int32_t  eventfd_idx;     /* -1 = no notification */
+    int32_t  error_code;      /* errno when state == ERROR */
+    uint32_t submit_tick;
+    volatile uint8_t state;   /* INFER_ASYNC_* */
+} infer_async_entry_t;
+
+/* Submit an async inference request. Returns request_id (>0) or negative error. */
+int  infer_async_submit(const char *name, const void *req, uint32_t req_len,
+                         uint64_t owner_pid, int32_t eventfd_idx);
+
+/* Poll async request status. Returns INFER_ASYNC_* state or -EINVAL. */
+int  infer_async_poll(int request_id, uint64_t caller_pid);
+
+/* Retrieve result and free slot. Returns bytes copied or negative error. */
+int  infer_async_result(int request_id, uint64_t caller_pid,
+                         void *resp_buf, uint32_t resp_max);
+
+/* Process one pending async request (called by worker thread). Returns 1 if work done. */
+int  infer_async_process_one(void);
+
+/* Expire timed-out async requests (called from sched_tick). */
+void infer_async_expire(void);
+
+/* Cleanup async slots owned by a dying process. */
+void infer_async_cleanup_pid(uint64_t pid);
+
+/* Start the async worker kernel thread. */
+void infer_async_start_worker(void);
+
 #endif

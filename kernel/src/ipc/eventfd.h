@@ -10,7 +10,7 @@
 #define EFD_SEMAPHORE  (1 << 1)
 
 typedef struct eventfd {
-    uint64_t counter;
+    volatile uint64_t counter;
     uint32_t refs;
     uint32_t flags;
     uint8_t  used;

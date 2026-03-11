@@ -1,5 +1,9 @@
 #include "ipc/infer_svc.h"
+#include "ipc/unix_sock.h"
+#include "ipc/eventfd.h"
 #include "proc/process.h"
+#include "sched/sched.h"
+#include "sched/thread.h"
 #include "sync/spinlock.h"
 #include "serial.h"
 #include "idt/idt.h"
@@ -567,4 +571,300 @@ void infer_queue_get_stat(infer_queue_stat_t *stat) {
     }
 
     spin_unlock_irqrestore(&infer_lock, flags);
+}
+
+/* --- Async inference --- */
+
+static infer_async_entry_t infer_async[INFER_ASYNC_SIZE];
+
+int infer_async_submit(const char *name, const void *req, uint32_t req_len,
+                        uint64_t owner_pid, int32_t eventfd_idx) {
+    if (req_len > INFER_ASYNC_REQ_MAX) return -22; /* EINVAL */
+
+    uint64_t flags;
+    spin_lock_irqsave(&infer_lock, &flags);
+
+    for (int i = 0; i < INFER_ASYNC_SIZE; i++) {
+        if (infer_async[i].state == INFER_ASYNC_FREE) {
+            str_copy(infer_async[i].name, name, INFER_NAME_MAX);
+            if (req_len > 0)
+                mem_copy(infer_async[i].request, req, req_len);
+            infer_async[i].req_len = req_len;
+            infer_async[i].resp_len = 0;
+            infer_async[i].owner_pid = owner_pid;
+            infer_async[i].eventfd_idx = eventfd_idx;
+            infer_async[i].error_code = 0;
+            infer_async[i].submit_tick = (uint32_t)pit_get_ticks();
+            infer_async[i].state = INFER_ASYNC_PENDING;
+
+            spin_unlock_irqrestore(&infer_lock, flags);
+            serial_printf("[infer] Async submit slot %d for '%s' (pid %lu)\n",
+                          i, name, owner_pid);
+            return i + 1;  /* request IDs are 1-based */
+        }
+    }
+
+    spin_unlock_irqrestore(&infer_lock, flags);
+    return -105;  /* ENOBUFS */
+}
+
+int infer_async_poll(int request_id, uint64_t caller_pid) {
+    int idx = request_id - 1;
+    if (idx < 0 || idx >= INFER_ASYNC_SIZE) return -22; /* EINVAL */
+
+    uint64_t flags;
+    spin_lock_irqsave(&infer_lock, &flags);
+
+    infer_async_entry_t *e = &infer_async[idx];
+    if (e->state == INFER_ASYNC_FREE || e->owner_pid != caller_pid) {
+        spin_unlock_irqrestore(&infer_lock, flags);
+        return -22; /* EINVAL */
+    }
+
+    int state = e->state;
+    int err = e->error_code;
+    spin_unlock_irqrestore(&infer_lock, flags);
+
+    if (state == INFER_ASYNC_ERROR) return err ? -err : -2; /* -ENOENT default */
+    return state; /* PENDING=1, READY=2 */
+}
+
+int infer_async_result(int request_id, uint64_t caller_pid,
+                        void *resp_buf, uint32_t resp_max) {
+    int idx = request_id - 1;
+    if (idx < 0 || idx >= INFER_ASYNC_SIZE) return -22; /* EINVAL */
+
+    uint64_t flags;
+    spin_lock_irqsave(&infer_lock, &flags);
+
+    infer_async_entry_t *e = &infer_async[idx];
+    if (e->state == INFER_ASYNC_FREE || e->owner_pid != caller_pid) {
+        spin_unlock_irqrestore(&infer_lock, flags);
+        return -22; /* EINVAL */
+    }
+
+    if (e->state == INFER_ASYNC_PENDING) {
+        spin_unlock_irqrestore(&infer_lock, flags);
+        return -EAGAIN;
+    }
+
+    if (e->state == INFER_ASYNC_ERROR) {
+        int err = e->error_code;
+        e->state = INFER_ASYNC_FREE;
+        spin_unlock_irqrestore(&infer_lock, flags);
+        return err ? -err : -2;
+    }
+
+    /* READY — copy response and free slot */
+    uint32_t copy_len = e->resp_len;
+    if (copy_len > resp_max) copy_len = resp_max;
+    if (copy_len > 0)
+        mem_copy(resp_buf, e->response, copy_len);
+
+    e->state = INFER_ASYNC_FREE;
+    spin_unlock_irqrestore(&infer_lock, flags);
+    return (int)copy_len;
+}
+
+int infer_async_process_one(void) {
+    uint64_t flags;
+    spin_lock_irqsave(&infer_lock, &flags);
+
+    /* Find oldest PENDING entry */
+    int best = -1;
+    uint32_t oldest_tick = 0xFFFFFFFF;
+    for (int i = 0; i < INFER_ASYNC_SIZE; i++) {
+        if (infer_async[i].state != INFER_ASYNC_PENDING) continue;
+        if (infer_async[i].submit_tick < oldest_tick) {
+            oldest_tick = infer_async[i].submit_tick;
+            best = i;
+        }
+    }
+
+    if (best < 0) {
+        spin_unlock_irqrestore(&infer_lock, flags);
+        return 0;  /* no work */
+    }
+
+    /* Copy out what we need, release lock for I/O */
+    infer_async_entry_t *e = &infer_async[best];
+    char name[INFER_NAME_MAX];
+    uint8_t req_copy[INFER_ASYNC_REQ_MAX];
+    uint32_t req_len = e->req_len;
+    int32_t efd = e->eventfd_idx;
+    str_copy(name, e->name, INFER_NAME_MAX);
+    if (req_len > 0)
+        mem_copy(req_copy, e->request, req_len);
+
+    spin_unlock_irqrestore(&infer_lock, flags);
+
+    /* Try to route */
+    int svc_idx = infer_route(name);
+    if (svc_idx < 0) {
+        /* No provider — check timeout */
+        uint32_t now = (uint32_t)pit_get_ticks();
+        uint32_t elapsed = now - oldest_tick;
+        if (elapsed > INFER_ASYNC_TIMEOUT) {
+            spin_lock_irqsave(&infer_lock, &flags);
+            if (infer_async[best].state == INFER_ASYNC_PENDING) {
+                infer_async[best].state = INFER_ASYNC_ERROR;
+                infer_async[best].error_code = EAGAIN;
+                serial_printf("[infer] Async slot %d timed out for '%s'\n",
+                              best, name);
+            }
+            spin_unlock_irqrestore(&infer_lock, flags);
+            if (efd >= 0) eventfd_write(efd, 1);
+            return 1;
+        }
+        return 0;  /* not timed out yet, try again later */
+    }
+
+    infer_service_t *svc = infer_get(svc_idx);
+    if (!svc) {
+        spin_lock_irqsave(&infer_lock, &flags);
+        if (infer_async[best].state == INFER_ASYNC_PENDING) {
+            infer_async[best].state = INFER_ASYNC_ERROR;
+            infer_async[best].error_code = 2; /* ENOENT */
+        }
+        spin_unlock_irqrestore(&infer_lock, flags);
+        if (efd >= 0) eventfd_write(efd, 1);
+        return 1;
+    }
+
+    /* Connect to provider via unix socket */
+    int client_idx = unix_sock_connect(svc->sock_path);
+    if (client_idx < 0) {
+        spin_lock_irqsave(&infer_lock, &flags);
+        if (infer_async[best].state == INFER_ASYNC_PENDING) {
+            infer_async[best].state = INFER_ASYNC_ERROR;
+            infer_async[best].error_code = 111; /* ECONNREFUSED */
+        }
+        spin_unlock_irqrestore(&infer_lock, flags);
+        if (efd >= 0) eventfd_write(efd, 1);
+        return 1;
+    }
+
+    unix_sock_t *client = unix_sock_get(client_idx);
+    if (!client) {
+        spin_lock_irqsave(&infer_lock, &flags);
+        if (infer_async[best].state == INFER_ASYNC_PENDING) {
+            infer_async[best].state = INFER_ASYNC_ERROR;
+            infer_async[best].error_code = 111;
+        }
+        spin_unlock_irqrestore(&infer_lock, flags);
+        if (efd >= 0) eventfd_write(efd, 1);
+        return 1;
+    }
+
+    /* Send request */
+    if (req_len > 0) {
+        int sent = unix_sock_send(client, req_copy, req_len, 0);
+        if (sent < 0) {
+            unix_sock_close(client);
+            spin_lock_irqsave(&infer_lock, &flags);
+            if (infer_async[best].state == INFER_ASYNC_PENDING) {
+                infer_async[best].state = INFER_ASYNC_ERROR;
+                infer_async[best].error_code = 5; /* EIO */
+            }
+            spin_unlock_irqrestore(&infer_lock, flags);
+            if (efd >= 0) eventfd_write(efd, 1);
+            return 1;
+        }
+    }
+
+    /* Receive response (yield-based wait) */
+    uint8_t resp_tmp[INFER_ASYNC_RESP_MAX];
+    int received = 0;
+    for (int attempt = 0; attempt < 1000; attempt++) {
+        received = unix_sock_recv(client, resp_tmp, INFER_ASYNC_RESP_MAX, 1);
+        if (received > 0) break;
+        if (client->peer_closed) break;
+        sched_yield();
+    }
+
+    unix_sock_close(client);
+
+    /* Store result */
+    spin_lock_irqsave(&infer_lock, &flags);
+    if (infer_async[best].state == INFER_ASYNC_PENDING) {
+        if (received > 0) {
+            uint32_t rlen = (uint32_t)received;
+            if (rlen > INFER_ASYNC_RESP_MAX) rlen = INFER_ASYNC_RESP_MAX;
+            mem_copy(infer_async[best].response, resp_tmp, rlen);
+            infer_async[best].resp_len = rlen;
+            infer_async[best].state = INFER_ASYNC_READY;
+
+            /* Cache the response */
+            spin_unlock_irqrestore(&infer_lock, flags);
+            if (req_len > 0 && rlen <= INFER_CACHE_RESP_MAX)
+                infer_cache_insert(name, req_copy, req_len, resp_tmp, rlen);
+        } else {
+            infer_async[best].state = INFER_ASYNC_ERROR;
+            infer_async[best].error_code = 2; /* ENOENT */
+            spin_unlock_irqrestore(&infer_lock, flags);
+        }
+    } else {
+        spin_unlock_irqrestore(&infer_lock, flags);
+    }
+
+    /* Signal eventfd */
+    if (efd >= 0) eventfd_write(efd, 1);
+
+    serial_printf("[infer] Async slot %d completed for '%s' (%d bytes)\n",
+                  best, name, received);
+    return 1;
+}
+
+void infer_async_expire(void) {
+    uint64_t flags;
+    spin_lock_irqsave(&infer_lock, &flags);
+
+    uint32_t now = (uint32_t)pit_get_ticks();
+    for (int i = 0; i < INFER_ASYNC_SIZE; i++) {
+        if (infer_async[i].state != INFER_ASYNC_PENDING) continue;
+        uint32_t elapsed = now - infer_async[i].submit_tick;
+        if (elapsed > INFER_ASYNC_TIMEOUT) {
+            infer_async[i].state = INFER_ASYNC_ERROR;
+            infer_async[i].error_code = EAGAIN;
+            if (infer_async[i].eventfd_idx >= 0)
+                eventfd_write(infer_async[i].eventfd_idx, 1);
+            serial_printf("[infer] Async slot %d expired for '%s'\n",
+                          i, infer_async[i].name);
+        }
+    }
+
+    spin_unlock_irqrestore(&infer_lock, flags);
+}
+
+void infer_async_cleanup_pid(uint64_t pid) {
+    uint64_t flags;
+    spin_lock_irqsave(&infer_lock, &flags);
+
+    for (int i = 0; i < INFER_ASYNC_SIZE; i++) {
+        if (infer_async[i].state != INFER_ASYNC_FREE &&
+            infer_async[i].owner_pid == pid) {
+            infer_async[i].state = INFER_ASYNC_FREE;
+        }
+    }
+
+    spin_unlock_irqrestore(&infer_lock, flags);
+}
+
+static void infer_async_worker_fn(void) {
+    serial_puts("[infer] Async worker thread started\n");
+    for (;;) {
+        int did_work = infer_async_process_one();
+        if (!did_work) {
+            /* No pending work — yield several times to avoid busy-spinning */
+            for (int i = 0; i < 5; i++) sched_yield();
+        }
+    }
+}
+
+void infer_async_start_worker(void) {
+    thread_t *t = thread_create(infer_async_worker_fn, 0);
+    if (t) {
+        sched_add(t);
+        serial_puts("[infer] Async worker thread created\n");
+    }
 }

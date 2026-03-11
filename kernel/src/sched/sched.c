@@ -621,6 +621,7 @@ void sched_tick(void) {
             infer_health_check();
             infer_queue_expire();
             infer_cache_expire();
+            infer_async_expire();
         }
     }
     schedule();

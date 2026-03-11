@@ -125,7 +125,10 @@
 #define SYS_INFER_SET_POLICY 118
 #define SYS_INFER_QUEUE_STAT 119
 #define SYS_INFER_CACHE_CTRL 120
-#define SYS_NR            121
+#define SYS_INFER_SUBMIT   121
+#define SYS_INFER_POLL     122
+#define SYS_INFER_RESULT   123
+#define SYS_NR             124
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

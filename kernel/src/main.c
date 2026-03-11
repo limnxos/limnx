@@ -22,6 +22,7 @@
 #include "blk/virtio_blk.h"
 #include "blk/limnfs.h"
 #include "blk/bcache.h"
+#include "ipc/infer_svc.h"
 #include "sync/futex.h"
 #include "ipc/supervisor.h"
 #include "net/netstor.h"
@@ -828,6 +829,9 @@ void kmain(void) {
     /* Start bcache flusher kernel thread (periodic write-back) */
     if (blk_ok)
         bcache_start_flusher();
+
+    /* Start async inference worker kernel thread */
+    infer_async_start_worker();
 
     /* Enable framebuffer console for interactive use */
     fbcon_set_serial(1);

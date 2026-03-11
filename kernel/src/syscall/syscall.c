@@ -280,6 +280,8 @@ static int64_t sys_exit(uint64_t status, uint64_t a2,
         agent_ns_quota_adjust(t->process->ns_id, NS_QUOTA_PROCS, -1);
         /* Unregister inference services for dying process */
         infer_unregister_pid(t->process->pid);
+        /* Cleanup async inference slots owned by dying process */
+        infer_async_cleanup_pid(t->process->pid);
         /* Detach shared memory regions */
         for (int i = 0; i < MMAP_MAX_ENTRIES; i++) {
             if (t->process->mmap_table[i].used &&
@@ -4408,6 +4410,71 @@ static int64_t sys_infer_cache_ctrl(uint64_t cmd, uint64_t arg_ptr,
     }
 }
 
+/* --- SYS_INFER_SUBMIT: submit async inference request --- */
+static int64_t sys_infer_submit(uint64_t name_ptr, uint64_t req_buf,
+                                  uint64_t req_len, uint64_t eventfd_idx,
+                                  uint64_t a5) {
+    (void)a5;
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    char name[INFER_NAME_MAX];
+    if (copy_string_from_user((const char *)name_ptr, name, INFER_NAME_MAX) != 0)
+        return -EFAULT;
+    if (req_len > 0 && validate_user_ptr(req_buf, req_len) != 0)
+        return -EFAULT;
+
+    /* Require CAP_INFER */
+    if (!(proc->capabilities & CAP_INFER) &&
+        !cap_token_check(proc->pid, CAP_INFER, name))
+        return -EACCES;
+
+    /* Resolve eventfd file descriptor to raw eventfd index */
+    int32_t efd_idx = -1;
+    int64_t efd_arg = (int64_t)eventfd_idx;
+    if (efd_arg >= 0 && efd_arg < MAX_FDS) {
+        fd_entry_t *efd_entry = &proc->fd_table[efd_arg];
+        if (efd_entry->eventfd != (void *)0) {
+            for (int i = 0; i < MAX_EVENTFDS; i++) {
+                if (eventfd_get(i) == (eventfd_t *)efd_entry->eventfd) {
+                    efd_idx = i;
+                    break;
+                }
+            }
+        }
+    }
+
+    return infer_async_submit(name, (const void *)req_buf, (uint32_t)req_len,
+                               proc->pid, efd_idx);
+}
+
+/* --- SYS_INFER_POLL: poll async inference request status --- */
+static int64_t sys_infer_poll(uint64_t request_id, uint64_t a2,
+                                uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    return infer_async_poll((int)request_id, proc->pid);
+}
+
+/* --- SYS_INFER_RESULT: retrieve async inference result --- */
+static int64_t sys_infer_result(uint64_t request_id, uint64_t resp_buf,
+                                  uint64_t resp_len, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    if (resp_len > 0 && validate_user_ptr(resp_buf, resp_len) != 0)
+        return -EFAULT;
+
+    return infer_async_result((int)request_id, proc->pid,
+                               (void *)resp_buf, (uint32_t)resp_len);
+}
+
 /* --- SYS_AGENT_SEND: send message to named agent with optional token delegation --- */
 static int64_t sys_agent_send(uint64_t name_ptr, uint64_t msg_buf,
                                 uint64_t msg_len, uint64_t token_id, uint64_t a5) {
@@ -4773,6 +4840,9 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_INFER_SET_POLICY] = sys_infer_set_policy,
     [SYS_INFER_QUEUE_STAT] = sys_infer_queue_stat,
     [SYS_INFER_CACHE_CTRL] = sys_infer_cache_ctrl,
+    [SYS_INFER_SUBMIT]     = sys_infer_submit,
+    [SYS_INFER_POLL]       = sys_infer_poll,
+    [SYS_INFER_RESULT]     = sys_infer_result,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).

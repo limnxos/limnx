@@ -888,3 +888,26 @@ sys_infer_cache_ctrl:
     mov rax, 120        ; SYS_INFER_CACHE_CTRL
     syscall
     ret
+
+; --- sys_infer_submit(name, req_buf, req_len, eventfd_idx) ---
+; 4 args: rdi, rsi, rdx, rcx→r10
+global sys_infer_submit
+sys_infer_submit:
+    mov r10, rcx        ; 4th arg
+    mov rax, 121        ; SYS_INFER_SUBMIT
+    syscall
+    ret
+
+; --- sys_infer_poll(request_id) ---
+global sys_infer_poll
+sys_infer_poll:
+    mov rax, 122        ; SYS_INFER_POLL
+    syscall
+    ret
+
+; --- sys_infer_result(request_id, resp_buf, resp_len) ---
+global sys_infer_result
+sys_infer_result:
+    mov rax, 123        ; SYS_INFER_RESULT
+    syscall
+    ret
