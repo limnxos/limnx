@@ -666,6 +666,22 @@ typedef struct {
     uint32_t total_queued;
     uint32_t total_timeouts;
 } infer_queue_stat_t;
+
+/* Inference cache control */
+long sys_infer_cache_ctrl(long cmd, void *arg);
+
+#define INFER_CACHE_FLUSH    0
+#define INFER_CACHE_STATS    1
+#define INFER_CACHE_SET_TTL  2
+
+typedef struct {
+    uint32_t hits;
+    uint32_t misses;
+    uint32_t evictions;
+    uint32_t size;
+    uint32_t capacity;
+    uint32_t ttl;
+} infer_cache_stat_t;
 long sys_agent_send(const char *name, const void *msg_buf, long msg_len, long token_id);
 long sys_agent_recv(void *msg_buf, long msg_len, long *sender_pid_ptr, long *token_id_ptr);
 long sys_uring_setup(long entries, void *params);

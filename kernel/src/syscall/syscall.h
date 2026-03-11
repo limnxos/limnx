@@ -124,7 +124,8 @@
 #define SYS_TCP_TO_FD     117
 #define SYS_INFER_SET_POLICY 118
 #define SYS_INFER_QUEUE_STAT 119
-#define SYS_NR            120
+#define SYS_INFER_CACHE_CTRL 120
+#define SYS_NR            121
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

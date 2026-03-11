@@ -53,6 +53,46 @@ uint8_t infer_get_policy(void);
  * Called from sched_tick. Returns number of services marked unhealthy. */
 int  infer_health_check(void);
 
+/* --- Inference result cache --- */
+
+#define INFER_CACHE_SIZE        32
+#define INFER_CACHE_RESP_MAX    256
+#define INFER_CACHE_DEFAULT_TTL 180  /* ~10 seconds at 18Hz */
+
+/* Cache control sub-commands */
+#define INFER_CACHE_FLUSH       0
+#define INFER_CACHE_STATS       1
+#define INFER_CACHE_SET_TTL     2
+
+typedef struct infer_cache_entry {
+    uint64_t hash;
+    char     name[INFER_NAME_MAX];
+    uint8_t  response[INFER_CACHE_RESP_MAX];
+    uint32_t resp_len;
+    uint32_t insert_tick;
+    int8_t   lru_prev;
+    int8_t   lru_next;
+    uint8_t  used;
+} infer_cache_entry_t;
+
+typedef struct infer_cache_stat {
+    uint32_t hits;
+    uint32_t misses;
+    uint32_t evictions;
+    uint32_t size;
+    uint32_t capacity;
+    uint32_t ttl;
+} infer_cache_stat_t;
+
+int  infer_cache_lookup(const char *name, const void *req, uint32_t req_len,
+                        void *resp_buf, uint32_t resp_max);
+void infer_cache_insert(const char *name, const void *req, uint32_t req_len,
+                        const void *resp, uint32_t resp_len);
+void infer_cache_flush(void);
+void infer_cache_get_stat(infer_cache_stat_t *stat);
+void infer_cache_set_ttl(uint32_t ttl);
+void infer_cache_expire(void);
+
 /* --- Inference request queue --- */
 
 #define INFER_QUEUE_SIZE     16

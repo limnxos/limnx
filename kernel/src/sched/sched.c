@@ -620,6 +620,7 @@ void sched_tick(void) {
             tcp_timer_check();
             infer_health_check();
             infer_queue_expire();
+            infer_cache_expire();
         }
     }
     schedule();

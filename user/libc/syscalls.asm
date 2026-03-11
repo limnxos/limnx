@@ -881,3 +881,10 @@ sys_infer_queue_stat:
     mov rax, 119        ; SYS_INFER_QUEUE_STAT
     syscall
     ret
+
+; --- sys_infer_cache_ctrl(cmd, arg) ---
+global sys_infer_cache_ctrl
+sys_infer_cache_ctrl:
+    mov rax, 120        ; SYS_INFER_CACHE_CTRL
+    syscall
+    ret

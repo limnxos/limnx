@@ -3736,6 +3736,14 @@ static int64_t sys_infer_request(uint64_t name_ptr, uint64_t req_buf,
     if (resp_len > 0 && validate_user_ptr(resp_buf, resp_len) != 0)
         return -EFAULT;
 
+    /* Cache check: skip if req_len == 0 (side-effect request) */
+    if (req_len > 0 && resp_len > 0) {
+        int cached = infer_cache_lookup(name, (const void *)req_buf,
+                                         (uint32_t)req_len,
+                                         (void *)resp_buf, (uint32_t)resp_len);
+        if (cached > 0) return cached;
+    }
+
     /* Route to best available service (load-balanced) */
     int svc_idx = infer_route(name);
     if (svc_idx < 0) {
@@ -3799,6 +3807,14 @@ static int64_t sys_infer_request(uint64_t name_ptr, uint64_t req_buf,
     }
 
     unix_sock_close(client);
+
+    /* Cache the response for future lookups */
+    if (received > 0 && req_len > 0 &&
+        (uint32_t)received <= INFER_CACHE_RESP_MAX) {
+        infer_cache_insert(name, (const void *)req_buf, (uint32_t)req_len,
+                           (const void *)resp_buf, (uint32_t)received);
+    }
+
     return received > 0 ? received : -ENOENT;
 }
 
@@ -4361,6 +4377,27 @@ static int64_t sys_infer_queue_stat(uint64_t stat_ptr, uint64_t a2,
     return 0;
 }
 
+static int64_t sys_infer_cache_ctrl(uint64_t cmd, uint64_t arg_ptr,
+                                      uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+
+    switch (cmd) {
+    case INFER_CACHE_FLUSH:
+        infer_cache_flush();
+        return 0;
+    case INFER_CACHE_STATS:
+        if (validate_user_ptr(arg_ptr, sizeof(infer_cache_stat_t)) != 0)
+            return -EFAULT;
+        infer_cache_get_stat((infer_cache_stat_t *)arg_ptr);
+        return 0;
+    case INFER_CACHE_SET_TTL:
+        infer_cache_set_ttl((uint32_t)arg_ptr);
+        return 0;
+    default:
+        return -EINVAL;
+    }
+}
+
 /* --- SYS_AGENT_SEND: send message to named agent with optional token delegation --- */
 static int64_t sys_agent_send(uint64_t name_ptr, uint64_t msg_buf,
                                 uint64_t msg_len, uint64_t token_id, uint64_t a5) {
@@ -4725,6 +4762,7 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_TCP_TO_FD]        = sys_tcp_to_fd,
     [SYS_INFER_SET_POLICY] = sys_infer_set_policy,
     [SYS_INFER_QUEUE_STAT] = sys_infer_queue_stat,
+    [SYS_INFER_CACHE_CTRL] = sys_infer_cache_ctrl,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).
