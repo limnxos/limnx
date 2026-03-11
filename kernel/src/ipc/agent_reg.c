@@ -1,18 +1,21 @@
+#define pr_fmt(fmt) "[agent] " fmt
+#include "klog.h"
+
 #include "ipc/agent_reg.h"
 #include "ipc/cap_token.h"
 #include "proc/process.h"
 #include "sync/spinlock.h"
+#include "errno.h"
+#include "kutil.h"
 
 static agent_entry_t agent_table[MAX_AGENTS];
+/*
+ * Lock ordering: agent_lock is at level 4 (subsystem).
+ * Must NOT hold sched_lock, pmm_lock, or kheap_lock when acquiring.
+ * Does NOT call kmalloc or pmm_alloc while held.
+ * May call process_lookup while held (lightweight, no locks taken).
+ */
 static spinlock_t agent_lock = SPINLOCK_INIT;
-
-static int name_eq(const char *a, const char *b) {
-    while (*a && *b) {
-        if (*a != *b) return 0;
-        a++; b++;
-    }
-    return *a == *b;
-}
 
 int agent_register_ns(const char *name, uint64_t pid, uint32_t ns_id) {
     uint64_t flags;
@@ -22,7 +25,7 @@ int agent_register_ns(const char *name, uint64_t pid, uint32_t ns_id) {
     for (int i = 0; i < MAX_AGENTS; i++) {
         if (!agent_table[i].used) continue;
         if (agent_table[i].ns_id != ns_id) continue;
-        if (name_eq(agent_table[i].name, name)) {
+        if (str_eq(agent_table[i].name, name)) {
             agent_table[i].pid = pid;
             /* Reset mailbox on re-registration */
             agent_table[i].mbox.head = 0;
@@ -54,7 +57,8 @@ int agent_register_ns(const char *name, uint64_t pid, uint32_t ns_id) {
     }
 
     spin_unlock_irqrestore(&agent_lock, flags);
-    return -12;  /* ENOMEM */
+    pr_err("agent table full\n");
+    return -ENOMEM;
 }
 
 int agent_lookup_ns(const char *name, uint64_t *pid_out, uint32_t ns_id) {
@@ -64,7 +68,7 @@ int agent_lookup_ns(const char *name, uint64_t *pid_out, uint32_t ns_id) {
     for (int i = 0; i < MAX_AGENTS; i++) {
         if (!agent_table[i].used) continue;
         if (agent_table[i].ns_id != ns_id) continue;
-        if (!name_eq(agent_table[i].name, name)) continue;
+        if (!str_eq(agent_table[i].name, name)) continue;
 
         /* Validate pid is still alive */
         process_t *proc = process_lookup(agent_table[i].pid);
@@ -80,7 +84,7 @@ int agent_lookup_ns(const char *name, uint64_t *pid_out, uint32_t ns_id) {
     }
 
     spin_unlock_irqrestore(&agent_lock, flags);
-    return -1;
+    return -ESRCH;
 }
 
 /* Legacy wrappers for global namespace */
@@ -116,6 +120,7 @@ int agent_send(const char *name, uint32_t ns_id,
                uint64_t sender_pid, uint32_t sender_caps,
                const uint8_t *data, uint32_t len,
                uint32_t token_id) {
+    (void)sender_caps;  /* reserved for future capability checks */
     if (len > AGENT_MSG_MAX) len = AGENT_MSG_MAX;
 
     uint64_t flags;
@@ -128,7 +133,7 @@ int agent_send(const char *name, uint32_t ns_id,
         /* Allow send within same namespace or to global namespace */
         if (agent_table[i].ns_id != ns_id && agent_table[i].ns_id != 0 && ns_id != 0)
             continue;
-        if (name_eq(agent_table[i].name, name)) {
+        if (str_eq(agent_table[i].name, name)) {
             target_idx = i;
             break;
         }
@@ -136,13 +141,13 @@ int agent_send(const char *name, uint32_t ns_id,
 
     if (target_idx < 0) {
         spin_unlock_irqrestore(&agent_lock, flags);
-        return -2;  /* ENOENT */
+        return -ENOENT;
     }
 
     agent_mbox_t *mbox = &agent_table[target_idx].mbox;
     if (mbox->count >= AGENT_MBOX_SLOTS) {
         spin_unlock_irqrestore(&agent_lock, flags);
-        return -105;  /* ENOBUFS */
+        return -ENOBUFS;
     }
 
     /* Handle token delegation */
@@ -159,7 +164,7 @@ int agent_send(const char *name, uint32_t ns_id,
         /* Re-validate target still exists after releasing lock */
         if (!agent_table[target_idx].used) {
             spin_unlock_irqrestore(&agent_lock, flags);
-            return -2;
+            return -ENOENT;
         }
         mbox = &agent_table[target_idx].mbox;
     }
@@ -196,13 +201,13 @@ int agent_recv(uint64_t pid,
 
     if (idx < 0) {
         spin_unlock_irqrestore(&agent_lock, flags);
-        return -1;
+        return -ESRCH;
     }
 
     agent_mbox_t *mbox = &agent_table[idx].mbox;
     if (mbox->count == 0) {
         spin_unlock_irqrestore(&agent_lock, flags);
-        return -11;  /* EAGAIN */
+        return -EAGAIN;
     }
 
     /* Dequeue message */

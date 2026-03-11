@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[tar] " fmt
+#include "klog.h"
+
 #include "fs/tar.h"
 #include "fs/vfs.h"
 #include "serial.h"
@@ -63,7 +66,7 @@ int tar_init(const void *archive, uint64_t size) {
             if (data + file_size > end)
                 break;
 
-            serial_printf("[tar] Found file: %s (%lu bytes)\n",
+            pr_info("Found file: %s (%lu bytes)\n",
                           basename, file_size);
             /* Register under root (node 0) with basename only */
             int idx = vfs_register_node(0, basename, VFS_FILE, file_size,
@@ -84,6 +87,6 @@ int tar_init(const void *archive, uint64_t size) {
         ptr += 512 + data_blocks * 512;
     }
 
-    serial_printf("[tar] Parsed %d files from initrd\n", file_count);
+    pr_info("Parsed %d files from initrd\n", file_count);
     return file_count;
 }

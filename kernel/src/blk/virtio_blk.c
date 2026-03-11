@@ -1,3 +1,5 @@
+#define pr_fmt(fmt) "[vblk] " fmt
+#include "klog.h"
 #include "blk/virtio_blk.h"
 #include "net/virtio_net.h"   /* for VIRTIO_VENDOR_ID and virtqueue structs */
 #include "pci/pci.h"
@@ -40,7 +42,7 @@ static int setup_virtqueue(void) {
 
     q_size = inw(io_base + VIRTIO_REG_QUEUE_SIZE);
     if (q_size == 0) {
-        serial_puts("[vblk] Queue 0 size=0\n");
+        pr_err("Queue 0 size=0\n");
         return -1;
     }
 
@@ -48,7 +50,7 @@ static int setup_virtqueue(void) {
     uint32_t pages_needed = (total_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
     uint64_t phys = pmm_alloc_contiguous(pages_needed);
     if (phys == 0) {
-        serial_puts("[vblk] Failed to alloc queue pages\n");
+        pr_err("Failed to alloc queue pages\n");
         return -1;
     }
 
@@ -65,8 +67,8 @@ static int setup_virtqueue(void) {
 
     outl(io_base + VIRTIO_REG_QUEUE_ADDR, (uint32_t)(phys / 4096));
 
-    serial_printf("[vblk] Queue 0: size=%u pages=%u phys=%lx\n",
-                  q_size, pages_needed, phys);
+    pr_info("Queue 0: size=%u pages=%u phys=%lx\n",
+            q_size, pages_needed, phys);
     return 0;
 }
 
@@ -197,17 +199,17 @@ int virtio_blk_write(uint64_t sector, const void *buf) {
 /* --- Init --- */
 
 int virtio_blk_init(void) {
-    serial_puts("[vblk] Looking for virtio-blk device...\n");
+    pr_info("Looking for virtio-blk device...\n");
 
     pci_device_t *dev = pci_find_device(VIRTIO_VENDOR_ID, VIRTIO_BLK_DEV_ID);
     if (!dev) {
-        serial_puts("[vblk] No virtio-blk device found\n");
+        pr_err("No virtio-blk device found\n");
         return -1;
     }
 
-    serial_printf("[vblk] Found at %u:%u.%u  IRQ=%u  BAR0=%x\n",
-                  dev->bus, dev->dev, dev->func,
-                  dev->irq_line, dev->bar[0]);
+    pr_info("Found at %u:%u.%u  IRQ=%u  BAR0=%x\n",
+            dev->bus, dev->dev, dev->func,
+            dev->irq_line, dev->bar[0]);
 
     io_base = dev->bar[0] & ~3U;
     irq_line = dev->irq_line;
@@ -228,7 +230,7 @@ int virtio_blk_init(void) {
 
     /* 4. Feature negotiation — accept no special features */
     uint32_t features = inl(io_base + VIRTIO_REG_DEVICE_FEATURES);
-    serial_printf("[vblk] Device features: %x\n", features);
+    pr_info("Device features: %x\n", features);
     outl(io_base + VIRTIO_REG_GUEST_FEATURES, 0);
 
     /* 5. Setup request queue (queue 0) */
@@ -240,22 +242,22 @@ int virtio_blk_init(void) {
          VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK);
 
     uint8_t status = inb(io_base + VIRTIO_REG_DEVICE_STATUS);
-    serial_printf("[vblk] Device status: %u\n", (unsigned)status);
+    pr_info("Device status: %u\n", (unsigned)status);
 
     /* 7. Register IRQ handler and unmask */
     irq_register_handler(irq_line, virtio_blk_irq);
     irq_unmask(irq_line);
-    serial_printf("[vblk] Registered IRQ %u\n", (unsigned)irq_line);
+    pr_info("Registered IRQ %u\n", (unsigned)irq_line);
 
     q_last_used = 0;
     q_next_desc = 0;
     blk_irq_fired = 0;
 
-    serial_puts("[vblk] virtio-blk initialized\n");
+    pr_info("virtio-blk initialized\n");
     return 0;
 
 fail:
     outb(io_base + VIRTIO_REG_DEVICE_STATUS, VIRTIO_STATUS_FAILED);
-    serial_puts("[vblk] FAILED to initialize\n");
+    pr_err("FAILED to initialize\n");
     return -1;
 }

@@ -1,3 +1,5 @@
+#define pr_fmt(fmt) "[bcache] " fmt
+#include "klog.h"
 #include "blk/bcache.h"
 #include "blk/virtio_blk.h"
 #include "sched/sched.h"
@@ -26,6 +28,12 @@ static int16_t lru_tail = -1;   /* least recently used (eviction candidate) */
 static int16_t hash_table[HASH_BUCKETS];  /* head of each hash chain, -1 = empty */
 static uint64_t cache_hits = 0;
 static uint64_t cache_misses = 0;
+/*
+ * Lock ordering: bcache_lock is at level 4 (subsystem).
+ * Must NOT hold sched_lock, pmm_lock, or kheap_lock when acquiring.
+ * Does NOT call kmalloc or pmm_alloc while held.
+ * May do virtio-blk I/O while held (write-back on eviction).
+ */
 static spinlock_t bcache_lock = SPINLOCK_INIT;
 
 /* --- DLL helpers --- */
@@ -128,7 +136,7 @@ void bcache_init(void) {
 
     cache_hits = 0;
     cache_misses = 0;
-    serial_puts("[bcache] Block cache initialized (256 entries, 4KB each, DLL-LRU)\n");
+    pr_info("Block cache initialized (256 entries, 4KB each, DLL-LRU)\n");
 }
 
 int bcache_read(uint32_t block_no, void *buf) {
@@ -305,7 +313,7 @@ void bcache_stats(uint64_t *hits, uint64_t *misses) {
 /* --- Kernel flusher thread --- */
 
 static void bcache_flusher_fn(void) {
-    serial_puts("[bcache] Flusher thread started\n");
+    pr_info("Flusher thread started\n");
     for (;;) {
         /* Yield ~500 times (~5 seconds at ~10ms LAPIC timer) */
         for (int i = 0; i < 500; i++)
@@ -318,8 +326,8 @@ void bcache_start_flusher(void) {
     thread_t *t = thread_create(bcache_flusher_fn, 0);
     if (t) {
         sched_add(t);
-        serial_puts("[bcache] Flusher thread launched\n");
+        pr_info("Flusher thread launched\n");
     } else {
-        serial_puts("[bcache] WARNING: failed to create flusher thread\n");
+        pr_warn("failed to create flusher thread\n");
     }
 }

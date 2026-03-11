@@ -68,7 +68,7 @@ static void print_uint64(uint64_t val) {
 static void print_int64(int64_t val) {
     if (val < 0) {
         serial_putc('-');
-        print_uint64((uint64_t)(-val));
+        print_uint64((uint64_t)0 - (uint64_t)val);
     } else {
         print_uint64((uint64_t)val);
     }
@@ -112,9 +112,11 @@ void serial_printf(const char *fmt, ...) {
         }
 
         switch (*fmt) {
-        case 's':
-            serial_puts_unlocked(va_arg(ap, const char *));
+        case 's': {
+            const char *s = va_arg(ap, const char *);
+            serial_puts_unlocked(s ? s : "(null)");
             break;
+        }
         case 'd':
             if (is_long)
                 print_int64(va_arg(ap, int64_t));

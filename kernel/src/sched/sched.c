@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[sched] " fmt
+#include "klog.h"
+
 #include "sched/sched.h"
 #include "sched/tss.h"
 #include "proc/process.h"
@@ -22,6 +25,14 @@ static thread_t *bsp_idle_thread;
 static thread_t *ready_head;
 static thread_t *ready_tail;
 
+/*
+ * Lock ordering: sched_lock is at level 1 (highest priority).
+ * This is the top of the lock hierarchy — no other lock may be
+ * held when acquiring sched_lock.
+ * Must NOT hold: (nothing — this is the highest-priority lock)
+ * May call kmalloc while holding this lock: NO
+ * May call pmm_alloc while holding this lock: NO
+ */
 static spinlock_t sched_lock = SPINLOCK_INIT;
 
 /* Flag: are we running in SMP mode? Set by smp_init. */
@@ -261,15 +272,13 @@ void sched_init(void) {
     /* Create the idle thread (not added to queue by thread_create) */
     bsp_idle_thread = thread_create(idle_loop, 0);
     if (!bsp_idle_thread) {
-        serial_puts("[sched] FATAL: could not create idle thread\n");
-        return;
+        panic("could not create idle thread");
     }
 
     /* Adopt the current execution (kmain) as thread 0 */
     thread_t *kmain_thread = (thread_t *)kmalloc(sizeof(thread_t));
     if (!kmain_thread) {
-        serial_puts("[sched] FATAL: could not allocate kmain thread\n");
-        return;
+        panic("could not allocate kmain thread");
     }
     kmain_thread->tid        = 0;
     kmain_thread->state      = THREAD_RUNNING;
@@ -285,7 +294,7 @@ void sched_init(void) {
 
     bsp_current_thread = kmain_thread;
 
-    serial_puts("[sched] Scheduler initialized\n");
+    pr_info("Scheduler initialized\n");
 }
 
 void sched_set_smp_active(void) {

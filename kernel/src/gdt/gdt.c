@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[gdt]  " fmt
+#include "klog.h"
+
 #include "gdt/gdt.h"
 #include "serial.h"
 
@@ -39,7 +42,7 @@ void gdt_init(void) {
 
     gdt_flush((uint64_t)&gdtp);
 
-    serial_puts("[gdt]  GDT loaded\n");
+    pr_info("GDT loaded\n");
 }
 
 struct gdt_entry *gdt_get_table(void) {

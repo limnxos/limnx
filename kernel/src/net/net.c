@@ -1,11 +1,10 @@
+#define pr_fmt(fmt) "[net]  " fmt
+#include "klog.h"
 #include "net/net.h"
 #include "net/virtio_net.h"
 #include "serial.h"
 #include "sched/sched.h"
-
-#ifndef EINTR
-#define EINTR 4
-#endif
+#include "errno.h"
 
 /* --- Configuration (QEMU user-mode networking) --- */
 
@@ -75,7 +74,7 @@ uint16_t ip_checksum(const void *data, uint32_t len) {
 static int eth_tx(const uint8_t dst[ETH_ALEN], uint16_t ethertype,
                   const void *payload, uint32_t payload_len) {
     uint8_t frame[ETH_HLEN + 1500];
-    if (payload_len > 1500) return -1;
+    if (payload_len > 1500) return -EMSGSIZE;
 
     eth_hdr_t *eth = (eth_hdr_t *)frame;
     memcpy_net(eth->dst, dst, ETH_ALEN);
@@ -160,10 +159,10 @@ static void handle_arp(const uint8_t *data, uint32_t len) {
     arp_learn(sender_ip, arp->sender_mac);
 
     if (op == ARP_OP_REQUEST && target_ip == our_ip) {
-        serial_printf("[net]  ARP: who-has %x? Replying\n", target_ip);
+        pr_info("ARP: who-has %x? Replying\n", target_ip);
         arp_send_reply(sender_ip, arp->sender_mac);
     } else if (op == ARP_OP_REPLY) {
-        serial_printf("[net]  ARP: reply from %x\n", sender_ip);
+        pr_info("ARP: reply from %x\n", sender_ip);
     }
 }
 
@@ -193,8 +192,8 @@ static int arp_resolve(uint32_t ip, uint8_t mac_out[ETH_ALEN]) {
         }
     }
 
-    serial_printf("[net]  ARP: failed to resolve %x\n", ip);
-    return -1;
+    pr_err("ARP: failed to resolve %x\n", ip);
+    return -ETIMEDOUT;
 }
 
 /* --- IPv4 --- */
@@ -238,7 +237,7 @@ int net_tx_ipv4(uint32_t dst_ip, uint8_t protocol,
 
     uint8_t dst_mac[ETH_ALEN];
     if (arp_resolve(dst_ip, dst_mac) != 0)
-        return -1;
+        return -ETIMEDOUT;
 
     return eth_tx(dst_mac, ETH_TYPE_IPV4, pkt, total);
 }
@@ -250,7 +249,7 @@ static void handle_icmp(uint32_t src_ip, const uint8_t *data, uint32_t len) {
     const icmp_hdr_t *icmp = (const icmp_hdr_t *)data;
 
     if (icmp->type == ICMP_TYPE_ECHO_REQUEST) {
-        serial_printf("[net]  ICMP: echo request from %x\n", src_ip);
+        pr_info("ICMP: echo request from %x\n", src_ip);
         /* Build reply: same data, change type to 0 */
         uint8_t reply[1500];
         if (len > 1500) return;
@@ -261,7 +260,7 @@ static void handle_icmp(uint32_t src_ip, const uint8_t *data, uint32_t len) {
         r->checksum = ip_checksum(reply, len);
         net_tx_ipv4(src_ip, IP_PROTO_ICMP, reply, len);
     } else if (icmp->type == ICMP_TYPE_ECHO_REPLY) {
-        serial_printf("[net]  ICMP: echo reply from %x\n", src_ip);
+        pr_info("ICMP: echo reply from %x\n", src_ip);
         ping_reply_received = 1;
     }
 }
@@ -385,17 +384,17 @@ int net_socket(void) {
             return i;
         }
     }
-    return -1;
+    return -ENOMEM;
 }
 
 int net_bind(int sockfd, uint16_t port) {
-    if (sockfd < 0 || sockfd >= MAX_SOCKETS) return -1;
-    if (!sockets[sockfd].in_use) return -1;
+    if (sockfd < 0 || sockfd >= MAX_SOCKETS) return -EBADF;
+    if (!sockets[sockfd].in_use) return -EBADF;
 
     /* Check port not already bound */
     for (int i = 0; i < MAX_SOCKETS; i++) {
         if (sockets[i].in_use && sockets[i].local_port == port)
-            return -1;
+            return -EADDRINUSE;
     }
 
     sockets[sockfd].local_port = port;
@@ -404,9 +403,9 @@ int net_bind(int sockfd, uint16_t port) {
 
 int net_sendto(int sockfd, const void *buf, uint32_t len,
                uint32_t dst_ip, uint16_t dst_port) {
-    if (sockfd < 0 || sockfd >= MAX_SOCKETS) return -1;
-    if (!sockets[sockfd].in_use) return -1;
-    if (len > 1472) return -1; /* max UDP payload */
+    if (sockfd < 0 || sockfd >= MAX_SOCKETS) return -EBADF;
+    if (!sockets[sockfd].in_use) return -EBADF;
+    if (len > 1472) return -EMSGSIZE; /* max UDP payload */
 
     uint8_t pkt[8 + 1472];
     udp_hdr_t *udp = (udp_hdr_t *)pkt;
@@ -422,14 +421,14 @@ int net_sendto(int sockfd, const void *buf, uint32_t len,
 
 int net_recvfrom(int sockfd, void *buf, uint32_t len,
                  uint32_t *src_ip, uint16_t *src_port) {
-    if (sockfd < 0 || sockfd >= MAX_SOCKETS) return -1;
-    if (!sockets[sockfd].in_use) return -1;
+    if (sockfd < 0 || sockfd >= MAX_SOCKETS) return -EBADF;
+    if (!sockets[sockfd].in_use) return -EBADF;
 
     /* Busy-wait with yield until data arrives (timeout after ~5000 yields) */
     int timeout = 5000;
     while (!sockets[sockfd].rx_ready) {
         if (--timeout <= 0)
-            return -1;  /* timed out */
+            return -ETIMEDOUT;  /* timed out */
         if (sched_has_pending_signal()) return -EINTR;
         sched_yield();
     }
@@ -466,10 +465,10 @@ void net_init(void) {
 
     ping_reply_received = 0;
 
-    serial_printf("[net]  IP=%u.%u.%u.%u  GW=%u.%u.%u.%u\n",
+    pr_info("IP=%u.%u.%u.%u  GW=%u.%u.%u.%u\n",
         (our_ip >> 24) & 0xFF, (our_ip >> 16) & 0xFF,
         (our_ip >>  8) & 0xFF, our_ip & 0xFF,
         (gw_ip >> 24) & 0xFF, (gw_ip >> 16) & 0xFF,
         (gw_ip >>  8) & 0xFF, gw_ip & 0xFF);
-    serial_puts("[net]  Network stack initialized\n");
+    pr_info("Network stack initialized\n");
 }

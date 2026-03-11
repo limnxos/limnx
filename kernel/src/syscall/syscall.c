@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[syscall] " fmt
+#include "klog.h"
+
 #include "syscall/syscall.h"
 #include "sched/sched.h"
 #include "sched/thread.h"
@@ -83,7 +86,7 @@ extern void syscall_entry(void);
 static int validate_user_ptr(uint64_t ptr, uint64_t len) {
     if (ptr == 0 || ptr >= USER_ADDR_MAX)
         return -1;
-    if (len > 0 && ptr + len > USER_ADDR_MAX)
+    if (len > 0 && len > USER_ADDR_MAX - ptr)
         return -1;
     return 0;
 }
@@ -138,9 +141,9 @@ static void resolve_user_path(process_t *proc, const char *path, char *out) {
 
 /* Check if fd slot is free (no node, no pipe, no pty) */
 static int fd_is_free(fd_entry_t *e) {
-    return e->node == (void *)0 && e->pipe == (void *)0 && e->pty == (void *)0
-        && e->unix_sock == (void *)0 && e->eventfd == (void *)0
-        && e->epoll == (void *)0 && e->uring == (void *)0
+    return e->node == NULL && e->pipe == NULL && e->pty == NULL
+        && e->unix_sock == NULL && e->eventfd == NULL
+        && e->epoll == NULL && e->uring == NULL
         && e->tcp_conn_idx < 0;
 }
 
@@ -206,7 +209,7 @@ static int64_t sys_exit(uint64_t status, uint64_t a2,
         /* Close all open file descriptors */
         for (int i = 0; i < MAX_FDS; i++) {
             fd_entry_t *entry = &t->process->fd_table[i];
-            if (entry->pipe != (void *)0) {
+            if (entry->pipe != NULL) {
                 pipe_t *pp = (pipe_t *)entry->pipe;
                 if (entry->pipe_write) {
                     if (pp->write_refs > 0) pp->write_refs--;
@@ -216,10 +219,10 @@ static int64_t sys_exit(uint64_t status, uint64_t a2,
                     if (pp->read_refs == 0) pp->closed_read = 1;
                 }
                 if (pp->closed_read && pp->closed_write) pp->used = 0;
-                entry->pipe = (void *)0;
+                entry->pipe = NULL;
                 entry->pipe_write = 0;
             }
-            if (entry->pty != (void *)0) {
+            if (entry->pty != NULL) {
                 int pty_idx = pty_index((pty_t *)entry->pty);
                 if (pty_idx >= 0) {
                     if (entry->pty_is_master)
@@ -227,14 +230,14 @@ static int64_t sys_exit(uint64_t status, uint64_t a2,
                     else
                         pty_close_slave(pty_idx);
                 }
-                entry->pty = (void *)0;
+                entry->pty = NULL;
                 entry->pty_is_master = 0;
             }
-            if (entry->unix_sock != (void *)0) {
+            if (entry->unix_sock != NULL) {
                 unix_sock_close((unix_sock_t *)entry->unix_sock);
-                entry->unix_sock = (void *)0;
+                entry->unix_sock = NULL;
             }
-            if (entry->eventfd != (void *)0) {
+            if (entry->eventfd != NULL) {
                 /* Find index for close */
                 for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
                     if (eventfd_get(ei) == (eventfd_t *)entry->eventfd) {
@@ -242,21 +245,21 @@ static int64_t sys_exit(uint64_t status, uint64_t a2,
                         break;
                     }
                 }
-                entry->eventfd = (void *)0;
+                entry->eventfd = NULL;
             }
-            if (entry->epoll != (void *)0) {
+            if (entry->epoll != NULL) {
                 int ep_idx = epoll_index((epoll_instance_t *)entry->epoll);
                 if (ep_idx >= 0)
                     epoll_close(ep_idx);
-                entry->epoll = (void *)0;
+                entry->epoll = NULL;
             }
-            if (entry->uring != (void *)0) {
+            if (entry->uring != NULL) {
                 int ur_idx = uring_index((uring_instance_t *)entry->uring);
                 if (ur_idx >= 0)
                     uring_close(ur_idx);
-                entry->uring = (void *)0;
+                entry->uring = NULL;
             }
-            entry->node = (void *)0;
+            entry->node = NULL;
             entry->offset = 0;
             entry->open_flags = 0;
             entry->fd_flags = 0;
@@ -414,14 +417,14 @@ static int64_t sys_open(uint64_t path_ptr, uint64_t flags,
         if (fd_is_free(&proc->fd_table[fd])) {
             proc->fd_table[fd].node = vfs_get_node(node_idx);
             proc->fd_table[fd].offset = 0;
-            proc->fd_table[fd].pipe = (void *)0;
+            proc->fd_table[fd].pipe = NULL;
             proc->fd_table[fd].pipe_write = 0;
-            proc->fd_table[fd].pty = (void *)0;
+            proc->fd_table[fd].pty = NULL;
             proc->fd_table[fd].pty_is_master = 0;
-            proc->fd_table[fd].unix_sock = (void *)0;
-            proc->fd_table[fd].eventfd = (void *)0;
-            proc->fd_table[fd].epoll = (void *)0;
-            proc->fd_table[fd].uring = (void *)0;
+            proc->fd_table[fd].unix_sock = NULL;
+            proc->fd_table[fd].eventfd = NULL;
+            proc->fd_table[fd].epoll = NULL;
+            proc->fd_table[fd].uring = NULL;
             proc->fd_table[fd].open_flags = stored_flags;
             proc->fd_table[fd].fd_flags = 0;
             return fd;
@@ -450,7 +453,7 @@ static int64_t sys_read(uint64_t fd, uint64_t buf_ptr, uint64_t len,
     fd_entry_t *entry = &proc->fd_table[fd];
 
     /* Pipe read */
-    if (entry->pipe != (void *)0) {
+    if (entry->pipe != NULL) {
         pipe_t *pp = (pipe_t *)entry->pipe;
         uint8_t *dst = (uint8_t *)buf_ptr;
         uint64_t total = 0;
@@ -475,7 +478,7 @@ static int64_t sys_read(uint64_t fd, uint64_t buf_ptr, uint64_t len,
     }
 
     /* PTY read */
-    if (entry->pty != (void *)0) {
+    if (entry->pty != NULL) {
         int pty_idx = pty_index((pty_t *)entry->pty);
         if (pty_idx < 0) return -1;
         int nonblock = (entry->fd_flags & 0x02) ? 1 : 0;
@@ -486,14 +489,14 @@ static int64_t sys_read(uint64_t fd, uint64_t buf_ptr, uint64_t len,
     }
 
     /* Unix socket read */
-    if (entry->unix_sock != (void *)0) {
+    if (entry->unix_sock != NULL) {
         int nonblock = (entry->fd_flags & 0x02) ? 1 : 0;
         return unix_sock_recv((unix_sock_t *)entry->unix_sock,
                               (uint8_t *)buf_ptr, (uint32_t)len, nonblock);
     }
 
     /* Eventfd read */
-    if (entry->eventfd != (void *)0) {
+    if (entry->eventfd != NULL) {
         if (len < 8) return -1;
         int nonblock = (entry->fd_flags & 0x02) ? 1 : 0;
         int efd_idx = -1;
@@ -507,10 +510,10 @@ static int64_t sys_read(uint64_t fd, uint64_t buf_ptr, uint64_t len,
     }
 
     /* epoll/uring fds are not readable */
-    if (entry->epoll != (void *)0 || entry->uring != (void *)0)
+    if (entry->epoll != NULL || entry->uring != NULL)
         return -EINVAL;
 
-    if (entry->node == (void *)0)
+    if (entry->node == NULL)
         return -1;
 
     /* Reject read on write-only fd */
@@ -543,7 +546,7 @@ static int64_t sys_close(uint64_t fd, uint64_t a2,
     fd_entry_t *entry = &proc->fd_table[fd];
 
     /* Pipe close */
-    if (entry->pipe != (void *)0) {
+    if (entry->pipe != NULL) {
         pipe_t *pp = (pipe_t *)entry->pipe;
         if (entry->pipe_write) {
             if (pp->write_refs > 0)
@@ -559,13 +562,13 @@ static int64_t sys_close(uint64_t fd, uint64_t a2,
         /* Free pipe if both ends fully closed */
         if (pp->closed_read && pp->closed_write)
             pp->used = 0;
-        entry->pipe = (void *)0;
+        entry->pipe = NULL;
         entry->pipe_write = 0;
         return 0;
     }
 
     /* PTY close */
-    if (entry->pty != (void *)0) {
+    if (entry->pty != NULL) {
         int pty_idx = pty_index((pty_t *)entry->pty);
         if (pty_idx >= 0) {
             if (entry->pty_is_master)
@@ -573,45 +576,45 @@ static int64_t sys_close(uint64_t fd, uint64_t a2,
             else
                 pty_close_slave(pty_idx);
         }
-        entry->pty = (void *)0;
+        entry->pty = NULL;
         entry->pty_is_master = 0;
         return 0;
     }
 
     /* Unix socket close */
-    if (entry->unix_sock != (void *)0) {
+    if (entry->unix_sock != NULL) {
         unix_sock_close((unix_sock_t *)entry->unix_sock);
-        entry->unix_sock = (void *)0;
+        entry->unix_sock = NULL;
         return 0;
     }
 
     /* Eventfd close */
-    if (entry->eventfd != (void *)0) {
+    if (entry->eventfd != NULL) {
         for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
             if (eventfd_get(ei) == (eventfd_t *)entry->eventfd) {
                 eventfd_close(ei);
                 break;
             }
         }
-        entry->eventfd = (void *)0;
+        entry->eventfd = NULL;
         return 0;
     }
 
     /* epoll close */
-    if (entry->epoll != (void *)0) {
+    if (entry->epoll != NULL) {
         int ep_idx = epoll_index((epoll_instance_t *)entry->epoll);
         if (ep_idx >= 0)
             epoll_close(ep_idx);
-        entry->epoll = (void *)0;
+        entry->epoll = NULL;
         return 0;
     }
 
     /* uring close */
-    if (entry->uring != (void *)0) {
+    if (entry->uring != NULL) {
         int ur_idx = uring_index((uring_instance_t *)entry->uring);
         if (ur_idx >= 0)
             uring_close(ur_idx);
-        entry->uring = (void *)0;
+        entry->uring = NULL;
         return 0;
     }
 
@@ -623,10 +626,10 @@ static int64_t sys_close(uint64_t fd, uint64_t a2,
         return 0;
     }
 
-    if (entry->node == (void *)0)
+    if (entry->node == NULL)
         return -1;
 
-    entry->node = (void *)0;
+    entry->node = NULL;
     entry->offset = 0;
     entry->open_flags = 0;
     entry->fd_flags = 0;
@@ -720,7 +723,7 @@ static int64_t sys_exec(uint64_t path_ptr, uint64_t argv_ptr,
             if (validate_user_ptr((uint64_t)&user_argv[argc], 8) != 0)
                 break;
             const char *arg = user_argv[argc];
-            if (arg == (void *)0)
+            if (arg == NULL)
                 break;
             /* Copy string from user space */
             char tmp[128];
@@ -774,15 +777,15 @@ static int64_t sys_exec(uint64_t path_ptr, uint64_t argv_ptr,
     for (int i = 0; i < MAX_FDS; i++) {
         if (proc->fd_table[i].fd_flags & FD_CLOEXEC) {
             /* Don't inherit — clear child's entry */
-            child->fd_table[i].node = (void *)0;
-            child->fd_table[i].pipe = (void *)0;
+            child->fd_table[i].node = NULL;
+            child->fd_table[i].pipe = NULL;
             child->fd_table[i].pipe_write = 0;
-            child->fd_table[i].pty = (void *)0;
+            child->fd_table[i].pty = NULL;
             child->fd_table[i].pty_is_master = 0;
-            child->fd_table[i].unix_sock = (void *)0;
-            child->fd_table[i].eventfd = (void *)0;
-            child->fd_table[i].epoll = (void *)0;
-            child->fd_table[i].uring = (void *)0;
+            child->fd_table[i].unix_sock = NULL;
+            child->fd_table[i].eventfd = NULL;
+            child->fd_table[i].epoll = NULL;
+            child->fd_table[i].uring = NULL;
             child->fd_table[i].open_flags = 0;
             child->fd_table[i].fd_flags = 0;
             continue;
@@ -790,7 +793,7 @@ static int64_t sys_exec(uint64_t path_ptr, uint64_t argv_ptr,
         child->fd_table[i] = proc->fd_table[i];
         child->fd_table[i].fd_flags = 0;  /* clear cloexec in child */
         /* Increment pipe ref counts for inherited pipe fds */
-        if (proc->fd_table[i].pipe != (void *)0) {
+        if (proc->fd_table[i].pipe != NULL) {
             pipe_t *pp = (pipe_t *)proc->fd_table[i].pipe;
             if (proc->fd_table[i].pipe_write)
                 pp->write_refs++;
@@ -798,7 +801,7 @@ static int64_t sys_exec(uint64_t path_ptr, uint64_t argv_ptr,
                 pp->read_refs++;
         }
         /* Increment PTY ref counts for inherited pty fds */
-        if (proc->fd_table[i].pty != (void *)0) {
+        if (proc->fd_table[i].pty != NULL) {
             pty_t *pt = (pty_t *)proc->fd_table[i].pty;
             if (proc->fd_table[i].pty_is_master)
                 pt->master_refs++;
@@ -806,12 +809,12 @@ static int64_t sys_exec(uint64_t path_ptr, uint64_t argv_ptr,
                 pt->slave_refs++;
         }
         /* Increment unix socket ref counts */
-        if (proc->fd_table[i].unix_sock != (void *)0) {
+        if (proc->fd_table[i].unix_sock != NULL) {
             unix_sock_t *us = (unix_sock_t *)proc->fd_table[i].unix_sock;
             us->refs++;
         }
         /* Increment eventfd ref counts */
-        if (proc->fd_table[i].eventfd != (void *)0) {
+        if (proc->fd_table[i].eventfd != NULL) {
             for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
                 if (eventfd_get(ei) == (eventfd_t *)proc->fd_table[i].eventfd) {
                     eventfd_ref(ei);
@@ -820,12 +823,12 @@ static int64_t sys_exec(uint64_t path_ptr, uint64_t argv_ptr,
             }
         }
         /* Increment epoll ref counts */
-        if (proc->fd_table[i].epoll != (void *)0) {
+        if (proc->fd_table[i].epoll != NULL) {
             int ep_idx = epoll_index((epoll_instance_t *)proc->fd_table[i].epoll);
             if (ep_idx >= 0) epoll_ref(ep_idx);
         }
         /* Increment uring ref counts */
-        if (proc->fd_table[i].uring != (void *)0) {
+        if (proc->fd_table[i].uring != NULL) {
             int ur_idx = uring_index((uring_instance_t *)proc->fd_table[i].uring);
             if (ur_idx >= 0) uring_ref(ur_idx);
         }
@@ -860,7 +863,7 @@ static int64_t sys_fwrite(uint64_t fd, uint64_t buf_ptr, uint64_t len,
     fd_entry_t *entry = &proc->fd_table[fd];
 
     /* Pipe write */
-    if (entry->pipe != (void *)0) {
+    if (entry->pipe != NULL) {
         pipe_t *pp = (pipe_t *)entry->pipe;
         const uint8_t *src = (const uint8_t *)buf_ptr;
         uint64_t total = 0;
@@ -884,7 +887,7 @@ static int64_t sys_fwrite(uint64_t fd, uint64_t buf_ptr, uint64_t len,
     }
 
     /* PTY write */
-    if (entry->pty != (void *)0) {
+    if (entry->pty != NULL) {
         int pty_idx = pty_index((pty_t *)entry->pty);
         if (pty_idx < 0) return -1;
         if (entry->pty_is_master)
@@ -894,14 +897,14 @@ static int64_t sys_fwrite(uint64_t fd, uint64_t buf_ptr, uint64_t len,
     }
 
     /* Unix socket write */
-    if (entry->unix_sock != (void *)0) {
+    if (entry->unix_sock != NULL) {
         int nonblock = (entry->fd_flags & 0x02) ? 1 : 0;
         return unix_sock_send((unix_sock_t *)entry->unix_sock,
                               (const uint8_t *)buf_ptr, (uint32_t)len, nonblock);
     }
 
     /* Eventfd write */
-    if (entry->eventfd != (void *)0) {
+    if (entry->eventfd != NULL) {
         if (len < 8) return -1;
         int efd_idx = -1;
         for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
@@ -914,10 +917,10 @@ static int64_t sys_fwrite(uint64_t fd, uint64_t buf_ptr, uint64_t len,
     }
 
     /* epoll/uring fds are not writable */
-    if (entry->epoll != (void *)0 || entry->uring != (void *)0)
+    if (entry->epoll != NULL || entry->uring != NULL)
         return -EINVAL;
 
-    if (entry->node == (void *)0)
+    if (entry->node == NULL)
         return -1;
 
     /* Reject write on read-only fd */
@@ -973,14 +976,14 @@ static int64_t sys_create(uint64_t path_ptr, uint64_t a2,
         if (fd_is_free(&proc->fd_table[fd])) {
             proc->fd_table[fd].node = vfs_get_node(node_idx);
             proc->fd_table[fd].offset = 0;
-            proc->fd_table[fd].pipe = (void *)0;
+            proc->fd_table[fd].pipe = NULL;
             proc->fd_table[fd].pipe_write = 0;
-            proc->fd_table[fd].pty = (void *)0;
+            proc->fd_table[fd].pty = NULL;
             proc->fd_table[fd].pty_is_master = 0;
-            proc->fd_table[fd].unix_sock = (void *)0;
-            proc->fd_table[fd].eventfd = (void *)0;
-            proc->fd_table[fd].epoll = (void *)0;
-            proc->fd_table[fd].uring = (void *)0;
+            proc->fd_table[fd].unix_sock = NULL;
+            proc->fd_table[fd].eventfd = NULL;
+            proc->fd_table[fd].epoll = NULL;
+            proc->fd_table[fd].uring = NULL;
             proc->fd_table[fd].open_flags = O_RDWR;  /* create implies read+write */
             proc->fd_table[fd].fd_flags = 0;
             return fd;
@@ -1002,6 +1005,11 @@ static int64_t sys_unlink(uint64_t path_ptr, uint64_t a2,
     process_t *proc = t->process;
     if (!proc) return -1;
     resolve_user_path(proc, raw_path, path);
+
+    /* Check CAP_FS_WRITE (with token fallback) */
+    if (!(proc->capabilities & CAP_FS_WRITE) &&
+        !cap_token_check(proc->pid, CAP_FS_WRITE, path))
+        return -EACCES;
 
     return vfs_delete(path);
 }
@@ -1168,7 +1176,7 @@ static int64_t sys_getchar(uint64_t a1, uint64_t a2,
     char ch;
     /* Try serial first (COM1 via -serial stdio), fall back to PS/2 keyboard */
     thread_t *gc_t = thread_get_current();
-    process_t *gc_proc = gc_t ? gc_t->process : (void *)0;
+    process_t *gc_proc = gc_t ? gc_t->process : NULL;
     while (1) {
         ch = serial_getchar();
         if (ch) return (int64_t)(uint8_t)ch;
@@ -1189,7 +1197,7 @@ static int64_t sys_waitpid(uint64_t pid, uint64_t flags,
     if ((flags & WNOHANG) && !child->exited)
         return 0;
     thread_t *wt = thread_get_current();
-    process_t *wproc = wt ? wt->process : (void *)0;
+    process_t *wproc = wt ? wt->process : NULL;
     while (!child->exited) {
         /* Check for interrupting signals, but filter out SIGCHLD —
          * waitpid is logically waiting for child state changes, so
@@ -1274,20 +1282,20 @@ static int64_t sys_pipe(uint64_t rfd_ptr, uint64_t wfd_ptr,
     }
 
     /* Set up read end */
-    proc->fd_table[rfd].node = (void *)0;
+    proc->fd_table[rfd].node = NULL;
     proc->fd_table[rfd].offset = 0;
     proc->fd_table[rfd].pipe = (void *)pp;
     proc->fd_table[rfd].pipe_write = 0;
-    proc->fd_table[rfd].pty = (void *)0;
+    proc->fd_table[rfd].pty = NULL;
     proc->fd_table[rfd].pty_is_master = 0;
     proc->fd_table[rfd].fd_flags = 0;
 
     /* Set up write end */
-    proc->fd_table[wfd].node = (void *)0;
+    proc->fd_table[wfd].node = NULL;
     proc->fd_table[wfd].offset = 0;
     proc->fd_table[wfd].pipe = (void *)pp;
     proc->fd_table[wfd].pipe_write = 1;
-    proc->fd_table[wfd].pty = (void *)0;
+    proc->fd_table[wfd].pty = NULL;
     proc->fd_table[wfd].pty_is_master = 0;
     proc->fd_table[wfd].fd_flags = 0;
 
@@ -1338,19 +1346,19 @@ static int64_t sys_pipe2(uint64_t rfd_ptr, uint64_t wfd_ptr,
     }
     if (rfd < 0 || wfd < 0) { pp->used = 0; return -1; }
 
-    proc->fd_table[rfd].node = (void *)0;
+    proc->fd_table[rfd].node = NULL;
     proc->fd_table[rfd].offset = 0;
     proc->fd_table[rfd].pipe = (void *)pp;
     proc->fd_table[rfd].pipe_write = 0;
-    proc->fd_table[rfd].pty = (void *)0;
+    proc->fd_table[rfd].pty = NULL;
     proc->fd_table[rfd].pty_is_master = 0;
     proc->fd_table[rfd].fd_flags = 0;
 
-    proc->fd_table[wfd].node = (void *)0;
+    proc->fd_table[wfd].node = NULL;
     proc->fd_table[wfd].offset = 0;
     proc->fd_table[wfd].pipe = (void *)pp;
     proc->fd_table[wfd].pipe_write = 1;
-    proc->fd_table[wfd].pty = (void *)0;
+    proc->fd_table[wfd].pty = NULL;
     proc->fd_table[wfd].pty_is_master = 0;
     proc->fd_table[wfd].fd_flags = 0;
 
@@ -1389,7 +1397,7 @@ static int64_t sys_fmmap(uint64_t fd, uint64_t a2,
         return -1;
 
     fd_entry_t *entry = &proc->fd_table[fd];
-    if (entry->node == (void *)0)
+    if (entry->node == NULL)
         return -1;
 
     vfs_node_t *node = entry->node;
@@ -1506,6 +1514,11 @@ static int64_t sys_mkdir(uint64_t path_ptr, uint64_t a2,
     if (!proc) return -1;
     resolve_user_path(proc, raw_path, path);
 
+    /* Check CAP_FS_WRITE (with token fallback) */
+    if (!(proc->capabilities & CAP_FS_WRITE) &&
+        !cap_token_check(proc->pid, CAP_FS_WRITE, path))
+        return -EACCES;
+
     int rc = vfs_mkdir(path);
     return (rc >= 0) ? 0 : -1;
 }
@@ -1525,7 +1538,7 @@ static int64_t sys_seek(uint64_t fd, uint64_t offset_arg, uint64_t whence,
         return -1;
 
     fd_entry_t *entry = &proc->fd_table[fd];
-    if (entry->node == (void *)0)
+    if (entry->node == NULL)
         return -1;
 
     vfs_node_t *node = entry->node;
@@ -1564,6 +1577,11 @@ static int64_t sys_truncate(uint64_t path_ptr, uint64_t new_size,
     process_t *proc = t->process;
     if (!proc) return -1;
     resolve_user_path(proc, raw_path, path);
+
+    /* Check CAP_FS_WRITE (with token fallback) */
+    if (!(proc->capabilities & CAP_FS_WRITE) &&
+        !cap_token_check(proc->pid, CAP_FS_WRITE, path))
+        return -EACCES;
 
     int node_idx = vfs_resolve_path(path);
     if (node_idx < 0)
@@ -1648,7 +1666,7 @@ static int64_t sys_fstat(uint64_t fd, uint64_t stat_ptr,
         return -1;
 
     fd_entry_t *entry = &proc->fd_table[fd];
-    if (entry->node == (void *)0)
+    if (entry->node == NULL)
         return -1;
 
     vfs_node_t *node = entry->node;
@@ -1686,6 +1704,11 @@ static int64_t sys_rename(uint64_t old_path_ptr, uint64_t new_path_ptr,
     resolve_user_path(proc, raw_old, old_path);
     resolve_user_path(proc, raw_new, new_path);
 
+    /* Check CAP_FS_WRITE (with token fallback) */
+    if (!(proc->capabilities & CAP_FS_WRITE) &&
+        !cap_token_check(proc->pid, CAP_FS_WRITE, old_path))
+        return -EACCES;
+
     return vfs_rename(old_path, new_path);
 }
 
@@ -1718,7 +1741,7 @@ static int64_t sys_dup(uint64_t fd, uint64_t a2,
             proc->fd_table[newfd] = *src;
             proc->fd_table[newfd].fd_flags = 0;  /* dup clears cloexec */
             /* Increment pipe ref count */
-            if (src->pipe != (void *)0) {
+            if (src->pipe != NULL) {
                 pipe_t *pp = (pipe_t *)src->pipe;
                 if (src->pipe_write)
                     pp->write_refs++;
@@ -1726,7 +1749,7 @@ static int64_t sys_dup(uint64_t fd, uint64_t a2,
                     pp->read_refs++;
             }
             /* Increment PTY ref count */
-            if (src->pty != (void *)0) {
+            if (src->pty != NULL) {
                 pty_t *pt = (pty_t *)src->pty;
                 if (src->pty_is_master)
                     pt->master_refs++;
@@ -1734,10 +1757,10 @@ static int64_t sys_dup(uint64_t fd, uint64_t a2,
                     pt->slave_refs++;
             }
             /* Increment unix socket ref count */
-            if (src->unix_sock != (void *)0)
+            if (src->unix_sock != NULL)
                 ((unix_sock_t *)src->unix_sock)->refs++;
             /* Increment eventfd ref count */
-            if (src->eventfd != (void *)0) {
+            if (src->eventfd != NULL) {
                 for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
                     if (eventfd_get(ei) == (eventfd_t *)src->eventfd) {
                         eventfd_ref(ei);
@@ -1746,12 +1769,12 @@ static int64_t sys_dup(uint64_t fd, uint64_t a2,
                 }
             }
             /* Increment epoll ref count */
-            if (src->epoll != (void *)0) {
+            if (src->epoll != NULL) {
                 int ep_idx = epoll_index((epoll_instance_t *)src->epoll);
                 if (ep_idx >= 0) epoll_ref(ep_idx);
             }
             /* Increment uring ref count */
-            if (src->uring != (void *)0) {
+            if (src->uring != NULL) {
                 int ur_idx = uring_index((uring_instance_t *)src->uring);
                 if (ur_idx >= 0) uring_ref(ur_idx);
             }
@@ -1783,7 +1806,7 @@ static int64_t sys_dup2(uint64_t oldfd, uint64_t newfd,
 
     /* Close newfd if open */
     fd_entry_t *dst = &proc->fd_table[newfd];
-    if (dst->pipe != (void *)0) {
+    if (dst->pipe != NULL) {
         pipe_t *pp = (pipe_t *)dst->pipe;
         if (dst->pipe_write) {
             if (pp->write_refs > 0)
@@ -1799,7 +1822,7 @@ static int64_t sys_dup2(uint64_t oldfd, uint64_t newfd,
         if (pp->closed_read && pp->closed_write)
             pp->used = 0;
     }
-    if (dst->pty != (void *)0) {
+    if (dst->pty != NULL) {
         int pty_idx = pty_index((pty_t *)dst->pty);
         if (pty_idx >= 0) {
             if (dst->pty_is_master)
@@ -1808,9 +1831,9 @@ static int64_t sys_dup2(uint64_t oldfd, uint64_t newfd,
                 pty_close_slave(pty_idx);
         }
     }
-    if (dst->unix_sock != (void *)0)
+    if (dst->unix_sock != NULL)
         unix_sock_close((unix_sock_t *)dst->unix_sock);
-    if (dst->eventfd != (void *)0) {
+    if (dst->eventfd != NULL) {
         for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
             if (eventfd_get(ei) == (eventfd_t *)dst->eventfd) {
                 eventfd_close(ei);
@@ -1818,11 +1841,11 @@ static int64_t sys_dup2(uint64_t oldfd, uint64_t newfd,
             }
         }
     }
-    if (dst->epoll != (void *)0) {
+    if (dst->epoll != NULL) {
         int ep_idx = epoll_index((epoll_instance_t *)dst->epoll);
         if (ep_idx >= 0) epoll_close(ep_idx);
     }
-    if (dst->uring != (void *)0) {
+    if (dst->uring != NULL) {
         int ur_idx = uring_index((uring_instance_t *)dst->uring);
         if (ur_idx >= 0) uring_close(ur_idx);
     }
@@ -1831,7 +1854,7 @@ static int64_t sys_dup2(uint64_t oldfd, uint64_t newfd,
     proc->fd_table[newfd] = *src;
     proc->fd_table[newfd].fd_flags = 0;  /* dup2 clears cloexec */
     /* Increment pipe ref count for new copy */
-    if (src->pipe != (void *)0) {
+    if (src->pipe != NULL) {
         pipe_t *pp = (pipe_t *)src->pipe;
         if (src->pipe_write)
             pp->write_refs++;
@@ -1839,7 +1862,7 @@ static int64_t sys_dup2(uint64_t oldfd, uint64_t newfd,
             pp->read_refs++;
     }
     /* Increment PTY ref count for new copy */
-    if (src->pty != (void *)0) {
+    if (src->pty != NULL) {
         pty_t *pt = (pty_t *)src->pty;
         if (src->pty_is_master)
             pt->master_refs++;
@@ -1847,10 +1870,10 @@ static int64_t sys_dup2(uint64_t oldfd, uint64_t newfd,
             pt->slave_refs++;
     }
     /* Increment unix socket ref count for new copy */
-    if (src->unix_sock != (void *)0)
+    if (src->unix_sock != NULL)
         ((unix_sock_t *)src->unix_sock)->refs++;
     /* Increment eventfd ref count for new copy */
-    if (src->eventfd != (void *)0) {
+    if (src->eventfd != NULL) {
         for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
             if (eventfd_get(ei) == (eventfd_t *)src->eventfd) {
                 eventfd_ref(ei);
@@ -1859,12 +1882,12 @@ static int64_t sys_dup2(uint64_t oldfd, uint64_t newfd,
         }
     }
     /* Increment epoll ref count for new copy */
-    if (src->epoll != (void *)0) {
+    if (src->epoll != NULL) {
         int ep_idx = epoll_index((epoll_instance_t *)src->epoll);
         if (ep_idx >= 0) epoll_ref(ep_idx);
     }
     /* Increment uring ref count for new copy */
-    if (src->uring != (void *)0) {
+    if (src->uring != NULL) {
         int ur_idx = uring_index((uring_instance_t *)src->uring);
         if (ur_idx >= 0) uring_ref(ur_idx);
     }
@@ -1876,7 +1899,7 @@ static int64_t sys_kill(uint64_t pid, uint64_t signal,
     (void)a3; (void)a4; (void)a5;
 
     thread_t *t = thread_get_current();
-    process_t *caller = t ? t->process : (void *)0;
+    process_t *caller = t ? t->process : NULL;
 
     /* Negative pid: kill process group */
     if ((int64_t)pid < 0) {
@@ -2172,23 +2195,23 @@ static int64_t sys_fork(uint64_t a1, uint64_t a2,
 
     /* Increment pipe, PTY, unix_sock, eventfd, epoll, uring ref counts for inherited fds */
     for (int i = 0; i < MAX_FDS; i++) {
-        if (proc->fd_table[i].pipe != (void *)0) {
+        if (proc->fd_table[i].pipe != NULL) {
             pipe_t *pp = (pipe_t *)proc->fd_table[i].pipe;
             if (proc->fd_table[i].pipe_write)
                 pp->write_refs++;
             else
                 pp->read_refs++;
         }
-        if (proc->fd_table[i].pty != (void *)0) {
+        if (proc->fd_table[i].pty != NULL) {
             pty_t *pt = (pty_t *)proc->fd_table[i].pty;
             if (proc->fd_table[i].pty_is_master)
                 pt->master_refs++;
             else
                 pt->slave_refs++;
         }
-        if (proc->fd_table[i].unix_sock != (void *)0)
+        if (proc->fd_table[i].unix_sock != NULL)
             ((unix_sock_t *)proc->fd_table[i].unix_sock)->refs++;
-        if (proc->fd_table[i].eventfd != (void *)0) {
+        if (proc->fd_table[i].eventfd != NULL) {
             for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
                 if (eventfd_get(ei) == (eventfd_t *)proc->fd_table[i].eventfd) {
                     eventfd_ref(ei);
@@ -2196,11 +2219,11 @@ static int64_t sys_fork(uint64_t a1, uint64_t a2,
                 }
             }
         }
-        if (proc->fd_table[i].epoll != (void *)0) {
+        if (proc->fd_table[i].epoll != NULL) {
             int ep_idx = epoll_index((epoll_instance_t *)proc->fd_table[i].epoll);
             if (ep_idx >= 0) epoll_ref(ep_idx);
         }
-        if (proc->fd_table[i].uring != (void *)0) {
+        if (proc->fd_table[i].uring != NULL) {
             int ur_idx = uring_index((uring_instance_t *)proc->fd_table[i].uring);
             if (ur_idx >= 0) uring_ref(ur_idx);
         }
@@ -2289,11 +2312,13 @@ static int64_t sys_sigprocmask(uint64_t how, uint64_t new_mask,
     (void)a4; (void)a5;
 
     thread_t *t = thread_get_current();
-    process_t *proc = t ? t->process : (void *)0;
+    process_t *proc = t ? t->process : NULL;
     if (!proc) return -1;
 
     /* Return old mask if pointer provided */
     if (old_mask_ptr) {
+        if (validate_user_ptr(old_mask_ptr, sizeof(uint32_t)) != 0)
+            return -EFAULT;
         uint64_t *pte = vmm_get_pte(proc->cr3, old_mask_ptr);
         if (pte && (*pte & PTE_PRESENT)) {
             uint64_t phys = (*pte & PTE_ADDR_MASK) + (old_mask_ptr & 0xFFF);
@@ -2336,6 +2361,9 @@ static int64_t sys_arch_prctl(uint64_t code, uint64_t addr,
 
     switch (code) {
     case ARCH_SET_FS:
+        /* Validate that addr is in user-space */
+        if (addr >= USER_ADDR_MAX)
+            return -EFAULT;
         t->fs_base = addr;
         /* Apply immediately */
         {
@@ -2346,6 +2374,8 @@ static int64_t sys_arch_prctl(uint64_t code, uint64_t addr,
         return 0;
     case ARCH_GET_FS:
         if (t->process && addr) {
+            if (validate_user_ptr(addr, sizeof(uint64_t)) != 0)
+                return -EFAULT;
             uint64_t *pte = vmm_get_pte(t->process->cr3, addr);
             if (pte && (*pte & PTE_PRESENT)) {
                 uint64_t phys = (*pte & PTE_ADDR_MASK) + (addr & 0xFFF);
@@ -2371,13 +2401,15 @@ static int64_t sys_select(uint64_t nfds, uint64_t readfds_ptr,
     (void)a5;
 
     thread_t *t = thread_get_current();
-    process_t *proc = t ? t->process : (void *)0;
+    process_t *proc = t ? t->process : NULL;
     if (!proc) return -1;
     if (nfds > MAX_FDS) nfds = MAX_FDS;
 
     /* Read fd_sets from user space */
     uint64_t rfds = 0, wfds = 0;
     if (readfds_ptr) {
+        if (validate_user_ptr(readfds_ptr, sizeof(uint64_t)) != 0)
+            return -EFAULT;
         uint64_t *pte = vmm_get_pte(proc->cr3, readfds_ptr);
         if (pte && (*pte & PTE_PRESENT)) {
             uint64_t phys = (*pte & PTE_ADDR_MASK) + (readfds_ptr & 0xFFF);
@@ -2385,6 +2417,8 @@ static int64_t sys_select(uint64_t nfds, uint64_t readfds_ptr,
         }
     }
     if (writefds_ptr) {
+        if (validate_user_ptr(writefds_ptr, sizeof(uint64_t)) != 0)
+            return -EFAULT;
         uint64_t *pte = vmm_get_pte(proc->cr3, writefds_ptr);
         if (pte && (*pte & PTE_PRESENT)) {
             uint64_t phys = (*pte & PTE_ADDR_MASK) + (writefds_ptr & 0xFFF);
@@ -2420,7 +2454,7 @@ static int64_t sys_select(uint64_t nfds, uint64_t readfds_ptr,
         }
 
         if (ready > 0 || (has_timeout && timeout_us == 0)) {
-            /* Write results back */
+            /* Write results back (pointers already validated above) */
             if (readfds_ptr) {
                 uint64_t *pte = vmm_get_pte(proc->cr3, readfds_ptr);
                 if (pte && (*pte & PTE_PRESENT)) {
@@ -2455,13 +2489,12 @@ static int64_t sys_super_create(uint64_t name_ptr, uint64_t a2,
     thread_t *t = thread_get_current();
     if (!t || !t->process) return -1;
 
+    char name_buf[64];
     const char *name = "supervisor";
     if (name_ptr) {
-        uint64_t *pte = vmm_get_pte(t->process->cr3, name_ptr);
-        if (pte && (*pte & PTE_PRESENT)) {
-            uint64_t phys = (*pte & PTE_ADDR_MASK) + (name_ptr & 0xFFF);
-            name = (const char *)PHYS_TO_VIRT(phys);
-        }
+        if (copy_string_from_user((const char *)name_ptr, name_buf, sizeof(name_buf)) != 0)
+            return -EFAULT;
+        name = name_buf;
     }
 
     return supervisor_create(t->process->pid, name);
@@ -2473,13 +2506,12 @@ static int64_t sys_super_add(uint64_t super_id, uint64_t elf_path_ptr,
     thread_t *t = thread_get_current();
     if (!t || !t->process) return -1;
 
+    char path_buf[64];
     const char *path = "";
     if (elf_path_ptr) {
-        uint64_t *pte = vmm_get_pte(t->process->cr3, elf_path_ptr);
-        if (pte && (*pte & PTE_PRESENT)) {
-            uint64_t phys = (*pte & PTE_ADDR_MASK) + (elf_path_ptr & 0xFFF);
-            path = (const char *)PHYS_TO_VIRT(phys);
-        }
+        if (copy_string_from_user((const char *)elf_path_ptr, path_buf, sizeof(path_buf)) != 0)
+            return -EFAULT;
+        path = path_buf;
     }
 
     return supervisor_add_child((uint32_t)super_id, path, (int64_t)ns_id, caps);
@@ -2531,31 +2563,31 @@ static int64_t sys_openpty(uint64_t master_fd_ptr, uint64_t slave_fd_ptr,
     }
 
     /* Set up master fd */
-    proc->fd_table[mfd].node = (void *)0;
+    proc->fd_table[mfd].node = NULL;
     proc->fd_table[mfd].offset = 0;
-    proc->fd_table[mfd].pipe = (void *)0;
+    proc->fd_table[mfd].pipe = NULL;
     proc->fd_table[mfd].pipe_write = 0;
     proc->fd_table[mfd].pty = (void *)pt;
     proc->fd_table[mfd].pty_is_master = 1;
-    proc->fd_table[mfd].unix_sock = (void *)0;
-    proc->fd_table[mfd].eventfd = (void *)0;
-    proc->fd_table[mfd].epoll = (void *)0;
-    proc->fd_table[mfd].uring = (void *)0;
+    proc->fd_table[mfd].unix_sock = NULL;
+    proc->fd_table[mfd].eventfd = NULL;
+    proc->fd_table[mfd].epoll = NULL;
+    proc->fd_table[mfd].uring = NULL;
     proc->fd_table[mfd].open_flags = 0;
     proc->fd_table[mfd].fd_flags = 0;
     pt->master_refs = 1;
 
     /* Set up slave fd */
-    proc->fd_table[sfd].node = (void *)0;
+    proc->fd_table[sfd].node = NULL;
     proc->fd_table[sfd].offset = 0;
-    proc->fd_table[sfd].pipe = (void *)0;
+    proc->fd_table[sfd].pipe = NULL;
     proc->fd_table[sfd].pipe_write = 0;
     proc->fd_table[sfd].pty = (void *)pt;
     proc->fd_table[sfd].pty_is_master = 0;
-    proc->fd_table[sfd].unix_sock = (void *)0;
-    proc->fd_table[sfd].eventfd = (void *)0;
-    proc->fd_table[sfd].epoll = (void *)0;
-    proc->fd_table[sfd].uring = (void *)0;
+    proc->fd_table[sfd].unix_sock = NULL;
+    proc->fd_table[sfd].eventfd = NULL;
+    proc->fd_table[sfd].epoll = NULL;
+    proc->fd_table[sfd].uring = NULL;
     proc->fd_table[sfd].open_flags = 0;
     proc->fd_table[sfd].fd_flags = 0;
     pt->slave_refs = 1;
@@ -2644,7 +2676,7 @@ static int64_t sys_tcp_to_fd(uint64_t conn_idx, uint64_t a2,
     (void)a2; (void)a3; (void)a4; (void)a5;
     if (conn_idx >= MAX_TCP_CONNS) return -EINVAL;
     thread_t *t = thread_get_current();
-    process_t *proc = t ? t->process : (void *)0;
+    process_t *proc = t ? t->process : NULL;
     if (!proc) return -1;
     for (int fd = 0; fd < MAX_FDS; fd++) {
         if (fd_is_free(&proc->fd_table[fd])) {
@@ -2690,7 +2722,7 @@ static int64_t sys_nanosleep(uint64_t ts_ptr, uint64_t a2,
 
     uint64_t deadline = pit_get_ticks() + delay_ticks;
     thread_t *ns_t = thread_get_current();
-    process_t *ns_proc = ns_t ? ns_t->process : (void *)0;
+    process_t *ns_proc = ns_t ? ns_t->process : NULL;
     while (pit_get_ticks() < deadline) {
         if (ns_proc && (ns_proc->pending_signals & ~ns_proc->signal_mask))
             return -EINTR;
@@ -2826,7 +2858,7 @@ static int16_t poll_check_fd(process_t *proc, int fd, int16_t events) {
         return POLLERR;
 
     /* Pipe */
-    if (entry->pipe != (void *)0) {
+    if (entry->pipe != NULL) {
         pipe_t *pp = (pipe_t *)entry->pipe;
         if (!entry->pipe_write) {
             /* Read end */
@@ -2845,7 +2877,7 @@ static int16_t poll_check_fd(process_t *proc, int fd, int16_t events) {
     }
 
     /* PTY */
-    if (entry->pty != (void *)0) {
+    if (entry->pty != NULL) {
         int pidx = pty_index((pty_t *)entry->pty);
         if (pidx < 0) return POLLERR;
         if ((events & POLLIN) && pty_readable(pidx, entry->pty_is_master))
@@ -2856,7 +2888,7 @@ static int16_t poll_check_fd(process_t *proc, int fd, int16_t events) {
     }
 
     /* Unix socket */
-    if (entry->unix_sock != (void *)0) {
+    if (entry->unix_sock != NULL) {
         unix_sock_t *us = (unix_sock_t *)entry->unix_sock;
         if (us->state == USOCK_LISTENING) {
             if ((events & POLLIN) && unix_sock_has_backlog(us))
@@ -2873,7 +2905,7 @@ static int16_t poll_check_fd(process_t *proc, int fd, int16_t events) {
     }
 
     /* Eventfd */
-    if (entry->eventfd != (void *)0) {
+    if (entry->eventfd != NULL) {
         int efd_idx = -1;
         for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
             if (eventfd_get(ei) == (eventfd_t *)entry->eventfd) {
@@ -2896,11 +2928,11 @@ static int16_t poll_check_fd(process_t *proc, int fd, int16_t events) {
     }
 
     /* epoll/uring fds — not pollable */
-    if (entry->epoll != (void *)0 || entry->uring != (void *)0)
+    if (entry->epoll != NULL || entry->uring != NULL)
         return 0;
 
     /* Regular file — always ready */
-    if (entry->node != (void *)0) {
+    if (entry->node != NULL) {
         if (events & POLLIN) revents |= POLLIN;
         if (events & POLLOUT) revents |= POLLOUT;
         return revents;
@@ -3312,15 +3344,15 @@ static int64_t sys_unix_socket(uint64_t a1, uint64_t a2,
     /* Find free fd */
     for (int fd = 0; fd < MAX_FDS; fd++) {
         if (fd_is_free(&proc->fd_table[fd])) {
-            proc->fd_table[fd].node = (void *)0;
-            proc->fd_table[fd].pipe = (void *)0;
+            proc->fd_table[fd].node = NULL;
+            proc->fd_table[fd].pipe = NULL;
             proc->fd_table[fd].pipe_write = 0;
-            proc->fd_table[fd].pty = (void *)0;
+            proc->fd_table[fd].pty = NULL;
             proc->fd_table[fd].pty_is_master = 0;
             proc->fd_table[fd].unix_sock = (void *)us;
-            proc->fd_table[fd].eventfd = (void *)0;
-            proc->fd_table[fd].epoll = (void *)0;
-            proc->fd_table[fd].uring = (void *)0;
+            proc->fd_table[fd].eventfd = NULL;
+            proc->fd_table[fd].epoll = NULL;
+            proc->fd_table[fd].uring = NULL;
             proc->fd_table[fd].open_flags = O_RDWR;
             proc->fd_table[fd].fd_flags = 0;
             return fd;
@@ -3341,7 +3373,7 @@ static int64_t sys_unix_bind(uint64_t fd, uint64_t path_ptr,
     if (!proc) return -1;
 
     fd_entry_t *entry = &proc->fd_table[fd];
-    if (entry->unix_sock == (void *)0) return -EINVAL;
+    if (entry->unix_sock == NULL) return -EINVAL;
 
     char raw_path[UNIX_SOCK_PATH_MAX], path[UNIX_SOCK_PATH_MAX];
     if (copy_string_from_user((const char *)path_ptr, raw_path, UNIX_SOCK_PATH_MAX) != 0)
@@ -3368,7 +3400,7 @@ static int64_t sys_unix_listen(uint64_t fd, uint64_t a2,
     if (!proc) return -1;
 
     fd_entry_t *entry = &proc->fd_table[fd];
-    if (entry->unix_sock == (void *)0) return -EINVAL;
+    if (entry->unix_sock == NULL) return -EINVAL;
 
     unix_sock_t *us = (unix_sock_t *)entry->unix_sock;
     for (int i = 0; i < MAX_UNIX_SOCKS; i++) {
@@ -3389,7 +3421,7 @@ static int64_t sys_unix_accept(uint64_t fd, uint64_t a2,
     if (!proc) return -1;
 
     fd_entry_t *entry = &proc->fd_table[fd];
-    if (entry->unix_sock == (void *)0) return -EINVAL;
+    if (entry->unix_sock == NULL) return -EINVAL;
 
     /* fd limit check */
     if (proc->rlimit_nfds > 0 &&
@@ -3421,15 +3453,15 @@ static int64_t sys_unix_accept(uint64_t fd, uint64_t a2,
     /* Find free fd for accepted socket */
     for (int nfd = 0; nfd < MAX_FDS; nfd++) {
         if (fd_is_free(&proc->fd_table[nfd])) {
-            proc->fd_table[nfd].node = (void *)0;
-            proc->fd_table[nfd].pipe = (void *)0;
+            proc->fd_table[nfd].node = NULL;
+            proc->fd_table[nfd].pipe = NULL;
             proc->fd_table[nfd].pipe_write = 0;
-            proc->fd_table[nfd].pty = (void *)0;
+            proc->fd_table[nfd].pty = NULL;
             proc->fd_table[nfd].pty_is_master = 0;
             proc->fd_table[nfd].unix_sock = (void *)server;
-            proc->fd_table[nfd].eventfd = (void *)0;
-            proc->fd_table[nfd].epoll = (void *)0;
-            proc->fd_table[nfd].uring = (void *)0;
+            proc->fd_table[nfd].eventfd = NULL;
+            proc->fd_table[nfd].epoll = NULL;
+            proc->fd_table[nfd].uring = NULL;
             proc->fd_table[nfd].open_flags = O_RDWR;
             proc->fd_table[nfd].fd_flags = 0;
             return nfd;
@@ -3466,15 +3498,15 @@ static int64_t sys_unix_connect(uint64_t path_ptr, uint64_t a2,
     /* Find free fd for client socket */
     for (int fd = 0; fd < MAX_FDS; fd++) {
         if (fd_is_free(&proc->fd_table[fd])) {
-            proc->fd_table[fd].node = (void *)0;
-            proc->fd_table[fd].pipe = (void *)0;
+            proc->fd_table[fd].node = NULL;
+            proc->fd_table[fd].pipe = NULL;
             proc->fd_table[fd].pipe_write = 0;
-            proc->fd_table[fd].pty = (void *)0;
+            proc->fd_table[fd].pty = NULL;
             proc->fd_table[fd].pty_is_master = 0;
             proc->fd_table[fd].unix_sock = (void *)client;
-            proc->fd_table[fd].eventfd = (void *)0;
-            proc->fd_table[fd].epoll = (void *)0;
-            proc->fd_table[fd].uring = (void *)0;
+            proc->fd_table[fd].eventfd = NULL;
+            proc->fd_table[fd].epoll = NULL;
+            proc->fd_table[fd].uring = NULL;
             proc->fd_table[fd].open_flags = O_RDWR;
             proc->fd_table[fd].fd_flags = 0;
             return fd;
@@ -3545,15 +3577,15 @@ static int64_t sys_eventfd(uint64_t flags, uint64_t a2,
     /* Find free fd */
     for (int fd = 0; fd < MAX_FDS; fd++) {
         if (fd_is_free(&proc->fd_table[fd])) {
-            proc->fd_table[fd].node = (void *)0;
-            proc->fd_table[fd].pipe = (void *)0;
+            proc->fd_table[fd].node = NULL;
+            proc->fd_table[fd].pipe = NULL;
             proc->fd_table[fd].pipe_write = 0;
-            proc->fd_table[fd].pty = (void *)0;
+            proc->fd_table[fd].pty = NULL;
             proc->fd_table[fd].pty_is_master = 0;
-            proc->fd_table[fd].unix_sock = (void *)0;
+            proc->fd_table[fd].unix_sock = NULL;
             proc->fd_table[fd].eventfd = (void *)efd;
-            proc->fd_table[fd].epoll = (void *)0;
-            proc->fd_table[fd].uring = (void *)0;
+            proc->fd_table[fd].epoll = NULL;
+            proc->fd_table[fd].uring = NULL;
             proc->fd_table[fd].open_flags = O_RDWR;
             proc->fd_table[fd].fd_flags = 0;
             /* If EFD_NONBLOCK set, mark fd as nonblock */
@@ -3590,15 +3622,15 @@ static int64_t sys_epoll_create(uint64_t flags, uint64_t a2,
     /* Find free fd */
     for (int fd = 0; fd < MAX_FDS; fd++) {
         if (fd_is_free(&proc->fd_table[fd])) {
-            proc->fd_table[fd].node = (void *)0;
-            proc->fd_table[fd].pipe = (void *)0;
+            proc->fd_table[fd].node = NULL;
+            proc->fd_table[fd].pipe = NULL;
             proc->fd_table[fd].pipe_write = 0;
-            proc->fd_table[fd].pty = (void *)0;
+            proc->fd_table[fd].pty = NULL;
             proc->fd_table[fd].pty_is_master = 0;
-            proc->fd_table[fd].unix_sock = (void *)0;
-            proc->fd_table[fd].eventfd = (void *)0;
+            proc->fd_table[fd].unix_sock = NULL;
+            proc->fd_table[fd].eventfd = NULL;
             proc->fd_table[fd].epoll = (void *)ep;
-            proc->fd_table[fd].uring = (void *)0;
+            proc->fd_table[fd].uring = NULL;
             proc->fd_table[fd].open_flags = 0;
             proc->fd_table[fd].fd_flags = 0;
             return fd;
@@ -3618,7 +3650,7 @@ static int64_t sys_epoll_ctl(uint64_t epfd, uint64_t op, uint64_t fd,
 
     if (epfd >= MAX_FDS) return -EBADF;
     fd_entry_t *ep_entry = &proc->fd_table[epfd];
-    if (ep_entry->epoll == (void *)0) return -EINVAL;
+    if (ep_entry->epoll == NULL) return -EINVAL;
 
     int ep_idx = epoll_index((epoll_instance_t *)ep_entry->epoll);
     if (ep_idx < 0) return -EINVAL;
@@ -3650,7 +3682,7 @@ static int64_t sys_epoll_wait(uint64_t epfd, uint64_t events_ptr,
         return -EFAULT;
 
     fd_entry_t *ep_entry = &proc->fd_table[epfd];
-    if (ep_entry->epoll == (void *)0) return -EINVAL;
+    if (ep_entry->epoll == NULL) return -EINVAL;
 
     epoll_instance_t *ep = (epoll_instance_t *)ep_entry->epoll;
     epoll_event_t *out = (epoll_event_t *)events_ptr;
@@ -3852,14 +3884,14 @@ static int64_t sys_uring_setup(uint64_t entries, uint64_t params_ptr,
     /* Find free fd */
     for (int fd = 0; fd < MAX_FDS; fd++) {
         if (fd_is_free(&proc->fd_table[fd])) {
-            proc->fd_table[fd].node = (void *)0;
-            proc->fd_table[fd].pipe = (void *)0;
+            proc->fd_table[fd].node = NULL;
+            proc->fd_table[fd].pipe = NULL;
             proc->fd_table[fd].pipe_write = 0;
-            proc->fd_table[fd].pty = (void *)0;
+            proc->fd_table[fd].pty = NULL;
             proc->fd_table[fd].pty_is_master = 0;
-            proc->fd_table[fd].unix_sock = (void *)0;
-            proc->fd_table[fd].eventfd = (void *)0;
-            proc->fd_table[fd].epoll = (void *)0;
+            proc->fd_table[fd].unix_sock = NULL;
+            proc->fd_table[fd].eventfd = NULL;
+            proc->fd_table[fd].epoll = NULL;
             proc->fd_table[fd].uring = (void *)ur;
             proc->fd_table[fd].open_flags = 0;
             proc->fd_table[fd].fd_flags = 0;
@@ -3877,7 +3909,7 @@ static int64_t uring_do_read(process_t *proc, int fd, uint8_t *buf, uint32_t len
     if (fd_is_free(entry)) return -EBADF;
 
     /* Pipe read */
-    if (entry->pipe != (void *)0) {
+    if (entry->pipe != NULL) {
         pipe_t *pp = (pipe_t *)entry->pipe;
         uint64_t total = 0;
         while (total < len && pp->count > 0) {
@@ -3890,7 +3922,7 @@ static int64_t uring_do_read(process_t *proc, int fd, uint8_t *buf, uint32_t len
     }
 
     /* PTY read */
-    if (entry->pty != (void *)0) {
+    if (entry->pty != NULL) {
         int pty_idx = pty_index((pty_t *)entry->pty);
         if (pty_idx < 0) return -1;
         if (entry->pty_is_master)
@@ -3900,11 +3932,11 @@ static int64_t uring_do_read(process_t *proc, int fd, uint8_t *buf, uint32_t len
     }
 
     /* Unix socket */
-    if (entry->unix_sock != (void *)0)
+    if (entry->unix_sock != NULL)
         return unix_sock_recv((unix_sock_t *)entry->unix_sock, buf, len, 1);
 
     /* Regular file */
-    if (entry->node != (void *)0) {
+    if (entry->node != NULL) {
         int node_idx = vfs_node_index(entry->node);
         if (node_idx < 0) return -1;
         int64_t n = vfs_read(node_idx, entry->offset, buf, len);
@@ -3922,7 +3954,7 @@ static int64_t uring_do_write(process_t *proc, int fd, const uint8_t *buf, uint3
     if (fd_is_free(entry)) return -EBADF;
 
     /* Pipe write */
-    if (entry->pipe != (void *)0) {
+    if (entry->pipe != NULL) {
         pipe_t *pp = (pipe_t *)entry->pipe;
         uint64_t total = 0;
         while (total < len) {
@@ -3938,7 +3970,7 @@ static int64_t uring_do_write(process_t *proc, int fd, const uint8_t *buf, uint3
     }
 
     /* PTY write */
-    if (entry->pty != (void *)0) {
+    if (entry->pty != NULL) {
         int pty_idx = pty_index((pty_t *)entry->pty);
         if (pty_idx < 0) return -1;
         if (entry->pty_is_master)
@@ -3948,11 +3980,11 @@ static int64_t uring_do_write(process_t *proc, int fd, const uint8_t *buf, uint3
     }
 
     /* Unix socket */
-    if (entry->unix_sock != (void *)0)
+    if (entry->unix_sock != NULL)
         return unix_sock_send((unix_sock_t *)entry->unix_sock, buf, len, 1);
 
     /* Regular file */
-    if (entry->node != (void *)0) {
+    if (entry->node != NULL) {
         int node_idx = vfs_node_index(entry->node);
         if (node_idx < 0) return -1;
         if (entry->open_flags & 0x04)
@@ -3976,7 +4008,7 @@ static int64_t sys_uring_enter(uint64_t uring_fd, uint64_t sqe_arg,
 
     if (uring_fd >= MAX_FDS) return -EBADF;
     fd_entry_t *ur_entry = &proc->fd_table[uring_fd];
-    if (ur_entry->uring == (void *)0) return -EINVAL;
+    if (ur_entry->uring == NULL) return -EINVAL;
 
     uring_instance_t *ur = (uring_instance_t *)ur_entry->uring;
 
@@ -4435,7 +4467,7 @@ static int64_t sys_infer_submit(uint64_t name_ptr, uint64_t req_buf,
     int64_t efd_arg = (int64_t)eventfd_idx;
     if (efd_arg >= 0 && efd_arg < MAX_FDS) {
         fd_entry_t *efd_entry = &proc->fd_table[efd_arg];
-        if (efd_entry->eventfd != (void *)0) {
+        if (efd_entry->eventfd != NULL) {
             for (int i = 0; i < MAX_EVENTFDS; i++) {
                 if (eventfd_get(i) == (eventfd_t *)efd_entry->eventfd) {
                     efd_idx = i;
@@ -4529,7 +4561,7 @@ static int64_t sys_futex_wait(uint64_t uaddr, uint64_t expected,
     (void)a3; (void)a4; (void)a5;
     thread_t *t = thread_get_current();
     if (!t || !t->process) return -1;
-    if (uaddr < 0x1000) return -14;  /* -EFAULT */
+    if (validate_user_ptr(uaddr, sizeof(uint32_t)) != 0) return -EFAULT;
     return futex_wait(t->process->pid, (uint32_t *)uaddr, (uint32_t)expected);
 }
 
@@ -4538,7 +4570,7 @@ static int64_t sys_futex_wake(uint64_t uaddr, uint64_t max_wake,
     (void)a3; (void)a4; (void)a5;
     thread_t *t = thread_get_current();
     if (!t || !t->process) return -1;
-    if (uaddr < 0x1000) return -14;  /* -EFAULT */
+    if (validate_user_ptr(uaddr, sizeof(uint32_t)) != 0) return -EFAULT;
     if (max_wake == 0) max_wake = 1;
     return futex_wake(t->process->pid, (uint32_t *)uaddr, (uint32_t)max_wake);
 }
@@ -4556,7 +4588,7 @@ static int64_t sys_mmap_file(uint64_t fd, uint64_t offset,
     if (!proc) return -1;
 
     fd_entry_t *entry = &proc->fd_table[fd];
-    if (entry->node == (void *)0) return -1;
+    if (entry->node == NULL) return -1;
 
     vfs_node_t *node = entry->node;
     int node_idx = vfs_node_index(node);
@@ -5061,6 +5093,6 @@ void syscall_init(void) {
 #define MSR_GS_BASE        0xC0000101
     wrmsr(MSR_GS_BASE, (uint64_t)&percpu_array[0]);
 
-    serial_printf("[syscall] STAR=%lx LSTAR=%lx\n", star, (uint64_t)syscall_entry);
-    serial_puts("[syscall] SYSCALL/SYSRET initialized (SWAPGS ready)\n");
+    pr_info("STAR=%lx LSTAR=%lx\n", star, (uint64_t)syscall_entry);
+    pr_info("SYSCALL/SYSRET initialized (SWAPGS ready)\n");
 }

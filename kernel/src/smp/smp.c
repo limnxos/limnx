@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[smp]  " fmt
+#include "klog.h"
+
 #include "smp/percpu.h"
 #include "smp/lapic.h"
 #include "gdt/gdt.h"
@@ -233,7 +236,7 @@ static void ap_entry(struct limine_smp_info *info) {
     __asm__ volatile ("" ::: "memory");
     pc->started = 1;
 
-    serial_printf("[smp]  AP %u ready (LAPIC ID %u)\n", pc->cpu_id, pc->lapic_id);
+    pr_info("AP %u ready (LAPIC ID %u)\n", pc->cpu_id, pc->lapic_id);
 
     /* Switch to the idle thread's allocated stack (32KB) before entering
      * the idle loop. ap_entry runs on Limine's small goto stack which is
@@ -260,7 +263,7 @@ static void ap_entry(struct limine_smp_info *info) {
 
 void smp_init(void) {
     if (!smp_request.response) {
-        serial_puts("[smp]  No SMP response from bootloader\n");
+        pr_info("No SMP response from bootloader\n");
         cpu_count = 1;
         return;
     }
@@ -272,7 +275,7 @@ void smp_init(void) {
     if (cpu_count > MAX_CPUS)
         cpu_count = MAX_CPUS;
 
-    serial_printf("[smp]  %u CPUs detected, BSP LAPIC ID=%u\n",
+    pr_info("%u CPUs detected, BSP LAPIC ID=%u\n",
                   cpu_count, bsp_lapic);
 
     /* Save IDT pointer for APs */
@@ -317,7 +320,7 @@ void smp_init(void) {
     /* LAPIC timer now drives scheduling — disable PIT scheduling */
     idt_set_lapic_timer_active();
 
-    serial_puts("[smp]  BSP initialized with per-CPU GDT + LAPIC timer\n");
+    pr_info("BSP initialized with per-CPU GDT + LAPIC timer\n");
 
     /* === Start APs === */
     uint32_t ap_started = 0;
@@ -363,8 +366,8 @@ void smp_init(void) {
             __asm__ volatile ("pause");
 
         if (!*flag)
-            serial_printf("[smp]  WARNING: AP %u did not start\n", i);
+            pr_warn("AP %u did not start\n", i);
     }
 
-    serial_printf("[smp]  %u APs started\n", ap_started);
+    pr_info("%u APs started\n", ap_started);
 }

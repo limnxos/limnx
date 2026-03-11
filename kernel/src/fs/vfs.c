@@ -1,35 +1,15 @@
+#define pr_fmt(fmt) "[vfs] " fmt
+#include "klog.h"
+
 #include "fs/vfs.h"
 #include "mm/kheap.h"
 #include "blk/limnfs.h"
 #include "serial.h"
+#include "errno.h"
+#include "kutil.h"
 
 static vfs_node_t nodes[MAX_VFS_NODES];
 static int node_count = 0;
-
-/* --- String helpers --- */
-
-static int str_eq(const char *a, const char *b) {
-    while (*a && *b) {
-        if (*a != *b) return 0;
-        a++; b++;
-    }
-    return *a == *b;
-}
-
-static void str_copy(char *dst, const char *src, uint64_t max) {
-    uint64_t i = 0;
-    while (i < max - 1 && src[i]) {
-        dst[i] = src[i];
-        i++;
-    }
-    dst[i] = '\0';
-}
-
-static uint64_t str_len(const char *s) {
-    uint64_t len = 0;
-    while (s[len]) len++;
-    return len;
-}
 
 /* --- Init --- */
 
@@ -37,7 +17,7 @@ void vfs_init(void) {
     node_count = 0;
     for (int i = 0; i < MAX_VFS_NODES; i++) {
         nodes[i].name[0] = '\0';
-        nodes[i].data = (void *)0;
+        nodes[i].data = NULL;
         nodes[i].size = 0;
         nodes[i].capacity = 0;
         nodes[i].flags = 0;
@@ -54,11 +34,11 @@ void vfs_init(void) {
     nodes[0].gid = 0;
     nodes[0].parent = -1;
     nodes[0].size = 0;
-    nodes[0].data = (void *)0;
+    nodes[0].data = NULL;
     nodes[0].disk_inode = -1;
     node_count = 1;
 
-    serial_puts("[vfs] VFS initialized (root at node 0)\n");
+    pr_info("VFS initialized (root at node 0)\n");
 }
 
 /* --- Path resolution --- */
@@ -102,12 +82,12 @@ int vfs_find_child(int parent_idx, const char *name) {
         if (nodes[i].parent == parent_idx && str_eq(nodes[i].name, name))
             return i;
     }
-    return -1;
+    return -ENOENT;
 }
 
 int vfs_resolve_path(const char *path) {
     if (!path || path[0] != '/')
-        return -1;
+        return -EINVAL;
 
     /* Root itself */
     if (path[0] == '/' && path[1] == '\0')
@@ -142,7 +122,7 @@ int vfs_resolve_path(const char *path) {
             /* Find child with this name under current */
             int child = vfs_find_child(current, component);
             if (child < 0)
-                return -1;
+                return -ENOENT;
             current = child;
         }
 
@@ -177,7 +157,7 @@ int vfs_register_node(int parent, const char *name, uint8_t type,
     }
 
     if (node_count >= MAX_VFS_NODES)
-        return -1;
+        return -ENOSPC;
 
     vfs_node_t *n = &nodes[node_count];
     str_copy(n->name, name, MAX_PATH);
@@ -203,13 +183,13 @@ int vfs_open(const char *path) {
 
 int64_t vfs_read(int node_idx, uint64_t offset, uint8_t *buf, uint64_t len) {
     if (node_idx < 0 || node_idx >= node_count)
-        return -1;
+        return -EBADF;
 
     vfs_node_t *n = &nodes[node_idx];
     if (n->name[0] == '\0')
-        return -1;
+        return -ENOENT;
     if (n->type != VFS_FILE)
-        return -1;
+        return -EISDIR;
     if (offset >= n->size)
         return 0;
 
@@ -231,7 +211,7 @@ int64_t vfs_read(int node_idx, uint64_t offset, uint8_t *buf, uint64_t len) {
 
 int vfs_stat(const char *path, vfs_stat_t *st) {
     int idx = vfs_resolve_path(path);
-    if (idx < 0) return -1;
+    if (idx < 0) return -ENOENT;
     st->size = nodes[idx].size;
     st->type = nodes[idx].type;
     st->pad1 = 0;
@@ -247,9 +227,9 @@ int vfs_get_node_count(void) {
 
 vfs_node_t *vfs_get_node(int idx) {
     if (idx < 0 || idx >= node_count)
-        return (void *)0;
+        return NULL;
     if (nodes[idx].name[0] == '\0')
-        return (void *)0;
+        return NULL;
     return &nodes[idx];
 }
 
@@ -258,22 +238,22 @@ vfs_node_t *vfs_get_node(int idx) {
 int vfs_create(const char *path) {
     /* Check if file already exists */
     if (vfs_open(path) >= 0)
-        return -1;
+        return -EEXIST;
 
     /* Split path into parent + basename */
     char parent_path[MAX_PATH], basename[MAX_PATH];
     vfs_path_split(path, parent_path, basename);
 
     if (basename[0] == '\0')
-        return -1;
+        return -EINVAL;
 
     int parent_idx = vfs_resolve_path(parent_path);
     if (parent_idx < 0)
-        return -1;
+        return -ENOENT;
 
     /* Verify parent is a directory */
     if (nodes[parent_idx].type != VFS_DIRECTORY)
-        return -1;
+        return -ENOTDIR;
 
     /* If LimnFS is mounted, create on disk */
     if (limnfs_mounted()) {
@@ -282,11 +262,11 @@ int vfs_create(const char *path) {
 
         int disk_ino = limnfs_create_file((uint32_t)parent_ino, basename);
         if (disk_ino < 0)
-            return -1;
+            return -ENOSPC;
 
-        int idx = vfs_register_node(parent_idx, basename, VFS_FILE, 0, (void *)0);
+        int idx = vfs_register_node(parent_idx, basename, VFS_FILE, 0, NULL);
         if (idx < 0)
-            return -1;
+            return -ENOSPC;
 
         nodes[idx].disk_inode = (int32_t)disk_ino;
         nodes[idx].flags = VFS_FLAG_WRITABLE;
@@ -298,12 +278,12 @@ int vfs_create(const char *path) {
     uint64_t initial_cap = 4096;
     uint8_t *buf = (uint8_t *)kmalloc(initial_cap);
     if (!buf)
-        return -1;
+        return -ENOMEM;
 
     int idx = vfs_register_node(parent_idx, basename, VFS_FILE, 0, buf);
     if (idx < 0) {
         kfree(buf);
-        return -1;
+        return -ENOSPC;
     }
 
     nodes[idx].capacity = initial_cap;
@@ -315,17 +295,17 @@ int vfs_create(const char *path) {
 
 int64_t vfs_write(int node_idx, uint64_t offset, const uint8_t *buf, uint64_t len) {
     if (node_idx < 0 || node_idx >= node_count)
-        return -1;
+        return -EBADF;
 
     vfs_node_t *n = &nodes[node_idx];
     if (n->name[0] == '\0')
-        return -1;
+        return -ENOENT;
     if (!(n->flags & VFS_FLAG_WRITABLE))
-        return -1;
+        return -EACCES;
 
     uint64_t end = offset + len;
     if (end > VFS_MAX_FILE_SIZE)
-        return -1;
+        return -ENOSPC;
 
     /* Disk-backed file: write through LimnFS */
     if (n->disk_inode >= 0) {
@@ -350,7 +330,7 @@ int64_t vfs_write(int node_idx, uint64_t offset, const uint8_t *buf, uint64_t le
 
         uint8_t *new_buf = (uint8_t *)krealloc(n->data, new_cap);
         if (!new_buf)
-            return -1;
+            return -ENOMEM;
         n->data = new_buf;
         n->capacity = new_cap;
     }
@@ -368,20 +348,20 @@ int64_t vfs_write(int node_idx, uint64_t offset, const uint8_t *buf, uint64_t le
 }
 
 int vfs_node_index(vfs_node_t *node) {
-    if (!node) return -1;
+    if (!node) return -EINVAL;
     int idx = (int)(node - &nodes[0]);
     if (idx < 0 || idx >= node_count)
-        return -1;
+        return -EINVAL;
     return idx;
 }
 
 int vfs_readdir(const char *dir_path, uint32_t index, vfs_dirent_t *out) {
     int dir_idx = vfs_resolve_path(dir_path);
     if (dir_idx < 0)
-        return -1;
+        return -ENOENT;
 
     if (nodes[dir_idx].type != VFS_DIRECTORY)
-        return -1;
+        return -ENOTDIR;
 
     /* Count children to find the N-th one */
     uint32_t live = 0;
@@ -396,13 +376,13 @@ int vfs_readdir(const char *dir_path, uint32_t index, vfs_dirent_t *out) {
         }
         live++;
     }
-    return -1;
+    return -ENOENT;
 }
 
 int vfs_delete(const char *path) {
     int idx = vfs_resolve_path(path);
-    if (idx < 0) return -1;
-    if (idx == 0) return -1;  /* Cannot delete root */
+    if (idx < 0) return -ENOENT;
+    if (idx == 0) return -EACCES;  /* Cannot delete root */
 
     vfs_node_t *n = &nodes[idx];
 
@@ -410,7 +390,7 @@ int vfs_delete(const char *path) {
     if (n->type == VFS_DIRECTORY) {
         for (int i = 0; i < node_count; i++) {
             if (nodes[i].name[0] != '\0' && nodes[i].parent == idx)
-                return -1;  /* Directory not empty */
+                return -ENOTEMPTY;  /* Directory not empty */
         }
     }
 
@@ -428,7 +408,7 @@ int vfs_delete(const char *path) {
 
     /* Mark as empty */
     n->name[0] = '\0';
-    n->data = (void *)0;
+    n->data = NULL;
     n->size = 0;
     n->capacity = 0;
     n->flags = 0;
@@ -442,22 +422,22 @@ int vfs_delete(const char *path) {
 int vfs_mkdir(const char *path) {
     /* Check if already exists */
     if (vfs_resolve_path(path) >= 0)
-        return -1;
+        return -EEXIST;
 
     /* Split path into parent + basename */
     char parent_path[MAX_PATH], basename[MAX_PATH];
     vfs_path_split(path, parent_path, basename);
 
     if (basename[0] == '\0')
-        return -1;
+        return -EINVAL;
 
     int parent_idx = vfs_resolve_path(parent_path);
     if (parent_idx < 0)
-        return -1;
+        return -ENOENT;
 
     /* Verify parent is a directory */
     if (nodes[parent_idx].type != VFS_DIRECTORY)
-        return -1;
+        return -ENOTDIR;
 
     /* Create on disk if LimnFS is mounted */
     if (limnfs_mounted()) {
@@ -466,38 +446,38 @@ int vfs_mkdir(const char *path) {
 
         int disk_ino = limnfs_create_dir((uint32_t)parent_ino, basename);
         if (disk_ino < 0)
-            return -1;
+            return -ENOSPC;
 
-        int idx = vfs_register_node(parent_idx, basename, VFS_DIRECTORY, 0, (void *)0);
+        int idx = vfs_register_node(parent_idx, basename, VFS_DIRECTORY, 0, NULL);
         if (idx < 0)
-            return -1;
+            return -ENOSPC;
         nodes[idx].disk_inode = (int32_t)disk_ino;
         return idx;
     }
 
-    return vfs_register_node(parent_idx, basename, VFS_DIRECTORY, 0, (void *)0);
+    return vfs_register_node(parent_idx, basename, VFS_DIRECTORY, 0, NULL);
 }
 
 /* --- Truncate --- */
 
 int vfs_truncate_node(int node_idx, uint64_t new_size) {
     if (node_idx < 0 || node_idx >= node_count)
-        return -1;
+        return -EBADF;
 
     vfs_node_t *n = &nodes[node_idx];
     if (n->name[0] == '\0')
-        return -1;
+        return -ENOENT;
     if (n->type != VFS_FILE)
-        return -1;
+        return -EISDIR;
     if (!(n->flags & VFS_FLAG_WRITABLE))
-        return -1;
+        return -EACCES;
     if (new_size > VFS_MAX_FILE_SIZE)
-        return -1;
+        return -ENOSPC;
 
     /* Disk-backed file */
     if (n->disk_inode >= 0) {
         if (limnfs_truncate((uint32_t)n->disk_inode, (uint32_t)new_size) != 0)
-            return -1;
+            return -EIO;
         n->size = new_size;
         return 0;
     }
@@ -514,7 +494,7 @@ int vfs_truncate_node(int node_idx, uint64_t new_size) {
 
         uint8_t *new_buf = (uint8_t *)krealloc(n->data, new_cap);
         if (!new_buf)
-            return -1;
+            return -ENOMEM;
         n->data = new_buf;
         n->capacity = new_cap;
     }
@@ -535,23 +515,23 @@ int vfs_truncate_node(int node_idx, uint64_t new_size) {
 int vfs_rename(const char *old_path, const char *new_path) {
     int old_idx = vfs_resolve_path(old_path);
     if (old_idx < 0 || old_idx == 0)
-        return -1;  /* can't rename root */
+        return -ENOENT;  /* can't rename root */
 
     /* Destination must not already exist */
     if (vfs_resolve_path(new_path) >= 0)
-        return -1;
+        return -EEXIST;
 
     /* Split new path into parent + basename */
     char new_parent_path[MAX_PATH], new_basename[MAX_PATH];
     vfs_path_split(new_path, new_parent_path, new_basename);
     if (new_basename[0] == '\0')
-        return -1;
+        return -EINVAL;
 
     int new_parent_idx = vfs_resolve_path(new_parent_path);
     if (new_parent_idx < 0)
-        return -1;
+        return -ENOENT;
     if (nodes[new_parent_idx].type != VFS_DIRECTORY)
-        return -1;
+        return -ENOTDIR;
 
     vfs_node_t *n = &nodes[old_idx];
     char old_name[MAX_PATH];
@@ -603,7 +583,7 @@ static void load_limnfs_dir(uint32_t dir_ino, int vfs_parent_idx) {
                 nodes[dir_idx].disk_inode = (int32_t)ent.inode;
             } else {
                 dir_idx = vfs_register_node(vfs_parent_idx, ent.name,
-                                             VFS_DIRECTORY, 0, (void *)0);
+                                             VFS_DIRECTORY, 0, NULL);
                 if (dir_idx < 0) continue;
                 nodes[dir_idx].disk_inode = (int32_t)ent.inode;
             }
@@ -619,7 +599,7 @@ static void load_limnfs_dir(uint32_t dir_ino, int vfs_parent_idx) {
                 /* Already in VFS (initrd) — link to disk, free RAM buffer */
                 if (nodes[existing].data) {
                     kfree(nodes[existing].data);
-                    nodes[existing].data = (void *)0;
+                    nodes[existing].data = NULL;
                     nodes[existing].capacity = 0;
                 }
                 nodes[existing].disk_inode = (int32_t)ent.inode;
@@ -630,7 +610,7 @@ static void load_limnfs_dir(uint32_t dir_ino, int vfs_parent_idx) {
                 nodes[existing].gid = inode.gid;
             } else {
                 int idx = vfs_register_node(vfs_parent_idx, ent.name,
-                                             VFS_FILE, inode.size, (void *)0);
+                                             VFS_FILE, inode.size, NULL);
                 if (idx < 0) continue;
                 nodes[idx].disk_inode = (int32_t)ent.inode;
                 nodes[idx].flags = VFS_FLAG_WRITABLE;
@@ -644,7 +624,7 @@ static void load_limnfs_dir(uint32_t dir_ino, int vfs_parent_idx) {
 
 int vfs_chmod(const char *path, uint16_t mode) {
     int idx = vfs_resolve_path(path);
-    if (idx < 0) return -1;
+    if (idx < 0) return -ENOENT;
     /* Backward compat: if mode fits in 3 bits, expand to all triplets */
     if (mode <= 7)
         mode = (mode << 6) | (mode << 3) | mode;
@@ -666,7 +646,7 @@ int vfs_chmod(const char *path, uint16_t mode) {
 
 int vfs_mount_limnfs(void) {
     if (!limnfs_mounted())
-        return -1;
+        return -ENODEV;
 
     /* Set root disk_inode */
     nodes[0].disk_inode = 0;
@@ -674,6 +654,6 @@ int vfs_mount_limnfs(void) {
     /* Load entire disk tree into VFS */
     load_limnfs_dir(0, 0);
 
-    serial_puts("[vfs] LimnFS mounted at /\n");
+    pr_info("LimnFS mounted at /\n");
     return 0;
 }

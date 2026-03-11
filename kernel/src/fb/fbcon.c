@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[fbcon] " fmt
+#include "klog.h"
+
 #include "fb/fbcon.h"
 
 /* 8x16 bitmap font — covers printable ASCII 32-126 */

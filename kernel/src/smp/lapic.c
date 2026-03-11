@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[lapic] " fmt
+#include "klog.h"
+
 #include "smp/lapic.h"
 #include "smp/percpu.h"
 #include "mm/pmm.h"
@@ -38,7 +41,7 @@ void lapic_init(void) {
     /* Set task priority to 0 (accept all interrupts) */
     lapic_write(LAPIC_TPR, 0);
 
-    serial_printf("[lapic] LAPIC enabled (ID=%u)\n", lapic_get_id());
+    pr_info("LAPIC enabled (ID=%u)\n", lapic_get_id());
 }
 
 void lapic_eoi(void) {
@@ -91,7 +94,7 @@ void lapic_timer_calibrate(void) {
     percpu_t *self = percpu_get();
     self->lapic_ticks_per_ms = elapsed / 10;
 
-    serial_printf("[lapic] Timer calibrated: %u ticks/ms\n",
+    pr_info("Timer calibrated: %u ticks/ms\n",
                   self->lapic_ticks_per_ms);
 }
 

@@ -2,6 +2,7 @@
 #define LIMNX_SYSCALL_H
 
 #include <stdint.h>
+#include "errno.h"
 
 /* Syscall numbers */
 #define SYS_WRITE  0
@@ -161,26 +162,6 @@ typedef struct rlimit {
 
 /* waitpid flags */
 #define WNOHANG  1
-
-/* errno codes (returned as negative values from new syscalls) */
-#define EPERM    1
-#define ENOENT   2
-#define ESRCH    3
-#define EINTR    4
-#define EIO      5
-#define ENOMEM  12
-#define EACCES  13
-#define EFAULT  14
-#define EINVAL  22
-#define EMFILE  24
-#define ENOSYS  38
-#define EAGAIN  11
-#define EADDRINUSE  98
-#define ENOTCONN   107
-#define ECONNREFUSED 111
-#define EEXIST    17
-#define EBADF      9
-#define ENOBUFS  105
 
 /* Clock IDs */
 #define CLOCK_MONOTONIC 1

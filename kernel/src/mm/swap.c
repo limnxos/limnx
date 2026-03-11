@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[swap]  " fmt
+#include "klog.h"
+
 #include "mm/swap.h"
 #include "mm/vmm.h"
 #include "mm/pmm.h"
@@ -11,7 +14,7 @@ void swap_init(void) {
     for (int i = 0; i < SWAP_NUM_PAGES / 8; i++)
         swap_bitmap[i] = 0;
     swap_used_count = 0;
-    serial_printf("[swap]  Swap area initialized (%u pages, blocks %u-%u)\n",
+    pr_info("Swap area initialized (%u pages, blocks %u-%u)\n",
                   SWAP_NUM_PAGES, SWAP_START_BLOCK, SWAP_START_BLOCK + SWAP_NUM_PAGES - 1);
 }
 

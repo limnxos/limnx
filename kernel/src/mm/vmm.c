@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[vmm]  " fmt
+#include "klog.h"
+
 #include "mm/vmm.h"
 #include "mm/pmm.h"
 #include "mm/swap.h"
@@ -54,8 +57,8 @@ static uint64_t *get_or_create_table(uint64_t *table, uint64_t index, int create
 
 void vmm_init(void) {
     pml4_phys = read_cr3() & PTE_ADDR_MASK;
-    serial_printf("[vmm]  PML4 at phys %lx\n", pml4_phys);
-    serial_puts("[vmm]  Virtual memory manager initialized\n");
+    pr_info("PML4 at phys %lx\n", pml4_phys);
+    pr_info("Virtual memory manager initialized\n");
 }
 
 int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {

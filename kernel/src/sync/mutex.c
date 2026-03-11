@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[mutex] " fmt
+#include "klog.h"
+
 #include "sync/mutex.h"
 #include "sched/sched.h"
 

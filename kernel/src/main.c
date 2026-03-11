@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[init] " fmt
+#include "klog.h"
+
 #include <stdint.h>
 #include <stddef.h>
 #include <stdbool.h>
@@ -77,7 +80,7 @@ static volatile struct limine_module_request module_request = {
 
 /* --- Helpers --- */
 
-static void hlt_loop(void) {
+static __unused void hlt_loop(void) {
     for (;;)
         __asm__ volatile ("hlt");
 }
@@ -398,7 +401,7 @@ static void fpu_init(void) {
     /* Initialize x87 FPU */
     __asm__ volatile ("fninit");
 
-    serial_puts("[fpu] FPU/SSE enabled (CR0.EM=0, CR4.OSFXSR=1, CR4.OSXMMEXCPT=1)\n");
+    serial_puts("[fpu]  FPU/SSE enabled (CR0.EM=0, CR4.OSFXSR=1, CR4.OSXMMEXCPT=1)\n");
 }
 
 /* --- Console PTY master reader thread --- */
@@ -446,8 +449,7 @@ void kmain(void) {
 
     /* Check base revision */
     if (!LIMINE_BASE_REVISION_SUPPORTED) {
-        serial_puts("FATAL: Limine base revision not supported\n");
-        hlt_loop();
+        panic("Limine base revision not supported");
     }
 
     /* Bootloader info */
@@ -498,6 +500,36 @@ void kmain(void) {
     } else {
         serial_puts("WARNING: No memory map available\n");
     }
+
+    /*
+     * Kernel initialization order (dependencies):
+     *
+     *  1. serial_init()       — needed for all kernel logging (COM1 output)
+     *  2. fbcon_init()        — framebuffer console; needs Limine FB response
+     *  3. gdt_init()          — segment descriptors needed before any interrupts
+     *  4. idt_init()          — interrupt table needed before page faults / PIT
+     *  5. fpu_init()          — FPU/SSE state; safe after GDT/IDT
+     *  6. pmm_init()          — physical memory manager; needs HHDM from Limine
+     *  7. vmm_init()          — virtual memory manager; needs PMM for page tables
+     *  8. kheap_init()        — kernel heap; needs VMM to map heap pages
+     *  9. tss_init()          — task state segment; needs kheap for stack alloc
+     * 10. sched_init()        — scheduler; needs TSS, threads need kheap
+     * 11. pit_enable_sched()  — preemptive timer; needs scheduler + IDT ready
+     * 12. syscall_init()      — SYSCALL/SYSRET MSRs; needs GDT selectors
+     * 13. vfs_init()          — virtual filesystem; needs kheap for nodes
+     * 14. tar_init()          — parse initrd into VFS; needs VFS
+     * 15. pci_init()          — PCI bus scan; needs port I/O
+     * 16. virtio_net_init()   — NIC driver; needs PCI device found
+     * 17. net_init()          — network stack; needs virtio-net
+     * 18. virtio_blk_init()   — block driver; needs PCI device found
+     * 19. bcache_init()       — block cache; needs virtio-blk
+     * 20. swap_init()         — swap area on disk; needs virtio-blk
+     * 21. limnfs_format/mount — disk filesystem; needs bcache
+     * 22. pty_init()          — pseudo-terminals; needs kheap
+     * 23. tcp_init()          — TCP state; needs net stack
+     * 24. smp_init()          — AP cores; needs GDT/IDT/PMM/VMM/sched all ready
+     * 25. sched_set_smp_active() — enable per-CPU scheduling; needs SMP
+     */
 
     /* ======== Stage 2 init ======== */
     serial_puts("\n--- Stage 2 init ---\n");
@@ -815,9 +847,9 @@ void kmain(void) {
     /* Create console PTY */
     int con_pty = pty_create_console();
     if (con_pty >= 0) {
-        serial_printf("[init] Console PTY %d created\n", con_pty);
+        pr_info("Console PTY %d created\n", con_pty);
     } else {
-        serial_puts("[init] WARN: Console PTY creation failed\n");
+        pr_warn("Console PTY creation failed\n");
     }
 
     serial_puts("\n========================================\n");
@@ -844,7 +876,7 @@ void kmain(void) {
     }
 
     /* Load and run shell.elf with console PTY as stdin/stdout/stderr */
-    serial_puts("\n[init] Loading shell.elf...\n");
+    pr_info("\nLoading shell.elf...\n");
     {
         process_t *sh_proc = load_elf_from_vfs("/shell.elf");
         if (sh_proc) {
@@ -853,22 +885,22 @@ void kmain(void) {
                 pty_t *pt = pty_get(con_pty);
                 if (pt) {
                     for (int fd = 0; fd < 3; fd++) {
-                        sh_proc->fd_table[fd].node = (void *)0;
+                        sh_proc->fd_table[fd].node = NULL;
                         sh_proc->fd_table[fd].offset = 0;
-                        sh_proc->fd_table[fd].pipe = (void *)0;
+                        sh_proc->fd_table[fd].pipe = NULL;
                         sh_proc->fd_table[fd].pipe_write = 0;
                         sh_proc->fd_table[fd].pty = (void *)pt;
                         sh_proc->fd_table[fd].pty_is_master = 0;
-                        sh_proc->fd_table[fd].unix_sock = (void *)0;
-                        sh_proc->fd_table[fd].eventfd = (void *)0;
-                        sh_proc->fd_table[fd].epoll = (void *)0;
-                        sh_proc->fd_table[fd].uring = (void *)0;
+                        sh_proc->fd_table[fd].unix_sock = NULL;
+                        sh_proc->fd_table[fd].eventfd = NULL;
+                        sh_proc->fd_table[fd].epoll = NULL;
+                        sh_proc->fd_table[fd].uring = NULL;
                         sh_proc->fd_table[fd].open_flags = 2; /* O_RDWR */
                         sh_proc->fd_table[fd].fd_flags = 0;
                     }
                     pt->slave_refs = 3;  /* fd 0, 1, 2 */
                     pt->fg_pgid = sh_proc->pid;
-                    serial_puts("[init] Shell fd 0/1/2 connected to console PTY slave\n");
+                    pr_info("Shell fd 0/1/2 connected to console PTY slave\n");
                 }
             }
             /* Set LIMNX_VERSION env on shell */
@@ -895,13 +927,13 @@ void kmain(void) {
                 sh_proc->argv_buf_len = pos;
             }
 #endif
-            serial_printf("[init] shell.elf spawned (pid %lu)\n",
+            pr_info("shell.elf spawned (pid %lu)\n",
                           sh_proc->pid);
             sched_add(sh_proc->main_thread);
             process_reap(sh_proc);
-            serial_puts("[init] shell.elf completed\n");
+            pr_info("shell.elf completed\n");
         } else {
-            serial_puts("[init] shell.elf not found or failed to load\n");
+            pr_err("shell.elf not found or failed to load\n");
         }
     }
 

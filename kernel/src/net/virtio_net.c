@@ -1,3 +1,5 @@
+#define pr_fmt(fmt) "[virtio] " fmt
+#include "klog.h"
 #include "net/virtio_net.h"
 #include "pci/pci.h"
 #include "idt/idt.h"
@@ -65,7 +67,7 @@ static int setup_virtqueue(uint16_t queue_idx,
     /* Read queue size */
     uint16_t qsz = inw(io_base + VIRTIO_REG_QUEUE_SIZE);
     if (qsz == 0) {
-        serial_printf("[virtio] Queue %u size=0, skipping\n", queue_idx);
+        pr_info("Queue %u size=0, skipping\n", queue_idx);
         return -1;
     }
     *out_qsz = qsz;
@@ -75,8 +77,8 @@ static int setup_virtqueue(uint16_t queue_idx,
     uint32_t pages_needed = (total_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
     uint64_t phys = pmm_alloc_contiguous(pages_needed);
     if (phys == 0) {
-        serial_printf("[virtio] Failed to alloc %u pages for queue %u\n",
-                      pages_needed, queue_idx);
+        pr_err("Failed to alloc %u pages for queue %u\n",
+               pages_needed, queue_idx);
         return -1;
     }
 
@@ -96,8 +98,8 @@ static int setup_virtqueue(uint16_t queue_idx,
     /* Tell device: queue address in 4096-byte units */
     outl(io_base + VIRTIO_REG_QUEUE_ADDR, (uint32_t)(phys / 4096));
 
-    serial_printf("[virtio] Queue %u: size=%u pages=%u phys=%lx\n",
-                  queue_idx, qsz, pages_needed, phys);
+    pr_info("Queue %u: size=%u pages=%u phys=%lx\n",
+            queue_idx, qsz, pages_needed, phys);
     return 0;
 }
 
@@ -224,17 +226,17 @@ void virtio_net_get_mac(uint8_t out[6]) {
 /* --- Init --- */
 
 int virtio_net_init(void) {
-    serial_puts("[virtio] Looking for virtio-net device...\n");
+    pr_info("Looking for virtio-net device...\n");
 
     pci_device_t *dev = pci_find_device(VIRTIO_VENDOR_ID, VIRTIO_NET_DEV_ID);
     if (!dev) {
-        serial_puts("[virtio] No virtio-net device found\n");
+        pr_err("No virtio-net device found\n");
         return -1;
     }
 
-    serial_printf("[virtio] Found at %u:%u.%u  IRQ=%u  BAR0=%x\n",
-                  dev->bus, dev->dev, dev->func,
-                  dev->irq_line, dev->bar[0]);
+    pr_info("Found at %u:%u.%u  IRQ=%u  BAR0=%x\n",
+            dev->bus, dev->dev, dev->func,
+            dev->irq_line, dev->bar[0]);
 
     /* BAR0 is I/O port (bit 0 set) */
     io_base = dev->bar[0] & ~3U;
@@ -257,7 +259,7 @@ int virtio_net_init(void) {
 
     /* 4. Feature negotiation — only accept MAC feature */
     uint32_t features = inl(io_base + VIRTIO_REG_DEVICE_FEATURES);
-    serial_printf("[virtio] Device features: %x\n", features);
+    pr_info("Device features: %x\n", features);
     outl(io_base + VIRTIO_REG_GUEST_FEATURES, features & VIRTIO_NET_F_MAC);
 
     /* 5. Setup virtqueues */
@@ -278,20 +280,20 @@ int virtio_net_init(void) {
     for (int i = 0; i < 6; i++)
         mac[i] = inb(io_base + VIRTIO_REG_MAC + i);
 
-    serial_printf("[virtio] MAC: %x:%x:%x:%x:%x:%x\n",
-                  mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+    pr_info("MAC: %x:%x:%x:%x:%x:%x\n",
+            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 
     /* 7. Set DRIVER_OK */
     outb(io_base + VIRTIO_REG_DEVICE_STATUS,
          VIRTIO_STATUS_ACK | VIRTIO_STATUS_DRIVER | VIRTIO_STATUS_DRIVER_OK);
 
     uint8_t status = inb(io_base + VIRTIO_REG_DEVICE_STATUS);
-    serial_printf("[virtio] Device status: %u\n", (unsigned)status);
+    pr_info("Device status: %u\n", (unsigned)status);
 
     /* 8. Register IRQ handler and unmask */
     irq_register_handler(irq_line, virtio_net_irq);
     irq_unmask(irq_line);
-    serial_printf("[virtio] Registered IRQ %u\n", (unsigned)irq_line);
+    pr_info("Registered IRQ %u\n", (unsigned)irq_line);
 
     /* 9. Fill RX ring */
     rxq_last_used = 0;
@@ -299,11 +301,11 @@ int virtio_net_init(void) {
     txq_next_desc = 0;
     rx_fill_descriptors();
 
-    serial_puts("[virtio] virtio-net initialized\n");
+    pr_info("virtio-net initialized\n");
     return 0;
 
 fail:
     outb(io_base + VIRTIO_REG_DEVICE_STATUS, VIRTIO_STATUS_FAILED);
-    serial_puts("[virtio] FAILED to initialize\n");
+    pr_err("FAILED to initialize\n");
     return -1;
 }

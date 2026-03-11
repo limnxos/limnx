@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[idt]  " fmt
+#include "klog.h"
+
 #include "idt/idt.h"
 #include "gdt/gdt.h"
 #include "io.h"
@@ -308,10 +311,10 @@ void idt_init(void) {
 
     __asm__ volatile ("lidt %0" : : "m"(idtp));
 
-    serial_puts("[idt]  IDT loaded (48 + LAPIC timer/spurious vectors)\n");
-    serial_puts("[idt]  PIC remapped: IRQ0-7 → 32-39, IRQ8-15 → 40-47\n");
+    pr_info("IDT loaded (48 + LAPIC timer/spurious vectors)\n");
+    pr_info("PIC remapped: IRQ0-7 → 32-39, IRQ8-15 → 40-47\n");
 
     /* Enable interrupts */
     __asm__ volatile ("sti");
-    serial_puts("[idt]  Interrupts enabled\n");
+    pr_info("Interrupts enabled\n");
 }

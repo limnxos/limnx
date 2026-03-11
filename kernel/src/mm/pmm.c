@@ -1,8 +1,17 @@
+#define pr_fmt(fmt) "[pmm]  " fmt
+#include "klog.h"
+
 #include "mm/pmm.h"
 #include "sync/spinlock.h"
 #include "serial.h"
 #include "limine.h"
 
+/*
+ * Lock ordering: pmm_lock is at level 2.
+ * Must NOT hold sched_lock when acquiring.
+ * May be acquired while kheap_lock is NOT held (kheap calls pmm).
+ * May call kmalloc while holding this lock: NO
+ */
 static spinlock_t pmm_lock = SPINLOCK_INIT;
 
 /* HHDM offset — set during pmm_init from Limine response */
@@ -38,8 +47,7 @@ static inline int bitmap_test(uint64_t page) {
 
 void pmm_init(void) {
     if (!hhdm_request.response || !memmap_request.response) {
-        serial_puts("[pmm]  FATAL: missing HHDM or memmap response\n");
-        return;
+        panic("missing HHDM or memmap response");
     }
 
     hhdm_offset = hhdm_request.response->offset;
@@ -69,8 +77,7 @@ void pmm_init(void) {
     }
 
     if (!bitmap) {
-        serial_puts("[pmm]  FATAL: no region large enough for bitmap\n");
-        return;
+        panic("no region large enough for bitmap");
     }
 
     /* Mark all pages as used */
@@ -145,11 +152,11 @@ void pmm_init(void) {
             refcounts[i] = 1;
     }
 
-    serial_printf("[pmm]  Total pages: %lu (%lu MB)\n",
+    pr_info("Total pages: %lu (%lu MB)\n",
         total_pages, (total_pages * PAGE_SIZE) / (1024 * 1024));
-    serial_printf("[pmm]  Free pages:  %lu (%lu MB)\n",
+    pr_info("Free pages:  %lu (%lu MB)\n",
         free_pages, (free_pages * PAGE_SIZE) / (1024 * 1024));
-    serial_printf("[pmm]  Bitmap at %p (%lu bytes)\n",
+    pr_info("Bitmap at %p (%lu bytes)\n",
         (void *)bitmap, bitmap_size);
 }
 

@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "compiler.h"
 
 #define PAGE_SIZE 4096
 
@@ -12,8 +13,8 @@
 extern uint64_t hhdm_offset;
 
 void     pmm_init(void);
-uint64_t pmm_alloc_page(void);
-uint64_t pmm_alloc_contiguous(uint64_t count);
+__must_check uint64_t pmm_alloc_page(void);
+__must_check uint64_t pmm_alloc_contiguous(uint64_t count);
 void     pmm_free_page(uint64_t phys_addr);
 uint64_t pmm_get_total_pages(void);
 uint64_t pmm_get_free_pages(void);

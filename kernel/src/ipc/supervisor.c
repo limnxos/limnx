@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[super] " fmt
+#include "klog.h"
+
 #include "ipc/supervisor.h"
 #include "proc/process.h"
 #include "proc/elf.h"
@@ -5,8 +8,12 @@
 #include "sched/sched.h"
 #include "serial.h"
 #include "mm/kheap.h"
+#include "sync/spinlock.h"
 
 static supervisor_t supervisors[MAX_SUPERVISORS];
+
+/* Lock order: tier 5 (subsystem). See klog.h for full hierarchy */
+static spinlock_t supervisor_lock = SPINLOCK_INIT;
 
 void supervisor_init(void) {
     for (int i = 0; i < MAX_SUPERVISORS; i++) {
@@ -16,6 +23,9 @@ void supervisor_init(void) {
 }
 
 int supervisor_create(uint64_t owner_pid, const char *name) {
+    uint64_t flags;
+    spin_lock_irqsave(&supervisor_lock, &flags);
+
     for (int i = 0; i < MAX_SUPERVISORS; i++) {
         if (!supervisors[i].used) {
             supervisors[i].used = 1;
@@ -27,16 +37,24 @@ int supervisor_create(uint64_t owner_pid, const char *name) {
             supervisors[i].name[SUPER_NAME_MAX - 1] = '\0';
             for (int j = 0; j < MAX_SUPER_CHILDREN; j++)
                 supervisors[i].children[j].used = 0;
+            spin_unlock_irqrestore(&supervisor_lock, flags);
             return i;
         }
     }
+
+    spin_unlock_irqrestore(&supervisor_lock, flags);
     return -1;
 }
 
 int supervisor_add_child(uint32_t super_id, const char *elf_path,
                          int64_t ns_id, uint64_t caps) {
-    if (super_id >= MAX_SUPERVISORS || !supervisors[super_id].used)
+    uint64_t flags;
+    spin_lock_irqsave(&supervisor_lock, &flags);
+
+    if (super_id >= MAX_SUPERVISORS || !supervisors[super_id].used) {
+        spin_unlock_irqrestore(&supervisor_lock, flags);
         return -1;
+    }
 
     supervisor_t *sv = &supervisors[super_id];
     for (int i = 0; i < MAX_SUPER_CHILDREN; i++) {
@@ -49,34 +67,46 @@ int supervisor_add_child(uint32_t super_id, const char *elf_path,
                 sv->children[i].elf_path[j] = elf_path[j];
             sv->children[i].elf_path[63] = '\0';
             sv->child_count++;
+            spin_unlock_irqrestore(&supervisor_lock, flags);
             return i;
         }
     }
+
+    spin_unlock_irqrestore(&supervisor_lock, flags);
     return -1;
 }
 
 int supervisor_set_policy(uint32_t super_id, uint8_t policy) {
-    if (super_id >= MAX_SUPERVISORS || !supervisors[super_id].used)
+    uint64_t flags;
+    spin_lock_irqsave(&supervisor_lock, &flags);
+
+    if (super_id >= MAX_SUPERVISORS || !supervisors[super_id].used) {
+        spin_unlock_irqrestore(&supervisor_lock, flags);
         return -1;
-    if (policy > SUPER_ONE_FOR_ALL)
+    }
+    if (policy > SUPER_ONE_FOR_ALL) {
+        spin_unlock_irqrestore(&supervisor_lock, flags);
         return -1;
+    }
     supervisors[super_id].policy = policy;
+
+    spin_unlock_irqrestore(&supervisor_lock, flags);
     return 0;
 }
 
 /* Load ELF from VFS path and create a process */
 static process_t *supervisor_load_elf(const char *path) {
     int node_idx = vfs_open(path);
-    if (node_idx < 0) return (void *)0;
+    if (node_idx < 0) return NULL;
 
     vfs_stat_t st;
-    if (vfs_stat(path, &st) != 0) return (void *)0;
+    if (vfs_stat(path, &st) != 0) return NULL;
 
     uint8_t *buf = (uint8_t *)kmalloc(st.size);
-    if (!buf) return (void *)0;
+    if (!buf) return NULL;
 
     int64_t n = vfs_read(node_idx, 0, buf, st.size);
-    if (n != (int64_t)st.size) { kfree(buf); return (void *)0; }
+    if (n != (int64_t)st.size) { kfree(buf); return NULL; }
 
     process_t *proc = process_create_from_elf(buf, st.size);
     kfree(buf);
@@ -91,14 +121,15 @@ static process_t *supervisor_load_elf(const char *path) {
     return proc;
 }
 
-/* Restart a single child spec by loading its ELF */
+/* Restart a single child spec by loading its ELF.
+ * MUST be called WITHOUT supervisor_lock held (does I/O). */
 static void supervisor_restart_child(supervisor_t *sv, int child_idx) {
     super_child_t *ch = &sv->children[child_idx];
     if (!ch->used) return;
 
     process_t *proc = supervisor_load_elf(ch->elf_path);
     if (!proc) {
-        serial_printf("[supervisor] Failed to load: %s\n", ch->elf_path);
+        pr_err("Failed to load: %s\n", ch->elf_path);
         return;
     }
 
@@ -106,20 +137,35 @@ static void supervisor_restart_child(supervisor_t *sv, int child_idx) {
     proc->capabilities = (uint32_t)ch->caps;
     ch->pid = proc->pid;
     sched_add(proc->main_thread);
-    serial_printf("[supervisor] Restarted %s as pid %lu\n",
+    pr_info("Restarted %s as pid %lu\n",
                   ch->elf_path, proc->pid);
 }
 
 int supervisor_start(uint32_t super_id) {
-    if (super_id >= MAX_SUPERVISORS || !supervisors[super_id].used)
+    uint64_t flags;
+    spin_lock_irqsave(&supervisor_lock, &flags);
+
+    if (super_id >= MAX_SUPERVISORS || !supervisors[super_id].used) {
+        spin_unlock_irqrestore(&supervisor_lock, flags);
         return -1;
+    }
     supervisor_t *sv = &supervisors[super_id];
-    int launched = 0;
+
+    /* Collect children that need starting */
+    int to_start[MAX_SUPER_CHILDREN];
+    int start_count = 0;
     for (int i = 0; i < MAX_SUPER_CHILDREN; i++) {
-        if (sv->children[i].used && sv->children[i].pid == 0) {
-            supervisor_restart_child(sv, i);
-            launched++;
-        }
+        if (sv->children[i].used && sv->children[i].pid == 0)
+            to_start[start_count++] = i;
+    }
+
+    spin_unlock_irqrestore(&supervisor_lock, flags);
+
+    /* Do I/O (ELF loading) outside the lock */
+    int launched = 0;
+    for (int i = 0; i < start_count; i++) {
+        supervisor_restart_child(sv, to_start[i]);
+        launched++;
     }
     return launched;
 }
@@ -128,35 +174,59 @@ void supervisor_on_exit(uint64_t pid, int exit_status) {
     if (exit_status == 0) return;  /* clean exit, no restart */
 
     for (int i = 0; i < MAX_SUPERVISORS; i++) {
-        if (!supervisors[i].used) continue;
+        uint64_t flags;
+        spin_lock_irqsave(&supervisor_lock, &flags);
+
+        if (!supervisors[i].used) {
+            spin_unlock_irqrestore(&supervisor_lock, flags);
+            continue;
+        }
         supervisor_t *sv = &supervisors[i];
 
         for (int j = 0; j < MAX_SUPER_CHILDREN; j++) {
             if (!sv->children[j].used) continue;
             if (sv->children[j].pid != pid) continue;
 
-            serial_printf("[supervisor] Child pid %lu crashed (status %d), policy=%d\n",
-                          pid, exit_status, sv->policy);
+            pr_warn("Child pid %lu crashed (status %d), policy=%d\n",
+                    pid, exit_status, sv->policy);
 
             if (sv->policy == SUPER_ONE_FOR_ONE) {
+                spin_unlock_irqrestore(&supervisor_lock, flags);
                 supervisor_restart_child(sv, j);
+                return;
             } else {
-                /* ONE_FOR_ALL: restart all children */
+                /* ONE_FOR_ALL: kill others, then restart all */
+                /* Collect pids to kill and children to restart */
+                uint64_t kill_pids[MAX_SUPER_CHILDREN];
+                int kill_count = 0;
+                int restart[MAX_SUPER_CHILDREN];
+                int restart_count = 0;
+
                 for (int k = 0; k < MAX_SUPER_CHILDREN; k++) {
                     if (sv->children[k].used && sv->children[k].pid != pid) {
-                        process_t *other = process_lookup(sv->children[k].pid);
-                        if (other && !other->exited) {
-                            process_deliver_signal(other, SIGKILL);
-                        }
+                        kill_pids[kill_count++] = sv->children[k].pid;
                     }
-                }
-                for (int k = 0; k < MAX_SUPER_CHILDREN; k++) {
                     if (sv->children[k].used) {
-                        supervisor_restart_child(sv, k);
+                        restart[restart_count++] = k;
                     }
                 }
+
+                spin_unlock_irqrestore(&supervisor_lock, flags);
+
+                /* Kill outside lock */
+                for (int k = 0; k < kill_count; k++) {
+                    process_t *other = process_lookup(kill_pids[k]);
+                    if (other && !other->exited)
+                        process_deliver_signal(other, SIGKILL);
+                }
+                /* Restart outside lock */
+                for (int k = 0; k < restart_count; k++) {
+                    supervisor_restart_child(sv, restart[k]);
+                }
+                return;
             }
-            return;
         }
+
+        spin_unlock_irqrestore(&supervisor_lock, flags);
     }
 }

@@ -1,8 +1,16 @@
+#define pr_fmt(fmt) "[cap] " fmt
+#include "klog.h"
+
 #include "ipc/cap_token.h"
+#include "sync/spinlock.h"
 #include "serial.h"
+#include "errno.h"
 
 static cap_token_t tokens[MAX_TOKENS];
 static uint32_t next_token_id = 1;
+
+/* Lock order: tier 5 (subsystem). See klog.h for full hierarchy */
+static spinlock_t token_lock = SPINLOCK_INIT;
 
 /* Simple prefix match: does path start with prefix? */
 static int prefix_match(const char *prefix, const char *path) {
@@ -17,7 +25,10 @@ int cap_token_create(uint64_t owner_pid, uint32_t owner_caps,
                      uint32_t perms, uint64_t target_pid, const char *resource) {
     /* Can't grant capabilities the owner doesn't have */
     if (perms & ~owner_caps)
-        return -1; /* -EPERM */
+        return -EPERM;
+
+    uint64_t flags;
+    spin_lock_irqsave(&token_lock, &flags);
 
     /* Find free slot */
     for (int i = 0; i < MAX_TOKENS; i++) {
@@ -36,26 +47,41 @@ int cap_token_create(uint64_t owner_pid, uint32_t owner_caps,
             }
             tokens[i].resource[j] = '\0';
 
-            return (int)tokens[i].id;
+            int id = (int)tokens[i].id;
+            spin_unlock_irqrestore(&token_lock, flags);
+            return id;
         }
     }
 
-    return -12; /* -ENOMEM */
+    spin_unlock_irqrestore(&token_lock, flags);
+    pr_err("token table full\n");
+    return -ENOMEM;
 }
 
 int cap_token_revoke(uint32_t token_id, uint64_t caller_pid) {
+    uint64_t flags;
+    spin_lock_irqsave(&token_lock, &flags);
+
     for (int i = 0; i < MAX_TOKENS; i++) {
         if (tokens[i].used && tokens[i].id == token_id) {
-            if (tokens[i].owner_pid != caller_pid)
-                return -1; /* -EPERM */
+            if (tokens[i].owner_pid != caller_pid) {
+                spin_unlock_irqrestore(&token_lock, flags);
+                return -EPERM;
+            }
             tokens[i].used = 0;
+            spin_unlock_irqrestore(&token_lock, flags);
             return 0;
         }
     }
-    return -2; /* -ENOENT */
+
+    spin_unlock_irqrestore(&token_lock, flags);
+    return -ENOENT;
 }
 
 int cap_token_check(uint64_t pid, uint32_t needed_cap, const char *resource) {
+    uint64_t flags;
+    spin_lock_irqsave(&token_lock, &flags);
+
     for (int i = 0; i < MAX_TOKENS; i++) {
         if (!tokens[i].used) continue;
 
@@ -73,12 +99,18 @@ int cap_token_check(uint64_t pid, uint32_t needed_cap, const char *resource) {
                 continue;
         }
 
+        spin_unlock_irqrestore(&token_lock, flags);
         return 1; /* granted */
     }
+
+    spin_unlock_irqrestore(&token_lock, flags);
     return 0;
 }
 
 int cap_token_list(uint64_t owner_pid, token_info_t *buf, int max_count) {
+    uint64_t flags;
+    spin_lock_irqsave(&token_lock, &flags);
+
     int count = 0;
     for (int i = 0; i < MAX_TOKENS && count < max_count; i++) {
         if (tokens[i].used && tokens[i].owner_pid == owner_pid) {
@@ -90,45 +122,69 @@ int cap_token_list(uint64_t owner_pid, token_info_t *buf, int max_count) {
             count++;
         }
     }
+
+    spin_unlock_irqrestore(&token_lock, flags);
     return count;
 }
 
 int cap_token_delegate(uint32_t parent_id, uint64_t caller_pid,
                         uint64_t target_pid, uint32_t perms, const char *resource) {
+    uint64_t flags;
+    spin_lock_irqsave(&token_lock, &flags);
+
     /* Find parent token */
-    cap_token_t *parent = (void *)0;
+    cap_token_t *parent = NULL;
     for (int i = 0; i < MAX_TOKENS; i++) {
         if (tokens[i].used && tokens[i].id == parent_id) {
             parent = &tokens[i];
             break;
         }
     }
-    if (!parent) return -2; /* -ENOENT */
+    if (!parent) {
+        spin_unlock_irqrestore(&token_lock, flags);
+        return -ENOENT;
+    }
 
     /* Caller must be target of parent (or parent is bearer) */
-    if (parent->target_pid != 0 && parent->target_pid != caller_pid)
-        return -1; /* -EPERM */
+    if (parent->target_pid != 0 && parent->target_pid != caller_pid) {
+        spin_unlock_irqrestore(&token_lock, flags);
+        return -EPERM;
+    }
 
     /* 0 means inherit all parent perms */
     if (perms == 0)
         perms = parent->perms;
 
     /* Sub-token perms must be subset of parent perms */
-    if (perms & ~parent->perms)
-        return -1;
+    if (perms & ~parent->perms) {
+        spin_unlock_irqrestore(&token_lock, flags);
+        return -EPERM;
+    }
 
     /* Sub-token resource must be equal or more specific (longer prefix) */
     if (resource && resource[0] && parent->resource[0]) {
-        if (!prefix_match(parent->resource, resource))
-            return -1; /* sub-resource doesn't start with parent resource */
+        if (!prefix_match(parent->resource, resource)) {
+            spin_unlock_irqrestore(&token_lock, flags);
+            return -EPERM; /* sub-resource doesn't start with parent resource */
+        }
     }
+
+    /* Copy parent resource before releasing lock for nested create */
+    char parent_resource[TOKEN_PATH_MAX];
+    for (int i = 0; i < TOKEN_PATH_MAX; i++)
+        parent_resource[i] = parent->resource[i];
+
+    spin_unlock_irqrestore(&token_lock, flags);
 
     /* Create the sub-token owned by caller */
     return cap_token_create(caller_pid, perms, perms, target_pid,
-                             resource && resource[0] ? resource : parent->resource);
+                             resource && resource[0] ? resource : parent_resource);
 }
 
 void cap_token_cleanup_pid(uint64_t pid) {
+    uint64_t flags;
+    spin_lock_irqsave(&token_lock, &flags);
+
     for (int i = 0; i < MAX_TOKENS; i++) {
         if (tokens[i].used) {
             /* Remove tokens owned by this pid */
@@ -139,4 +195,6 @@ void cap_token_cleanup_pid(uint64_t pid) {
                 tokens[i].used = 0;
         }
     }
+
+    spin_unlock_irqrestore(&token_lock, flags);
 }

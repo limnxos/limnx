@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[pci]  " fmt
+#include "klog.h"
+
 #include "pci/pci.h"
 #include "io.h"
 #include "serial.h"
@@ -67,7 +70,7 @@ pci_device_t *pci_get_device(uint32_t index) {
 void pci_init(void) {
     device_count = 0;
 
-    serial_puts("[pci]  Scanning bus 0...\n");
+    pr_info("Scanning bus 0...\n");
 
     for (uint8_t dev = 0; dev < 32; dev++) {
         uint32_t id = pci_read32(0, dev, 0, 0x00);
@@ -98,7 +101,7 @@ void pci_init(void) {
         for (int bar = 0; bar < 6; bar++)
             d->bar[bar] = pci_read32(0, dev, 0, 0x10 + bar * 4);
 
-        serial_printf("[pci]  %u:%u.%u  %x:%x  class %x:%x  IRQ %u  BAR0=%x\n",
+        pr_info("%u:%u.%u  %x:%x  class %x:%x  IRQ %u  BAR0=%x\n",
             d->bus, d->dev, d->func,
             d->vendor_id, d->device_id,
             d->class_code, d->subclass,
@@ -107,5 +110,5 @@ void pci_init(void) {
         device_count++;
     }
 
-    serial_printf("[pci]  Found %u devices\n", device_count);
+    pr_info("Found %u devices\n", device_count);
 }

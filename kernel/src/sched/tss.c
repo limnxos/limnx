@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[tss]  " fmt
+#include "klog.h"
+
 #include "sched/tss.h"
 #include "gdt/gdt.h"
 #include "serial.h"
@@ -49,7 +52,7 @@ void tss_init(void) {
     /* Load the task register */
     __asm__ volatile ("ltr %w0" : : "r"((uint16_t)GDT_TSS_SELECTOR));
 
-    serial_puts("[tss]  TSS loaded\n");
+    pr_info("TSS loaded\n");
 }
 
 void tss_set_rsp0(uint64_t rsp0) {

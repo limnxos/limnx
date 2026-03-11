@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[pty]  " fmt
+#include "klog.h"
+
 #include "pty/pty.h"
 #include "pty/termios.h"
 #include "proc/process.h"
@@ -10,7 +13,7 @@ static int console_pty_idx = -1;
 void pty_init(void) {
     for (int i = 0; i < MAX_PTYS; i++)
         ptys[i].used = 0;
-    serial_puts("[pty]  PTY subsystem initialized\n");
+    pr_info("PTY subsystem initialized\n");
 }
 
 pty_t *pty_get(int idx) {
@@ -375,7 +378,7 @@ int pty_create_console(void) {
     if (idx < 0) return -1;
     console_pty_idx = idx;
     ptys[idx].master_refs = 1;  /* kernel holds master */
-    serial_printf("[pty]  Console PTY created (PTY %d)\n", idx);
+    pr_info("Console PTY created (PTY %d)\n", idx);
     return idx;
 }
 

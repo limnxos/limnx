@@ -1,56 +1,60 @@
+#define pr_fmt(fmt) "[elf] " fmt
+#include "klog.h"
+
 #include "proc/elf.h"
 #include "mm/vmm.h"
 #include "mm/pmm.h"
 #include "serial.h"
 #include "syscall/syscall.h"  /* USER_ADDR_MAX */
+#include "errno.h"
 
 int elf_load(const uint8_t *data, uint64_t size, elf_load_result_t *result) {
     if (size < sizeof(elf64_ehdr_t)) {
-        serial_puts("[elf] ERROR: file too small for ELF header\n");
-        return -1;
+        pr_err("file too small for ELF header\n");
+        return -EINVAL;
     }
 
     const elf64_ehdr_t *ehdr = (const elf64_ehdr_t *)data;
 
     /* Validate magic */
     if (ehdr->e_magic != ELF_MAGIC) {
-        serial_puts("[elf] ERROR: bad ELF magic\n");
-        return -1;
+        pr_err("bad ELF magic\n");
+        return -EINVAL;
     }
 
     /* Validate class, data encoding, type, machine */
     if (ehdr->e_class != ELFCLASS64) {
-        serial_puts("[elf] ERROR: not 64-bit ELF\n");
-        return -1;
+        pr_err("not 64-bit ELF\n");
+        return -EINVAL;
     }
     if (ehdr->e_data != ELFDATA2LSB) {
-        serial_puts("[elf] ERROR: not little-endian\n");
-        return -1;
+        pr_err("not little-endian\n");
+        return -EINVAL;
     }
     if (ehdr->e_type != ET_EXEC) {
-        serial_puts("[elf] ERROR: not ET_EXEC\n");
-        return -1;
+        pr_err("not ET_EXEC\n");
+        return -EINVAL;
     }
     if (ehdr->e_machine != EM_X86_64) {
-        serial_puts("[elf] ERROR: not x86-64\n");
-        return -1;
+        pr_err("not x86-64\n");
+        return -EINVAL;
     }
 
     /* Validate program header table */
     if (ehdr->e_phoff == 0 || ehdr->e_phnum == 0) {
-        serial_puts("[elf] ERROR: no program headers\n");
-        return -1;
+        pr_err("no program headers\n");
+        return -EINVAL;
     }
     if (ehdr->e_phoff + (uint64_t)ehdr->e_phnum * ehdr->e_phentsize > size) {
-        serial_puts("[elf] ERROR: program headers out of bounds\n");
-        return -1;
+        pr_err("program headers out of bounds\n");
+        return -EINVAL;
     }
 
     /* Create new address space */
     uint64_t cr3 = vmm_create_address_space();
     if (cr3 == 0) {
-        serial_puts("[elf] ERROR: failed to create address space\n");
-        return -1;
+        pr_err("failed to create address space\n");
+        return -ENOMEM;
     }
 
     int load_count = 0;
@@ -65,20 +69,20 @@ int elf_load(const uint8_t *data, uint64_t size, elf_load_result_t *result) {
         /* Validate segment addresses */
         if (phdr->p_vaddr >= USER_ADDR_MAX ||
             phdr->p_vaddr + phdr->p_memsz > USER_ADDR_MAX) {
-            serial_puts("[elf] ERROR: segment vaddr out of user range\n");
-            return -1;
+            pr_err("segment vaddr out of user range\n");
+            return -EINVAL;
         }
 
         /* Validate file bounds */
         if (phdr->p_filesz > 0 &&
             phdr->p_offset + phdr->p_filesz > size) {
-            serial_puts("[elf] ERROR: segment data out of file bounds\n");
-            return -1;
+            pr_err("segment data out of file bounds\n");
+            return -EINVAL;
         }
 
         if (phdr->p_memsz < phdr->p_filesz) {
-            serial_puts("[elf] ERROR: memsz < filesz\n");
-            return -1;
+            pr_err("memsz < filesz\n");
+            return -EINVAL;
         }
 
         /* Determine PTE flags from ELF p_flags */
@@ -96,8 +100,8 @@ int elf_load(const uint8_t *data, uint64_t size, elf_load_result_t *result) {
         for (uint64_t virt = seg_start; virt < seg_end; virt += PAGE_SIZE) {
             uint64_t phys = pmm_alloc_page();
             if (phys == 0) {
-                serial_puts("[elf] ERROR: out of memory for segment\n");
-                return -1;
+                pr_err("out of memory for segment\n");
+                return -ENOMEM;
             }
 
             /* Zero the entire page first */
@@ -126,8 +130,8 @@ int elf_load(const uint8_t *data, uint64_t size, elf_load_result_t *result) {
             }
 
             if (vmm_map_page_in(cr3, virt, phys, pte_flags) != 0) {
-                serial_puts("[elf] ERROR: failed to map segment page\n");
-                return -1;
+                pr_err("failed to map segment page\n");
+                return -ENOMEM;
             }
         }
 
@@ -135,11 +139,11 @@ int elf_load(const uint8_t *data, uint64_t size, elf_load_result_t *result) {
     }
 
     if (load_count == 0) {
-        serial_puts("[elf] ERROR: no PT_LOAD segments\n");
-        return -1;
+        pr_err("no PT_LOAD segments\n");
+        return -EINVAL;
     }
 
-    serial_printf("[elf] Valid ELF64: entry=%lx, %d PT_LOAD segments\n",
+    pr_info("Valid ELF64: entry=%lx, %d PT_LOAD segments\n",
         ehdr->e_entry, load_count);
 
     result->entry = ehdr->e_entry;

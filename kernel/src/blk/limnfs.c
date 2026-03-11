@@ -1,3 +1,5 @@
+#define pr_fmt(fmt) "[limnfs] " fmt
+#include "klog.h"
 #include "blk/limnfs.h"
 #include "blk/bcache.h"
 #include "serial.h"
@@ -295,8 +297,8 @@ static uint32_t alloc_file_block(limnfs_inode_t *inode, uint32_t logical_block) 
 /* --- Public API: Format + Mount --- */
 
 int limnfs_format(uint32_t total_blocks) {
-    serial_printf("[limnfs] Formatting disk (%u blocks, %uKB each)...\n",
-                  total_blocks, LIMNFS_BLOCK_SIZE / 1024);
+    pr_info("Formatting disk (%u blocks, %uKB each)...\n",
+            total_blocks, LIMNFS_BLOCK_SIZE / 1024);
 
     /* Calculate layout */
     uint32_t inode_blocks = (LIMNFS_MAX_INODES * 128 + LIMNFS_BLOCK_SIZE - 1) / LIMNFS_BLOCK_SIZE;
@@ -318,7 +320,7 @@ int limnfs_format(uint32_t total_blocks) {
     lfs.super.free_inodes = LIMNFS_MAX_INODES - 1;  /* inode 0 = root */
 
     if (flush_superblock() != 0) {
-        serial_puts("[limnfs] Failed to write superblock\n");
+        pr_err("Failed to write superblock\n");
         return -1;
     }
 
@@ -329,7 +331,7 @@ int limnfs_format(uint32_t total_blocks) {
         bitmap_set(lfs.block_bitmap, b);
 
     if (flush_block_bitmap() != 0) {
-        serial_puts("[limnfs] Failed to write block bitmap\n");
+        pr_err("Failed to write block bitmap\n");
         return -1;
     }
 
@@ -339,7 +341,7 @@ int limnfs_format(uint32_t total_blocks) {
     bitmap_set(lfs.inode_bitmap, 0);
 
     if (flush_inode_bitmap() != 0) {
-        serial_puts("[limnfs] Failed to write inode bitmap\n");
+        pr_err("Failed to write inode bitmap\n");
         return -1;
     }
 
@@ -349,7 +351,7 @@ int limnfs_format(uint32_t total_blocks) {
 
     for (uint32_t b = 0; b < inode_blocks; b++) {
         if (bcache_write(inode_tbl_start + b, scratch_block) != 0) {
-            serial_puts("[limnfs] Failed to write inode table\n");
+            pr_err("Failed to write inode table\n");
             return -1;
         }
     }
@@ -363,28 +365,28 @@ int limnfs_format(uint32_t total_blocks) {
     root.parent = 0;   /* root's parent is itself */
 
     if (limnfs_write_inode(0, &root) != 0) {
-        serial_puts("[limnfs] Failed to write root inode\n");
+        pr_err("Failed to write root inode\n");
         return -1;
     }
 
     lfs.mounted = 1;
-    serial_printf("[limnfs] Format complete (data starts at block %u)\n", data_start);
+    pr_info("Format complete (data starts at block %u)\n", data_start);
     return 0;
 }
 
 int limnfs_mount(void) {
-    serial_puts("[limnfs] Mounting filesystem...\n");
+    pr_info("Mounting filesystem...\n");
 
     /* Read superblock */
     if (bcache_read(0, scratch_block) != 0) {
-        serial_puts("[limnfs] Failed to read superblock\n");
+        pr_err("Failed to read superblock\n");
         return -1;
     }
 
     limnfs_super_t *sb = (limnfs_super_t *)scratch_block;
     if (sb->magic != LIMNFS_MAGIC) {
-        serial_printf("[limnfs] Bad magic: %x (expected %x)\n",
-                      sb->magic, LIMNFS_MAGIC);
+        pr_err("Bad magic: %x (expected %x)\n",
+               sb->magic, LIMNFS_MAGIC);
         return -1;
     }
 
@@ -394,13 +396,13 @@ int limnfs_mount(void) {
     for (uint32_t i = 0; i < sizeof(limnfs_super_t); i++)
         dst[i] = src[i];
 
-    serial_printf("[limnfs] Superblock: %u blocks, %u inodes, data@%u\n",
-                  lfs.super.total_blocks, lfs.super.total_inodes,
-                  lfs.super.data_start);
+    pr_info("Superblock: %u blocks, %u inodes, data@%u\n",
+            lfs.super.total_blocks, lfs.super.total_inodes,
+            lfs.super.data_start);
 
     /* Read block bitmap */
     if (bcache_read(1, scratch_block) != 0) {
-        serial_puts("[limnfs] Failed to read block bitmap\n");
+        pr_err("Failed to read block bitmap\n");
         return -1;
     }
     for (int i = 0; i < LIMNFS_BLOCK_BITMAP_BYTES; i++)
@@ -408,15 +410,15 @@ int limnfs_mount(void) {
 
     /* Read inode bitmap */
     if (bcache_read(2, scratch_block) != 0) {
-        serial_puts("[limnfs] Failed to read inode bitmap\n");
+        pr_err("Failed to read inode bitmap\n");
         return -1;
     }
     for (int i = 0; i < 128; i++)
         lfs.inode_bitmap[i] = scratch_block[i];
 
     lfs.mounted = 1;
-    serial_printf("[limnfs] Mounted (%u free blocks, %u free inodes)\n",
-                  lfs.super.free_blocks, lfs.super.free_inodes);
+    pr_info("Mounted (%u free blocks, %u free inodes)\n",
+            lfs.super.free_blocks, lfs.super.free_inodes);
     return 0;
 }
 

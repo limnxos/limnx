@@ -1,9 +1,18 @@
+#define pr_fmt(fmt) "[kheap] " fmt
+#include "klog.h"
+
 #include "mm/kheap.h"
 #include "mm/vmm.h"
 #include "mm/pmm.h"
 #include "sync/spinlock.h"
 #include "serial.h"
 
+/*
+ * Lock ordering: kheap_lock is at level 3.
+ * Must NOT hold sched_lock when acquiring.
+ * May acquire pmm_lock while held (heap_expand calls pmm_alloc_page).
+ * Callers must NOT hold pmm_lock when calling kmalloc/kfree.
+ */
 static spinlock_t kheap_lock = SPINLOCK_INIT;
 
 #define ALIGNMENT    16
@@ -45,18 +54,18 @@ static block_header_t *heap_expand(uint64_t min_size) {
 
     /* Check we don't exceed max heap */
     if (expand_start + pages_needed * PAGE_SIZE > KHEAP_START + KHEAP_MAX) {
-        serial_puts("[kheap] ERROR: heap would exceed max size\n");
+        pr_err("heap would exceed max size\n");
         return NULL;
     }
 
     for (uint64_t i = 0; i < pages_needed; i++) {
         uint64_t phys = pmm_alloc_page();
         if (phys == 0) {
-            serial_puts("[kheap] ERROR: out of physical memory\n");
+            pr_err("out of physical memory\n");
             return NULL;
         }
         if (vmm_map_page(heap_current_end, phys, PTE_WRITABLE | PTE_NX) != 0) {
-            serial_puts("[kheap] ERROR: vmm_map_page failed\n");
+            pr_err("vmm_map_page failed\n");
             pmm_free_page(phys);
             return NULL;
         }
@@ -100,14 +109,13 @@ void kheap_init(void) {
     /* Expand by 1 page to bootstrap the heap */
     block_header_t *first = heap_expand(PAGE_SIZE);
     if (!first) {
-        serial_puts("[kheap] FATAL: initial expansion failed\n");
-        return;
+        panic("initial expansion failed");
     }
     heap_head = first;
 
-    serial_printf("[kheap] Heap at %lx, initial size %lu bytes\n",
+    pr_info("Heap at %lx, initial size %lu bytes\n",
         KHEAP_START, first->size);
-    serial_puts("[kheap] Kernel heap initialized\n");
+    pr_info("Kernel heap initialized\n");
 }
 
 void *kmalloc(uint64_t size) {

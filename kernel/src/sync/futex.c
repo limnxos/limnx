@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[futex] " fmt
+#include "klog.h"
+
 #include "sync/futex.h"
 #include "sync/spinlock.h"
 #include "sched/sched.h"
@@ -18,7 +21,7 @@ static spinlock_t futex_lock = SPINLOCK_INIT;
 void futex_init(void) {
     for (int i = 0; i < FUTEX_MAX_WAITERS; i++)
         waiters[i].used = 0;
-    serial_puts("[futex] Futex subsystem initialized\n");
+    pr_info("Futex subsystem initialized\n");
 }
 
 /* Translate user virtual address to physical using process page tables */

@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[proc] " fmt
+#include "klog.h"
+
 #include "proc/process.h"
 #include "proc/elf.h"
 #include "mm/vmm.h"
@@ -7,6 +10,7 @@
 #include "syscall/syscall.h"
 #include "serial.h"
 #include "sync/spinlock.h"
+#include "errno.h"
 
 static uint64_t next_pid = 1;
 static process_t *proc_table[MAX_PROCS];
@@ -20,17 +24,18 @@ uint64_t process_alloc_pid(void) {
     return pid;
 }
 
-void process_register(process_t *proc) {
+int process_register(process_t *proc) {
     uint64_t flags;
     spin_lock_irqsave(&proc_table_lock, &flags);
     for (int i = 0; i < MAX_PROCS; i++) {
         if (proc_table[i] == NULL) {
             proc_table[i] = proc;
             spin_unlock_irqrestore(&proc_table_lock, flags);
-            return;
+            return 0;
         }
     }
     spin_unlock_irqrestore(&proc_table_lock, flags);
+    return -ENOMEM;
 }
 
 process_t *process_lookup(uint64_t pid) {
@@ -217,16 +222,16 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
 
     /* Initialize file descriptor table */
     for (int i = 0; i < MAX_FDS; i++) {
-        proc->fd_table[i].node = (void *)0;
+        proc->fd_table[i].node = NULL;
         proc->fd_table[i].offset = 0;
-        proc->fd_table[i].pipe = (void *)0;
+        proc->fd_table[i].pipe = NULL;
         proc->fd_table[i].pipe_write = 0;
-        proc->fd_table[i].pty = (void *)0;
+        proc->fd_table[i].pty = NULL;
         proc->fd_table[i].pty_is_master = 0;
-        proc->fd_table[i].unix_sock = (void *)0;
-        proc->fd_table[i].eventfd = (void *)0;
-        proc->fd_table[i].epoll = (void *)0;
-        proc->fd_table[i].uring = (void *)0;
+        proc->fd_table[i].unix_sock = NULL;
+        proc->fd_table[i].eventfd = NULL;
+        proc->fd_table[i].epoll = NULL;
+        proc->fd_table[i].uring = NULL;
         proc->fd_table[i].tcp_conn_idx = -1;
         proc->fd_table[i].open_flags = 0;
         proc->fd_table[i].fd_flags = 0;
@@ -272,7 +277,7 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
     /* Create a new address space (PML4 with kernel upper-half cloned) */
     proc->cr3 = vmm_create_address_space();
     if (proc->cr3 == 0) {
-        serial_puts("[proc] ERROR: failed to create address space\n");
+        pr_err("failed to create address space\n");
         kfree(proc);
         return NULL;
     }
@@ -282,7 +287,7 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
     for (uint64_t i = 0; i < code_pages; i++) {
         uint64_t phys = pmm_alloc_page();
         if (phys == 0) {
-            serial_puts("[proc] ERROR: out of memory for code\n");
+            pr_err("out of memory for code\n");
             kfree(proc);
             return NULL;
         }
@@ -302,7 +307,7 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
         /* Map into user address space: readable + writable + executable + user */
         uint64_t virt = USER_CODE_BASE + offset;
         if (vmm_map_page_in(proc->cr3, virt, phys, PTE_USER | PTE_WRITABLE) != 0) {
-            serial_puts("[proc] ERROR: failed to map code page\n");
+            pr_err("failed to map code page\n");
             kfree(proc);
             return NULL;
         }
@@ -314,7 +319,7 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
     for (uint64_t i = 0; i < stack_pages; i++) {
         uint64_t phys = pmm_alloc_page();
         if (phys == 0) {
-            serial_puts("[proc] ERROR: out of memory for stack\n");
+            pr_err("out of memory for stack\n");
             kfree(proc);
             return NULL;
         }
@@ -327,7 +332,7 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
         uint64_t virt = stack_bottom + i * PAGE_SIZE;
         if (vmm_map_page_in(proc->cr3, virt, phys,
                             PTE_USER | PTE_WRITABLE | PTE_NX) != 0) {
-            serial_puts("[proc] ERROR: failed to map stack page\n");
+            pr_err("failed to map stack page\n");
             kfree(proc);
             return NULL;
         }
@@ -336,17 +341,21 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
     /* Create a kernel thread that will transition to user mode */
     thread_t *t = thread_create(process_enter_usermode, 0);
     if (!t) {
-        serial_puts("[proc] ERROR: failed to create thread\n");
+        pr_err("failed to create thread\n");
         kfree(proc);
         return NULL;
     }
 
     t->process = proc;
     proc->main_thread = t;
-    process_register(proc);
+    if (process_register(proc) < 0) {
+        pr_err("process table full\n");
+        kfree(proc);
+        return NULL;
+    }
     /* NOTE: caller must call sched_add(proc->main_thread) after setup */
 
-    serial_printf("[proc] Created process %lu (cr3=%lx, entry=%lx)\n",
+    pr_info("Created process %lu (cr3=%lx, entry=%lx)\n",
         proc->pid, proc->cr3, proc->user_entry);
 
     return proc;
@@ -400,16 +409,16 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
 
     /* Initialize file descriptor table */
     for (int i = 0; i < MAX_FDS; i++) {
-        proc->fd_table[i].node = (void *)0;
+        proc->fd_table[i].node = NULL;
         proc->fd_table[i].offset = 0;
-        proc->fd_table[i].pipe = (void *)0;
+        proc->fd_table[i].pipe = NULL;
         proc->fd_table[i].pipe_write = 0;
-        proc->fd_table[i].pty = (void *)0;
+        proc->fd_table[i].pty = NULL;
         proc->fd_table[i].pty_is_master = 0;
-        proc->fd_table[i].unix_sock = (void *)0;
-        proc->fd_table[i].eventfd = (void *)0;
-        proc->fd_table[i].epoll = (void *)0;
-        proc->fd_table[i].uring = (void *)0;
+        proc->fd_table[i].unix_sock = NULL;
+        proc->fd_table[i].eventfd = NULL;
+        proc->fd_table[i].epoll = NULL;
+        proc->fd_table[i].uring = NULL;
         proc->fd_table[i].tcp_conn_idx = -1;
         proc->fd_table[i].open_flags = 0;
         proc->fd_table[i].fd_flags = 0;
@@ -458,7 +467,7 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
     for (uint64_t i = 0; i < stack_pages; i++) {
         uint64_t phys = pmm_alloc_page();
         if (phys == 0) {
-            serial_puts("[proc] ERROR: out of memory for stack\n");
+            pr_err("out of memory for stack\n");
             kfree(proc);
             return NULL;
         }
@@ -471,7 +480,7 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
         uint64_t virt = stack_bottom + i * PAGE_SIZE;
         if (vmm_map_page_in(proc->cr3, virt, phys,
                             PTE_USER | PTE_WRITABLE | PTE_NX) != 0) {
-            serial_puts("[proc] ERROR: failed to map stack page\n");
+            pr_err("failed to map stack page\n");
             kfree(proc);
             return NULL;
         }
@@ -480,17 +489,21 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
     /* Create a kernel thread that will transition to user mode */
     thread_t *t = thread_create(process_enter_usermode, 0);
     if (!t) {
-        serial_puts("[proc] ERROR: failed to create thread\n");
+        pr_err("failed to create thread\n");
         kfree(proc);
         return NULL;
     }
 
     t->process = proc;
     proc->main_thread = t;
-    process_register(proc);
+    if (process_register(proc) < 0) {
+        pr_err("process table full\n");
+        kfree(proc);
+        return NULL;
+    }
     /* NOTE: caller must call sched_add(proc->main_thread) after setup */
 
-    serial_printf("[proc] Created process %lu (cr3=%lx, entry=%lx)\n",
+    pr_info("Created process %lu (cr3=%lx, entry=%lx)\n",
         proc->pid, proc->cr3, proc->user_entry);
 
     return proc;
@@ -642,7 +655,7 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     ct->fs_base = parent->main_thread->fs_base;  /* inherit TLS */
     child->main_thread = ct;
 
-    process_register(child);
+    if (process_register(child) < 0) { kfree(child); return NULL; }
     /* NOTE: caller must call sched_add(child->main_thread) after
      * incrementing pipe/pty/unix_sock ref counts. */
     return child;
@@ -670,7 +683,7 @@ int process_deliver_signal(process_t *proc, int signum) {
             proc->wait_thread = NULL;
             sched_wake(waiter);
         }
-        serial_printf("[proc] Process %lu killed (SIGKILL)\n", proc->pid);
+        pr_info("Process %lu killed (SIGKILL)\n", proc->pid);
         return 0;
     }
     if (signum == SIGSTOP) {
@@ -678,14 +691,14 @@ int process_deliver_signal(process_t *proc, int signum) {
             sched_remove(proc->main_thread);
         }
         proc->main_thread->state = THREAD_STOPPED;
-        serial_printf("[proc] Process %lu stopped (SIGSTOP)\n", proc->pid);
+        pr_info("Process %lu stopped (SIGSTOP)\n", proc->pid);
         return 0;
     }
     if (signum == SIGCONT) {
         if (proc->main_thread->state == THREAD_STOPPED) {
             proc->main_thread->state = THREAD_READY;
             sched_add(proc->main_thread);
-            serial_printf("[proc] Process %lu continued (SIGCONT)\n", proc->pid);
+            pr_info("Process %lu continued (SIGCONT)\n", proc->pid);
         }
         return 0;
     }

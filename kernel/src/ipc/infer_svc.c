@@ -1,3 +1,6 @@
+#define pr_fmt(fmt) "[infer] " fmt
+#include "klog.h"
+
 #include "ipc/infer_svc.h"
 #include "ipc/unix_sock.h"
 #include "ipc/eventfd.h"
@@ -7,34 +10,22 @@
 #include "sync/spinlock.h"
 #include "serial.h"
 #include "idt/idt.h"
-
-#ifndef EAGAIN
-#define EAGAIN 11
-#endif
+#include "errno.h"
+#include "kutil.h"
 
 static infer_service_t infer_table[MAX_INFER_SERVICES];
+/*
+ * Lock ordering: infer_lock is at level 4 (subsystem).
+ * Must NOT hold sched_lock, pmm_lock, or kheap_lock when acquiring.
+ * Does NOT call kmalloc or pmm_alloc while held.
+ * Copy data under lock, release, then do I/O (unix socket send).
+ */
 static spinlock_t infer_lock = SPINLOCK_INIT;
 
 /* Routing state */
 static uint8_t  route_policy = INFER_ROUTE_LEAST_LOADED;
 static uint32_t rr_counter = 0;
 
-static int str_eq(const char *a, const char *b) {
-    while (*a && *b) {
-        if (*a != *b) return 0;
-        a++; b++;
-    }
-    return *a == *b;
-}
-
-static void str_copy(char *dst, const char *src, int max) {
-    int i = 0;
-    while (src[i] && i < max - 1) {
-        dst[i] = src[i];
-        i++;
-    }
-    dst[i] = '\0';
-}
 
 int infer_register(const char *name, const char *sock_path, uint64_t pid) {
     uint64_t flags;
@@ -71,7 +62,7 @@ int infer_register(const char *name, const char *sock_path, uint64_t pid) {
     }
 
     spin_unlock_irqrestore(&infer_lock, flags);
-    return -1;
+    return -ENOSPC;
 }
 
 int infer_lookup(const char *name) {
@@ -84,12 +75,12 @@ int infer_lookup(const char *name) {
         }
     }
     spin_unlock_irqrestore(&infer_lock, flags);
-    return -1;
+    return -ENOENT;
 }
 
 infer_service_t *infer_get(int idx) {
-    if (idx < 0 || idx >= MAX_INFER_SERVICES) return (void *)0;
-    if (!infer_table[idx].used) return (void *)0;
+    if (idx < 0 || idx >= MAX_INFER_SERVICES) return NULL;
+    if (!infer_table[idx].used) return NULL;
     return &infer_table[idx];
 }
 
@@ -129,7 +120,7 @@ int infer_health(uint64_t pid, uint32_t load) {
         }
     }
     spin_unlock_irqrestore(&infer_lock, flags);
-    return -1;  /* pid not registered */
+    return -ESRCH;  /* pid not registered */
 }
 
 int infer_health_check(void) {
@@ -148,10 +139,10 @@ int infer_health_check(void) {
         if (elapsed > INFER_HEALTH_TIMEOUT) {
             infer_table[i].healthy = 0;
             unhealthy_count++;
-            serial_printf("[infer] Service '%s' (pid %lu) marked unhealthy "
-                          "(no heartbeat for %u ticks)\n",
-                          infer_table[i].name,
-                          infer_table[i].provider_pid, elapsed);
+            pr_warn("Service '%s' (pid %lu) marked unhealthy "
+                    "(no heartbeat for %u ticks)\n",
+                    infer_table[i].name,
+                    infer_table[i].provider_pid, elapsed);
         }
     }
 
@@ -185,7 +176,7 @@ int infer_route(const char *name) {
 
     if (count == 0) {
         spin_unlock_irqrestore(&infer_lock, flags);
-        return -1;
+        return -ENOENT;
     }
 
     int chosen = -1;
@@ -240,7 +231,7 @@ int infer_route(const char *name) {
 }
 
 int infer_set_policy(uint8_t policy) {
-    if (policy > INFER_ROUTE_WEIGHTED) return -1;
+    if (policy > INFER_ROUTE_WEIGHTED) return -EINVAL;
     uint64_t flags;
     spin_lock_irqsave(&infer_lock, &flags);
     route_policy = policy;
@@ -306,11 +297,6 @@ static void cache_lru_push_front(int idx) {
         cache_lru_tail = (int8_t)idx;
 }
 
-static void mem_copy(void *dst, const void *src, uint32_t n) {
-    uint8_t *d = (uint8_t *)dst;
-    const uint8_t *s = (const uint8_t *)src;
-    for (uint32_t i = 0; i < n; i++) d[i] = s[i];
-}
 
 int infer_cache_lookup(const char *name, const void *req, uint32_t req_len,
                        void *resp_buf, uint32_t resp_max) {
@@ -335,13 +321,13 @@ int infer_cache_lookup(const char *name, const void *req, uint32_t req_len,
         cache_hits++;
 
         spin_unlock_irqrestore(&infer_lock, flags);
-        serial_printf("[infer] Cache hit for '%s' (hash %lx)\n", name, h);
+        pr_info("Cache hit for '%s' (hash %lx)\n", name, h);
         return (int)copy_len;
     }
 
     cache_misses++;
     spin_unlock_irqrestore(&infer_lock, flags);
-    return -1;
+    return -ENOENT;
 }
 
 void infer_cache_insert(const char *name, const void *req, uint32_t req_len,
@@ -397,8 +383,8 @@ void infer_cache_insert(const char *name, const void *req, uint32_t req_len,
     cache_lru_push_front(slot);
 
     spin_unlock_irqrestore(&infer_lock, flags);
-    serial_printf("[infer] Cached response for '%s' (hash %lx, %u bytes)\n",
-                  name, h, resp_len);
+    pr_info("Cached response for '%s' (hash %lx, %u bytes)\n",
+            name, h, resp_len);
 }
 
 void infer_cache_flush(void) {
@@ -478,19 +464,19 @@ int infer_queue_enqueue(const char *name, uint64_t caller_pid) {
             infer_queue[i].timed_out = 0;
             infer_queue_total_queued++;
             spin_unlock_irqrestore(&infer_lock, flags);
-            serial_printf("[infer] Queued request for '%s' from pid %lu (slot %d)\n",
-                          name, caller_pid, i);
+            pr_info("Queued request for '%s' from pid %lu (slot %d)\n",
+                    name, caller_pid, i);
             return i;
         }
     }
 
     spin_unlock_irqrestore(&infer_lock, flags);
-    return -1;  /* queue full */
+    return -ENOBUFS;  /* queue full */
 }
 
 int infer_queue_check(int slot) {
-    if (slot < 0 || slot >= INFER_QUEUE_SIZE) return -1;
-    if (!infer_queue[slot].used) return -1;
+    if (slot < 0 || slot >= INFER_QUEUE_SIZE) return -EINVAL;
+    if (!infer_queue[slot].used) return -EINVAL;
     if (infer_queue[slot].ready) return 1;
     if (infer_queue[slot].timed_out) return -EAGAIN;
     return 0;  /* still waiting */
@@ -527,8 +513,8 @@ void infer_queue_drain(const char *name) {
 
     if (oldest_slot >= 0) {
         infer_queue[oldest_slot].ready = 1;
-        serial_printf("[infer] Draining queue slot %d for '%s' (pid %lu)\n",
-                      oldest_slot, name, infer_queue[oldest_slot].caller_pid);
+        pr_info("Draining queue slot %d for '%s' (pid %lu)\n",
+                oldest_slot, name, infer_queue[oldest_slot].caller_pid);
     }
 
     spin_unlock_irqrestore(&infer_lock, flags);
@@ -548,8 +534,8 @@ void infer_queue_expire(void) {
         if (elapsed > INFER_QUEUE_TIMEOUT) {
             infer_queue[i].timed_out = 1;
             infer_queue_total_timeouts++;
-            serial_printf("[infer] Queue slot %d timed out for '%s'\n",
-                          i, infer_queue[i].name);
+            pr_warn("Queue slot %d timed out for '%s'\n",
+                    i, infer_queue[i].name);
         }
     }
 
@@ -579,7 +565,7 @@ static infer_async_entry_t infer_async[INFER_ASYNC_SIZE];
 
 int infer_async_submit(const char *name, const void *req, uint32_t req_len,
                         uint64_t owner_pid, int32_t eventfd_idx) {
-    if (req_len > INFER_ASYNC_REQ_MAX) return -22; /* EINVAL */
+    if (req_len > INFER_ASYNC_REQ_MAX) return -EINVAL;
 
     uint64_t flags;
     spin_lock_irqsave(&infer_lock, &flags);
@@ -598,19 +584,19 @@ int infer_async_submit(const char *name, const void *req, uint32_t req_len,
             infer_async[i].state = INFER_ASYNC_PENDING;
 
             spin_unlock_irqrestore(&infer_lock, flags);
-            serial_printf("[infer] Async submit slot %d for '%s' (pid %lu)\n",
-                          i, name, owner_pid);
+            pr_info("Async submit slot %d for '%s' (pid %lu)\n",
+                    i, name, owner_pid);
             return i + 1;  /* request IDs are 1-based */
         }
     }
 
     spin_unlock_irqrestore(&infer_lock, flags);
-    return -105;  /* ENOBUFS */
+    return -ENOBUFS;
 }
 
 int infer_async_poll(int request_id, uint64_t caller_pid) {
     int idx = request_id - 1;
-    if (idx < 0 || idx >= INFER_ASYNC_SIZE) return -22; /* EINVAL */
+    if (idx < 0 || idx >= INFER_ASYNC_SIZE) return -EINVAL;
 
     uint64_t flags;
     spin_lock_irqsave(&infer_lock, &flags);
@@ -618,21 +604,21 @@ int infer_async_poll(int request_id, uint64_t caller_pid) {
     infer_async_entry_t *e = &infer_async[idx];
     if (e->state == INFER_ASYNC_FREE || e->owner_pid != caller_pid) {
         spin_unlock_irqrestore(&infer_lock, flags);
-        return -22; /* EINVAL */
+        return -EINVAL;
     }
 
     int state = e->state;
     int err = e->error_code;
     spin_unlock_irqrestore(&infer_lock, flags);
 
-    if (state == INFER_ASYNC_ERROR) return err ? -err : -2; /* -ENOENT default */
+    if (state == INFER_ASYNC_ERROR) return err ? -err : -ENOENT;
     return state; /* PENDING=1, READY=2 */
 }
 
 int infer_async_result(int request_id, uint64_t caller_pid,
                         void *resp_buf, uint32_t resp_max) {
     int idx = request_id - 1;
-    if (idx < 0 || idx >= INFER_ASYNC_SIZE) return -22; /* EINVAL */
+    if (idx < 0 || idx >= INFER_ASYNC_SIZE) return -EINVAL;
 
     uint64_t flags;
     spin_lock_irqsave(&infer_lock, &flags);
@@ -640,7 +626,7 @@ int infer_async_result(int request_id, uint64_t caller_pid,
     infer_async_entry_t *e = &infer_async[idx];
     if (e->state == INFER_ASYNC_FREE || e->owner_pid != caller_pid) {
         spin_unlock_irqrestore(&infer_lock, flags);
-        return -22; /* EINVAL */
+        return -EINVAL;
     }
 
     if (e->state == INFER_ASYNC_PENDING) {
@@ -652,7 +638,7 @@ int infer_async_result(int request_id, uint64_t caller_pid,
         int err = e->error_code;
         e->state = INFER_ASYNC_FREE;
         spin_unlock_irqrestore(&infer_lock, flags);
-        return err ? -err : -2;
+        return err ? -err : -ENOENT;
     }
 
     /* READY — copy response and free slot */
@@ -709,8 +695,8 @@ int infer_async_process_one(void) {
             if (infer_async[best].state == INFER_ASYNC_PENDING) {
                 infer_async[best].state = INFER_ASYNC_ERROR;
                 infer_async[best].error_code = EAGAIN;
-                serial_printf("[infer] Async slot %d timed out for '%s'\n",
-                              best, name);
+                pr_warn("Async slot %d timed out for '%s'\n",
+                        best, name);
             }
             spin_unlock_irqrestore(&infer_lock, flags);
             if (efd >= 0) eventfd_write(efd, 1);
@@ -724,7 +710,7 @@ int infer_async_process_one(void) {
         spin_lock_irqsave(&infer_lock, &flags);
         if (infer_async[best].state == INFER_ASYNC_PENDING) {
             infer_async[best].state = INFER_ASYNC_ERROR;
-            infer_async[best].error_code = 2; /* ENOENT */
+            infer_async[best].error_code = ENOENT;
         }
         spin_unlock_irqrestore(&infer_lock, flags);
         if (efd >= 0) eventfd_write(efd, 1);
@@ -737,7 +723,7 @@ int infer_async_process_one(void) {
         spin_lock_irqsave(&infer_lock, &flags);
         if (infer_async[best].state == INFER_ASYNC_PENDING) {
             infer_async[best].state = INFER_ASYNC_ERROR;
-            infer_async[best].error_code = 111; /* ECONNREFUSED */
+            infer_async[best].error_code = ECONNREFUSED;
         }
         spin_unlock_irqrestore(&infer_lock, flags);
         if (efd >= 0) eventfd_write(efd, 1);
@@ -749,7 +735,7 @@ int infer_async_process_one(void) {
         spin_lock_irqsave(&infer_lock, &flags);
         if (infer_async[best].state == INFER_ASYNC_PENDING) {
             infer_async[best].state = INFER_ASYNC_ERROR;
-            infer_async[best].error_code = 111;
+            infer_async[best].error_code = ECONNREFUSED;
         }
         spin_unlock_irqrestore(&infer_lock, flags);
         if (efd >= 0) eventfd_write(efd, 1);
@@ -764,7 +750,7 @@ int infer_async_process_one(void) {
             spin_lock_irqsave(&infer_lock, &flags);
             if (infer_async[best].state == INFER_ASYNC_PENDING) {
                 infer_async[best].state = INFER_ASYNC_ERROR;
-                infer_async[best].error_code = 5; /* EIO */
+                infer_async[best].error_code = EIO;
             }
             spin_unlock_irqrestore(&infer_lock, flags);
             if (efd >= 0) eventfd_write(efd, 1);
@@ -800,7 +786,7 @@ int infer_async_process_one(void) {
                 infer_cache_insert(name, req_copy, req_len, resp_tmp, rlen);
         } else {
             infer_async[best].state = INFER_ASYNC_ERROR;
-            infer_async[best].error_code = 2; /* ENOENT */
+            infer_async[best].error_code = ENOENT;
             spin_unlock_irqrestore(&infer_lock, flags);
         }
     } else {
@@ -810,8 +796,8 @@ int infer_async_process_one(void) {
     /* Signal eventfd */
     if (efd >= 0) eventfd_write(efd, 1);
 
-    serial_printf("[infer] Async slot %d completed for '%s' (%d bytes)\n",
-                  best, name, received);
+    pr_info("Async slot %d completed for '%s' (%d bytes)\n",
+            best, name, received);
     return 1;
 }
 
@@ -828,8 +814,8 @@ void infer_async_expire(void) {
             infer_async[i].error_code = EAGAIN;
             if (infer_async[i].eventfd_idx >= 0)
                 eventfd_write(infer_async[i].eventfd_idx, 1);
-            serial_printf("[infer] Async slot %d expired for '%s'\n",
-                          i, infer_async[i].name);
+            pr_warn("Async slot %d expired for '%s'\n",
+                    i, infer_async[i].name);
         }
     }
 
@@ -851,7 +837,7 @@ void infer_async_cleanup_pid(uint64_t pid) {
 }
 
 static void infer_async_worker_fn(void) {
-    serial_puts("[infer] Async worker thread started\n");
+    pr_info("Async worker thread started\n");
     for (;;) {
         int did_work = infer_async_process_one();
         if (!did_work) {
@@ -865,6 +851,6 @@ void infer_async_start_worker(void) {
     thread_t *t = thread_create(infer_async_worker_fn, 0);
     if (t) {
         sched_add(t);
-        serial_puts("[infer] Async worker thread created\n");
+        pr_info("Async worker thread created\n");
     }
 }

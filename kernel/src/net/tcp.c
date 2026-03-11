@@ -1,15 +1,11 @@
+#define pr_fmt(fmt) "[tcp]  " fmt
+#include "klog.h"
 #include "net/tcp.h"
 #include "net/net.h"
 #include "idt/idt.h"
 #include "sched/sched.h"
 #include "serial.h"
-
-#ifndef EINTR
-#define EINTR 4
-#endif
-#ifndef EAGAIN
-#define EAGAIN 11
-#endif
+#include "errno.h"
 
 /* Poll event bits for tcp_poll */
 #define POLLIN   0x001
@@ -38,7 +34,7 @@ static void tcp_memset(void *dst, uint8_t val, uint32_t n) {
 void tcp_init(void) {
     for (int i = 0; i < MAX_TCP_CONNS; i++)
         tcp_conns[i].in_use = 0;
-    serial_puts("[tcp]  TCP stack initialized\n");
+    pr_info("TCP stack initialized\n");
 }
 
 static uint32_t tcp_gen_isn(int conn_idx) {
@@ -228,7 +224,7 @@ void tcp_rx(uint32_t src_ip, const uint8_t *data, uint32_t len) {
             conn->state = TCP_ESTABLISHED;
             conn->retransmit_count = 0;
             tcp_send_ack(conn);
-            serial_printf("[tcp]  Connection %d ESTABLISHED\n", idx);
+            pr_info("Connection %d ESTABLISHED\n", idx);
         } else if (flags & TCP_RST) {
             conn->rst_received = 1;
             conn->state = TCP_CLOSED;
@@ -245,7 +241,7 @@ void tcp_rx(uint32_t src_ip, const uint8_t *data, uint32_t len) {
                 conn->state = TCP_ESTABLISHED;
                 conn->accepted = 1;
                 conn->retransmit_count = 0;
-                serial_printf("[tcp]  Connection %d ESTABLISHED (accepted)\n", idx);
+                pr_info("Connection %d ESTABLISHED (accepted)\n", idx);
                 /* Process any data piggybacked on the ACK */
                 if (payload_len > 0)
                     goto established_data;
@@ -400,7 +396,7 @@ void tcp_timer_check(void) {
         /* Retransmission */
         if (c->tx_buf_len > 0 && c->snd_una < c->snd_nxt && now >= c->rto_tick) {
             if (c->retransmit_count >= 5) {
-                serial_printf("[tcp]  Connection %d: retransmit limit, RST\n", i);
+                pr_err("Connection %d: retransmit limit, RST\n", i);
                 tcp_send_segment(c, TCP_RST, 0, 0);
                 c->rst_received = 1;
                 c->state = TCP_CLOSED;
@@ -456,13 +452,13 @@ int tcp_socket(void) {
             return i;
         }
     }
-    return -1;
+    return -ENOMEM;
 }
 
 int tcp_connect(int conn_idx, uint32_t remote_ip, uint16_t remote_port) {
-    if (conn_idx < 0 || conn_idx >= MAX_TCP_CONNS) return -1;
+    if (conn_idx < 0 || conn_idx >= MAX_TCP_CONNS) return -EBADF;
     tcp_conn_t *c = &tcp_conns[conn_idx];
-    if (!c->in_use || c->state != TCP_CLOSED) return -1;
+    if (!c->in_use || c->state != TCP_CLOSED) return -EINVAL;
 
     c->remote_ip = remote_ip;
     c->remote_port = remote_port;
@@ -493,7 +489,7 @@ int tcp_connect(int conn_idx, uint32_t remote_ip, uint16_t remote_port) {
         if (--timeout <= 0) {
             c->state = TCP_CLOSED;
             c->in_use = 0;
-            return -1;
+            return -ETIMEDOUT;
         }
         if (sched_has_pending_signal()) return -EINTR;
         sched_yield();
@@ -502,7 +498,7 @@ int tcp_connect(int conn_idx, uint32_t remote_ip, uint16_t remote_port) {
     if (c->state != TCP_ESTABLISHED) {
         c->state = TCP_CLOSED;
         c->in_use = 0;
-        return -1;
+        return -ECONNREFUSED;
     }
 
     c->tx_buf_len = 0;  /* clear retransmit buffer */
@@ -510,9 +506,9 @@ int tcp_connect(int conn_idx, uint32_t remote_ip, uint16_t remote_port) {
 }
 
 int tcp_listen(int conn_idx, uint16_t port) {
-    if (conn_idx < 0 || conn_idx >= MAX_TCP_CONNS) return -1;
+    if (conn_idx < 0 || conn_idx >= MAX_TCP_CONNS) return -EBADF;
     tcp_conn_t *c = &tcp_conns[conn_idx];
-    if (!c->in_use) return -1;
+    if (!c->in_use) return -EBADF;
 
     c->local_port = port;
     c->state = TCP_LISTEN;
@@ -524,9 +520,9 @@ int tcp_listen(int conn_idx, uint16_t port) {
 }
 
 int tcp_accept(int listen_idx) {
-    if (listen_idx < 0 || listen_idx >= MAX_TCP_CONNS) return -1;
+    if (listen_idx < 0 || listen_idx >= MAX_TCP_CONNS) return -EBADF;
     tcp_conn_t *lc = &tcp_conns[listen_idx];
-    if (!lc->in_use || lc->state != TCP_LISTEN) return -1;
+    if (!lc->in_use || lc->state != TCP_LISTEN) return -EINVAL;
 
     /* Wait for backlog entry */
     int timeout = 50000;
@@ -545,7 +541,7 @@ int tcp_accept(int listen_idx) {
         if (!found) {
             if (lc->nonblock) return -EAGAIN;
             tcp_timer_check();
-            if (--timeout <= 0) return -1;
+            if (--timeout <= 0) return -ETIMEDOUT;
             if (sched_has_pending_signal()) return -EINTR;
             sched_yield();
         }
@@ -570,7 +566,7 @@ int tcp_accept(int listen_idx) {
             }
         }
     }
-    if (new_idx < 0) return -1;
+    if (new_idx < 0) return -ENOMEM;
 
     tcp_conn_t *nc = &tcp_conns[new_idx];
     tcp_memset(nc, 0, sizeof(tcp_conn_t));
@@ -600,7 +596,7 @@ int tcp_accept(int listen_idx) {
         if (--timeout <= 0) {
             nc->state = TCP_CLOSED;
             nc->in_use = 0;
-            return -1;
+            return -ETIMEDOUT;
         }
         if (sched_has_pending_signal()) return -EINTR;
         sched_yield();
@@ -612,7 +608,7 @@ int tcp_accept(int listen_idx) {
     if (nc->state != TCP_ESTABLISHED && nc->state != TCP_CLOSE_WAIT) {
         nc->state = TCP_CLOSED;
         nc->in_use = 0;
-        return -1;
+        return -ECONNREFUSED;
     }
 
     nc->tx_buf_len = 0;
@@ -620,10 +616,10 @@ int tcp_accept(int listen_idx) {
 }
 
 int64_t tcp_send(int conn_idx, const uint8_t *buf, uint32_t len) {
-    if (conn_idx < 0 || conn_idx >= MAX_TCP_CONNS) return -1;
+    if (conn_idx < 0 || conn_idx >= MAX_TCP_CONNS) return -EBADF;
     tcp_conn_t *c = &tcp_conns[conn_idx];
-    if (!c->in_use || c->state != TCP_ESTABLISHED) return -1;
-    if (c->rst_received) return -1;
+    if (!c->in_use || c->state != TCP_ESTABLISHED) return -ENOTCONN;
+    if (c->rst_received) return -ENOTCONN;
 
     if (len > TCP_MSS) len = TCP_MSS;
 
@@ -648,9 +644,9 @@ int64_t tcp_send(int conn_idx, const uint8_t *buf, uint32_t len) {
 }
 
 int64_t tcp_recv(int conn_idx, uint8_t *buf, uint32_t len) {
-    if (conn_idx < 0 || conn_idx >= MAX_TCP_CONNS) return -1;
+    if (conn_idx < 0 || conn_idx >= MAX_TCP_CONNS) return -EBADF;
     tcp_conn_t *c = &tcp_conns[conn_idx];
-    if (!c->in_use) return -1;
+    if (!c->in_use) return -EBADF;
 
     /* Non-blocking: return immediately if no data */
     if (c->nonblock && c->rx_count == 0 && !c->fin_received && !c->rst_received)
@@ -660,12 +656,12 @@ int64_t tcp_recv(int conn_idx, uint8_t *buf, uint32_t len) {
     int timeout = 50000;
     while (c->rx_count == 0 && !c->fin_received && !c->rst_received) {
         tcp_timer_check();
-        if (--timeout <= 0) return -1;
+        if (--timeout <= 0) return -ETIMEDOUT;
         if (sched_has_pending_signal()) return -EINTR;
         sched_yield();
     }
 
-    if (c->rst_received) return -1;
+    if (c->rst_received) return -ENOTCONN;
 
     if (c->rx_count == 0) {
         return 0;  /* EOF (FIN received, no data) */
@@ -694,9 +690,9 @@ int64_t tcp_recv(int conn_idx, uint8_t *buf, uint32_t len) {
 }
 
 int tcp_close(int conn_idx) {
-    if (conn_idx < 0 || conn_idx >= MAX_TCP_CONNS) return -1;
+    if (conn_idx < 0 || conn_idx >= MAX_TCP_CONNS) return -EBADF;
     tcp_conn_t *c = &tcp_conns[conn_idx];
-    if (!c->in_use) return -1;
+    if (!c->in_use) return -EBADF;
 
     if (c->state == TCP_ESTABLISHED) {
         /* Set state and increment snd_nxt BEFORE sending so that
@@ -768,9 +764,9 @@ int tcp_close(int conn_idx) {
 }
 
 int tcp_set_nonblock(int conn_idx, int nb) {
-    if (conn_idx < 0 || conn_idx >= MAX_TCP_CONNS) return -1;
+    if (conn_idx < 0 || conn_idx >= MAX_TCP_CONNS) return -EBADF;
     tcp_conn_t *c = &tcp_conns[conn_idx];
-    if (!c->in_use) return -1;
+    if (!c->in_use) return -EBADF;
     c->nonblock = nb ? 1 : 0;
     return 0;
 }
