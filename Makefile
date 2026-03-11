@@ -123,6 +123,7 @@ USER_C_ELFS := build/user/mathtest.elf build/user/agenttest.elf build/user/agent
                build/user/s74test.elf \
                build/user/s75test.elf \
                build/user/s76test.elf \
+               build/user/s77test.elf \
                build/user/crasher.elf \
                build/user/inferd.elf \
                build/user/netagent.elf
@@ -683,6 +684,13 @@ build/user/s76test.o: user/s76test.c user/libc/libc.h
 	$(CC) $(USER_CFLAGS) -c $< -o $@
 
 build/user/s76test.elf: build/user/s76test.o $(LIBC_OBJS) user/libc/linker.ld
+	$(LD) -nostdlib -static -T user/libc/linker.ld $(LIBC_OBJS) $< -o $@
+
+build/user/s77test.o: user/s77test.c user/libc/libc.h
+	@mkdir -p $(dir $@)
+	$(CC) $(USER_CFLAGS) -c $< -o $@
+
+build/user/s77test.elf: build/user/s77test.o $(LIBC_OBJS) user/libc/linker.ld
 	$(LD) -nostdlib -static -T user/libc/linker.ld $(LIBC_OBJS) $< -o $@
 
 build/user/netagent.o: user/netagent.c user/libc/libc.h

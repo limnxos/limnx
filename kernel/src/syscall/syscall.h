@@ -136,7 +136,8 @@
 #define CAP_EXEC      (1 << 5)
 #define CAP_FS_WRITE  (1 << 6)
 #define CAP_FS_READ   (1 << 7)
-#define CAP_ALL       0xFF
+#define CAP_INFER     (1 << 8)
+#define CAP_ALL       0x1FF
 
 /* Resource limit IDs */
 #define RLIMIT_MEM   0

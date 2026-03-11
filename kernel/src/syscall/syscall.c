@@ -3718,6 +3718,11 @@ static int64_t sys_infer_register(uint64_t name_ptr, uint64_t path_ptr,
     if (copy_string_from_user((const char *)path_ptr, path, INFER_SOCK_PATH_MAX) != 0)
         return -EFAULT;
 
+    /* Require CAP_INFER to register as a provider */
+    if (!(proc->capabilities & CAP_INFER) &&
+        !cap_token_check(proc->pid, CAP_INFER, name))
+        return -EACCES;
+
     return infer_register(name, path, proc->pid);
 }
 
@@ -3735,6 +3740,11 @@ static int64_t sys_infer_request(uint64_t name_ptr, uint64_t req_buf,
         return -EFAULT;
     if (resp_len > 0 && validate_user_ptr(resp_buf, resp_len) != 0)
         return -EFAULT;
+
+    /* Require CAP_INFER to make inference requests */
+    if (!(proc->capabilities & CAP_INFER) &&
+        !cap_token_check(proc->pid, CAP_INFER, name))
+        return -EACCES;
 
     /* Cache check: skip if req_len == 0 (side-effect request) */
     if (req_len > 0 && resp_len > 0) {
