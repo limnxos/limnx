@@ -96,7 +96,15 @@ int64_t sys_munmap(uint64_t virt_addr, uint64_t a2,
             uint64_t phys = proc->mmap_table[i].phys_addr;
 
             if (proc->mmap_table[i].shm_id >= 0) {
-                /* Shared memory: don't free phys pages, just decrement ref */
+                /* Shared memory: clear PTEs + flush TLB, then decrement ref */
+                for (uint32_t j = 0; j < npages; j++) {
+                    uint64_t va = virt_addr + (uint64_t)j * PAGE_SIZE;
+                    uint64_t *pte = vmm_get_pte(proc->cr3, va);
+                    if (pte && (*pte & PTE_PRESENT)) {
+                        *pte = 0;
+                        flush_page(va);
+                    }
+                }
                 int32_t sid = proc->mmap_table[i].shm_id;
                 uint64_t sflags;
                 shm_lock_acquire(&sflags);
@@ -372,13 +380,14 @@ int64_t sys_shmdt(uint64_t virt_addr, uint64_t a2,
                 }
                 shm_unlock_release(sflags);
             }
-            /* Unmap pages from page table and drop PTE refcount */
+            /* Unmap pages from page table, flush TLB, drop PTE refcount */
             for (uint32_t p = 0; p < npages; p++) {
                 uint64_t pv = virt_addr + (uint64_t)p * PAGE_SIZE;
                 uint64_t *pte = vmm_get_pte(proc->cr3, pv);
                 if (pte && (*pte & PTE_PRESENT)) {
                     uint64_t phys = *pte & PTE_ADDR_MASK;
                     *pte = 0;
+                    flush_page(pv);
                     pmm_free_page(phys);
                 }
             }

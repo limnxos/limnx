@@ -36,25 +36,28 @@ int eventfd_read(int idx, uint64_t *value, int nonblock) {
 
     eventfd_t *efd = &eventfds[idx];
 
-    while (efd->counter == 0) {
+    for (;;) {
+        uint64_t iflags;
+        spin_lock_irqsave(&eventfd_lock, &iflags);
+
+        if (efd->counter > 0) {
+            if (efd->flags & EFD_SEMAPHORE) {
+                *value = 1;
+                efd->counter--;
+            } else {
+                *value = efd->counter;
+                efd->counter = 0;
+            }
+            spin_unlock_irqrestore(&eventfd_lock, iflags);
+            return 8;
+        }
+
+        spin_unlock_irqrestore(&eventfd_lock, iflags);
+
         if (nonblock) return -1;
-        sched_yield();
         if (!efd->used) return -1;
+        sched_yield();
     }
-
-    uint64_t iflags;
-    spin_lock_irqsave(&eventfd_lock, &iflags);
-
-    if (efd->flags & EFD_SEMAPHORE) {
-        *value = 1;
-        efd->counter--;
-    } else {
-        *value = efd->counter;
-        efd->counter = 0;
-    }
-
-    spin_unlock_irqrestore(&eventfd_lock, iflags);
-    return 8;
 }
 
 int eventfd_write(int idx, uint64_t value) {
