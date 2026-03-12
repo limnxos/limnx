@@ -2,7 +2,10 @@
 #include "sched/thread.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
+#include "mm/swap.h"
 #include "ipc/agent_ns.h"
+#include "serial.h"
+#include "idt/idt.h"
 
 #include "arch/paging.h"
 
@@ -633,4 +636,124 @@ int64_t sys_mmap_guard(uint64_t num_pages, uint64_t a2,
     proc->used_mem_pages += num_pages;
 
     return (int64_t)virt;
+}
+
+/* --- Page fault handler --- */
+
+int page_fault_handler(uint64_t fault_addr, uint64_t err_code,
+                       interrupt_frame_t *frame) {
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;  /* Kernel fault */
+
+    process_t *proc = t->process;
+
+    int present = err_code & 1;
+    int write   = err_code & 2;
+    int user    = err_code & 4;
+
+    if (!user) return -1;  /* Kernel-mode fault */
+
+    if (present && write) {
+        /* Page present but not writable — check COW */
+        uint64_t *pte = vmm_get_pte(proc->cr3, fault_addr);
+        if (pte && (*pte & PTE_COW)) {
+            if (!(*pte & PTE_WAS_WRITABLE))
+                goto kill;
+
+            uint64_t old_phys = *pte & PTE_ADDR_MASK;
+            uint64_t old_flags = *pte & ~PTE_ADDR_MASK;
+            uint64_t clean_flags = old_flags & ~(PTE_COW | PTE_WAS_WRITABLE);
+
+            if (pmm_ref_get(old_phys) == 1) {
+                *pte = old_phys | (clean_flags | PTE_WRITABLE | PTE_PRESENT);
+                invlpg_addr(fault_addr & ~0xFFFULL);
+                return 0;
+            }
+
+            uint64_t new_phys = pmm_alloc_page();
+            if (new_phys == 0) goto kill;
+
+            uint8_t *src = (uint8_t *)PHYS_TO_VIRT(old_phys);
+            uint8_t *dst = (uint8_t *)PHYS_TO_VIRT(new_phys);
+            for (int i = 0; i < 4096; i++) dst[i] = src[i];
+
+            *pte = new_phys | (clean_flags | PTE_WRITABLE | PTE_PRESENT);
+            invlpg_addr(fault_addr & ~0xFFFULL);
+
+            pmm_ref_dec(old_phys);
+            return 0;
+        }
+    }
+
+    /* Demand paging / swap-in: page not present in user mode */
+    if (!present && user) {
+        uint64_t *pte = vmm_get_pte(proc->cr3, fault_addr);
+        if (pte && swap_is_entry(*pte)) {
+            if (swap_in(proc->cr3, fault_addr) == 0) {
+                invlpg_addr(fault_addr & ~0xFFFULL);
+                return 0;
+            }
+        }
+
+        uint64_t page_addr = fault_addr & ~0xFFFULL;
+        for (int i = 0; i < MMAP_MAX_ENTRIES; i++) {
+            mmap_entry_t *me = &proc->mmap_table[i];
+            if (!me->used || !me->demand) continue;
+            uint64_t region_start = me->virt_addr;
+            uint64_t region_end = region_start + (uint64_t)me->num_pages * 4096;
+            if (page_addr >= region_start && page_addr < region_end) {
+                if (me->vfs_node >= 0) {
+                    uint64_t new_phys = pmm_alloc_page();
+                    if (new_phys == 0) goto kill;
+                    uint8_t *fdst = (uint8_t *)PHYS_TO_VIRT(new_phys);
+
+                    uint64_t page_offset_in_region = page_addr - region_start;
+                    uint64_t file_off = me->file_offset + page_offset_in_region;
+                    int64_t got = vfs_read(me->vfs_node, file_off, fdst, 4096);
+                    if (got < 0) got = 0;
+                    for (int64_t j = got; j < 4096; j++)
+                        fdst[j] = 0;
+
+                    if (vmm_map_page_in(proc->cr3, page_addr, new_phys,
+                                        PTE_USER | PTE_NX) == 0) {
+                        invlpg_addr(page_addr);
+                        return 0;
+                    }
+                    pmm_free_page(new_phys);
+                } else if (demand_page_fault(proc->cr3, page_addr) == 0) {
+                    invlpg_addr(page_addr);
+                    return 0;
+                }
+            }
+        }
+    }
+
+kill:
+    {
+        uint64_t stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
+        uint64_t guard_start = stack_bottom - PAGE_SIZE;
+        if (fault_addr >= guard_start && fault_addr < stack_bottom) {
+            serial_printf("[fault] Stack overflow detected (pid %lu, addr=%lx, rip=%lx)\n",
+                proc->pid, fault_addr, frame->rip);
+        } else {
+            int in_guard_gap = 0;
+            for (int i = 0; i < MMAP_MAX_ENTRIES; i++) {
+                mmap_entry_t *me = &proc->mmap_table[i];
+                if (!me->used) continue;
+                uint64_t region_end = me->virt_addr + (uint64_t)me->num_pages * PAGE_SIZE;
+                uint64_t gap_end = region_end + PAGE_SIZE;
+                if (fault_addr >= region_end && fault_addr < gap_end) {
+                    serial_printf("[fault] Guard page hit (pid %lu, addr=%lx past mmap %lx+%u, rip=%lx)\n",
+                        proc->pid, fault_addr, me->virt_addr, me->num_pages, frame->rip);
+                    in_guard_gap = 1;
+                    break;
+                }
+            }
+            if (!in_guard_gap)
+                serial_printf("[fault] Process %lu killed: fault at %lx (err=%lx, rip=%lx)\n",
+                    proc->pid, fault_addr, err_code, frame->rip);
+        }
+    }
+    process_terminate(t, -11);
+    return 0;
 }

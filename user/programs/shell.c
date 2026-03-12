@@ -8,6 +8,7 @@
 /* --- Globals --- */
 static int stdin_is_pty = 0;
 static int last_exit_status = 0;
+static volatile long fg_pid = 0;  /* PID of foreground job (0 = none) */
 
 /* Retry waitpid on -EINTR */
 static long waitpid_retry(long pid) {
@@ -1168,9 +1169,11 @@ static void cmd_fg(int argc, char **argv) {
     }
 
     printf("%s\n", jobs[job_idx].name);
-    long st = sys_waitpid(jobs[job_idx].pid);
+    fg_pid = jobs[job_idx].pid;
+    long st = waitpid_retry(jobs[job_idx].pid);
+    fg_pid = 0;
     jobs[job_idx].active = 0;
-    (void)st;
+    last_exit_status = (int)st;
 }
 
 /* ---- Service IPC protocol (must match serviced.c) ---- */
@@ -1237,11 +1240,13 @@ static int svc_recv_response(svc_response_t *resp) {
 
 static void cmd_service(int argc, char **argv) {
     if (argc < 2) {
-        printf("usage: service <start|stop|list|restart> [args...]\n");
-        printf("  service start <name> <path>  Start a supervised service\n");
-        printf("  service stop <name>          Stop a supervised service\n");
-        printf("  service list                 List all services\n");
-        printf("  service restart <name>       Restart a service\n");
+        printf("usage: service <command> [args...]\n");
+        printf("  service start <name> <path>    Start a supervised service\n");
+        printf("  service stop <name>            Stop a supervised service\n");
+        printf("  service list                   List all services\n");
+        printf("  service restart <name>         Restart a service\n");
+        printf("  service enable <name> <path>   Add to boot config\n");
+        printf("  service disable <name>         Remove from boot config\n");
         return;
     }
 
@@ -1414,9 +1419,163 @@ static void cmd_service(int argc, char **argv) {
         else
             printf("service: '%s' not found (%d)\n", argv[2], resp.result);
 
+    } else if (strcmp(argv[1], "enable") == 0) {
+        if (argc < 4) {
+            printf("usage: service enable <name> <path> [policy] [after]\n");
+            return;
+        }
+        const char *sname = argv[2];
+        const char *spath = argv[3];
+        const char *spolicy = (argc >= 5) ? argv[4] : "one-for-one";
+        const char *safter = (argc >= 6) ? argv[5] : "none";
+
+        /* Resolve path */
+        char elf_path[128];
+        if (spath[0] == '/') {
+            int pi = 0;
+            while (spath[pi] && pi < 126) { elf_path[pi] = spath[pi]; pi++; }
+            elf_path[pi] = '\0';
+        } else {
+            elf_path[0] = '/';
+            int pi = 0;
+            while (spath[pi] && pi < 125) { elf_path[pi + 1] = spath[pi]; pi++; }
+            elf_path[pi + 1] = '\0';
+        }
+        int has_dot = 0;
+        for (int di = 0; elf_path[di]; di++) if (elf_path[di] == '.') has_dot = 1;
+        if (!has_dot) {
+            int len = 0;
+            while (elf_path[len]) len++;
+            if (len < 123) {
+                elf_path[len] = '.'; elf_path[len+1] = 'e';
+                elf_path[len+2] = 'l'; elf_path[len+3] = 'f';
+                elf_path[len+4] = '\0';
+            }
+        }
+
+        /* Read existing config to check for duplicates */
+        long fd = sys_open("/etc/services", 0);
+        if (fd >= 0) {
+            char cfgbuf[2048];
+            long n = sys_read(fd, cfgbuf, sizeof(cfgbuf) - 1);
+            sys_close(fd);
+            if (n > 0) {
+                cfgbuf[n] = '\0';
+                /* Check if service name already exists */
+                char needle[64];
+                int ni = 0;
+                while (sname[ni] && ni < 62) { needle[ni] = sname[ni]; ni++; }
+                needle[ni] = '|';
+                needle[ni + 1] = '\0';
+                if (strstr(cfgbuf, needle) != NULL) {
+                    printf("service: '%s' already in config\n", sname);
+                    return;
+                }
+            }
+        }
+
+        /* Append to config */
+        char line[256];
+        int lp = 0;
+        for (int ci = 0; sname[ci] && lp < 250; ci++) line[lp++] = sname[ci];
+        line[lp++] = '|';
+        for (int ci = 0; elf_path[ci] && lp < 250; ci++) line[lp++] = elf_path[ci];
+        line[lp++] = '|';
+        for (int ci = 0; spolicy[ci] && lp < 250; ci++) line[lp++] = spolicy[ci];
+        line[lp++] = '|';
+        for (int ci = 0; safter[ci] && lp < 250; ci++) line[lp++] = safter[ci];
+        line[lp++] = '\n';
+        line[lp] = '\0';
+
+        fd = sys_open("/etc/services", 0);
+        if (fd < 0) {
+            sys_mkdir("/etc");
+            sys_create("/etc/services");
+            fd = sys_open("/etc/services", 0);
+        }
+        if (fd >= 0) {
+            /* Find end of file */
+            long end = sys_seek(fd, 0, 2);  /* SEEK_END */
+            if (end < 0) end = 0;
+            sys_fwrite(fd, line, lp);
+            sys_close(fd);
+            printf("Service '%s' enabled (will start on next boot)\n", sname);
+        } else {
+            printf("service: failed to write config\n");
+        }
+
+    } else if (strcmp(argv[1], "disable") == 0) {
+        if (argc < 3) {
+            printf("usage: service disable <name>\n");
+            return;
+        }
+        const char *sname = argv[2];
+
+        /* Read config */
+        long fd = sys_open("/etc/services", 0);
+        if (fd < 0) {
+            printf("service: no config file\n");
+            return;
+        }
+        char cfgbuf[2048];
+        long n = sys_read(fd, cfgbuf, sizeof(cfgbuf) - 1);
+        sys_close(fd);
+        if (n <= 0) {
+            printf("service: config is empty\n");
+            return;
+        }
+        cfgbuf[n] = '\0';
+
+        /* Filter out matching line */
+        char outbuf[2048];
+        int outlen = 0;
+        int found = 0;
+        int pos = 0;
+        while (pos < n) {
+            int line_start = pos;
+            while (pos < n && cfgbuf[pos] != '\n') pos++;
+            int line_end = pos;
+            if (pos < n) pos++;
+
+            /* Check if this line starts with "name|" */
+            int match = 1;
+            int si = 0;
+            while (sname[si]) {
+                if (line_start + si >= line_end || cfgbuf[line_start + si] != sname[si]) {
+                    match = 0;
+                    break;
+                }
+                si++;
+            }
+            if (match && line_start + si < line_end && cfgbuf[line_start + si] == '|') {
+                found = 1;
+                continue;  /* skip this line */
+            }
+
+            /* Copy line to output */
+            for (int j = line_start; j < line_end && outlen < 2046; j++)
+                outbuf[outlen++] = cfgbuf[j];
+            if (outlen < 2047) outbuf[outlen++] = '\n';
+        }
+
+        if (!found) {
+            printf("service: '%s' not in config\n", sname);
+            return;
+        }
+
+        /* Rewrite config file */
+        sys_truncate("/etc/services", 0);
+        fd = sys_open("/etc/services", 0);
+        if (fd >= 0) {
+            if (outlen > 0)
+                sys_fwrite(fd, outbuf, outlen);
+            sys_close(fd);
+        }
+        printf("Service '%s' disabled (removed from boot config)\n", sname);
+
     } else {
         printf("service: unknown command '%s'\n", argv[1]);
-        printf("usage: service <start|stop|list|restart> [args...]\n");
+        printf("usage: service <start|stop|list|restart|enable|disable> [args...]\n");
     }
 }
 
@@ -1797,11 +1956,22 @@ static void execute_pipeline(command_t *cmds, int ncmds) {
 
 /* --- Main --- */
 
+/* SIGINT handler: forward to foreground job if active, otherwise ignore */
+static void shell_sigint_handler(int sig) {
+    (void)sig;
+    if (fg_pid > 0)
+        sys_kill(fg_pid, SIGINT);
+    sys_sigreturn();
+}
+
 int main(int argc_init, char **argv_init) {
     /* Detect PTY */
     termios_t t;
     if (sys_ioctl(0, TCGETS, (long)&t) == 0)
         stdin_is_pty = 1;
+
+    /* Install SIGINT handler (forward to fg job instead of dying) */
+    sys_sigaction(SIGINT, shell_sigint_handler);
 
     /* Init jobs */
     for (int i = 0; i < MAX_JOBS; i++)

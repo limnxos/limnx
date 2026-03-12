@@ -245,50 +245,10 @@ int64_t sys_dup2(uint64_t oldfd, uint64_t newfd,
     if (oldfd == newfd)
         return (int64_t)newfd;
 
-    /* Close newfd if open */
+    /* Close newfd if open (unified via fd_close) */
     fd_entry_t *dst = &proc->fd_table[newfd];
-    if (dst->pipe != NULL) {
-        uint64_t pflags;
-        pipe_lock_acquire(&pflags);
-        pipe_t *pp = (pipe_t *)dst->pipe;
-        if (dst->pipe_write) {
-            if (pp->write_refs > 0)
-                pp->write_refs--;
-            if (pp->write_refs == 0)
-                pp->closed_write = 1;
-        } else {
-            if (pp->read_refs > 0)
-                pp->read_refs--;
-            if (pp->read_refs == 0)
-                pp->closed_read = 1;
-        }
-        if (pp->closed_read && pp->closed_write)
-            pp->used = 0;
-        pipe_unlock_release(pflags);
-    }
-    if (dst->pty != NULL) {
-        int pty_idx = pty_index((pty_t *)dst->pty);
-        if (pty_idx >= 0) {
-            if (dst->pty_is_master)
-                pty_close_master(pty_idx);
-            else
-                pty_close_slave(pty_idx);
-        }
-    }
-    if (dst->unix_sock != NULL)
-        unix_sock_close((unix_sock_t *)dst->unix_sock);
-    if (dst->eventfd != NULL) {
-        int ei = eventfd_index((const eventfd_t *)dst->eventfd);
-        if (ei >= 0) eventfd_close(ei);
-    }
-    if (dst->epoll != NULL) {
-        int ep_idx = epoll_index((epoll_instance_t *)dst->epoll);
-        if (ep_idx >= 0) epoll_close(ep_idx);
-    }
-    if (dst->uring != NULL) {
-        int ur_idx = uring_index((uring_instance_t *)dst->uring);
-        if (ur_idx >= 0) uring_close(ur_idx);
-    }
+    if (!fd_is_free(dst))
+        fd_close(dst);
 
     /* Copy fd entry */
     proc->fd_table[newfd] = *src;

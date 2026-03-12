@@ -14,6 +14,98 @@
 #include "pty/pty.h"
 #include "ipc/unix_sock.h"
 #include "ipc/eventfd.h"
+#include "net/tcp.h"
+
+/* poll_check_fd — check readiness of a single fd for given events */
+int16_t poll_check_fd(process_t *proc, int fd, int16_t events) {
+    int16_t revents = 0;
+
+    if (fd < 0 || fd >= MAX_FDS)
+        return POLLERR;
+
+    fd_entry_t *entry = &proc->fd_table[fd];
+    if (fd_is_free(entry))
+        return POLLERR;
+
+    /* Pipe */
+    if (entry->pipe != NULL) {
+        uint64_t pflags;
+        pipe_lock_acquire(&pflags);
+        pipe_t *pp = (pipe_t *)entry->pipe;
+        if (!entry->pipe_write) {
+            if ((events & POLLIN) && pp->count > 0)
+                revents |= POLLIN;
+            if (pp->closed_write)
+                revents |= POLLHUP;
+        } else {
+            if ((events & POLLOUT) && pp->count < PIPE_BUF_SIZE)
+                revents |= POLLOUT;
+            if (pp->closed_read)
+                revents |= POLLERR;
+        }
+        pipe_unlock_release(pflags);
+        return revents;
+    }
+
+    /* PTY */
+    if (entry->pty != NULL) {
+        int pidx = pty_index((pty_t *)entry->pty);
+        if (pidx < 0) return POLLERR;
+        if ((events & POLLIN) && pty_readable(pidx, entry->pty_is_master))
+            revents |= POLLIN;
+        if ((events & POLLOUT) && pty_writable(pidx, entry->pty_is_master))
+            revents |= POLLOUT;
+        return revents;
+    }
+
+    /* Unix socket */
+    if (entry->unix_sock != NULL) {
+        unix_sock_t *us = (unix_sock_t *)entry->unix_sock;
+        if (us->state == USOCK_LISTENING) {
+            if ((events & POLLIN) && unix_sock_has_backlog(us))
+                revents |= POLLIN;
+        } else if (us->state == USOCK_CONNECTED) {
+            if ((events & POLLIN) && unix_sock_readable(us))
+                revents |= POLLIN;
+            if ((events & POLLOUT) && unix_sock_writable(us))
+                revents |= POLLOUT;
+            if (us->peer_closed)
+                revents |= POLLHUP;
+        }
+        return revents;
+    }
+
+    /* Eventfd */
+    if (entry->eventfd != NULL) {
+        int efd_idx = eventfd_index((const eventfd_t *)entry->eventfd);
+        if (efd_idx >= 0) {
+            if ((events & POLLIN) && eventfd_readable(efd_idx))
+                revents |= POLLIN;
+            if (events & POLLOUT)
+                revents |= POLLOUT;
+        }
+        return revents;
+    }
+
+    /* TCP connection fd */
+    if (entry->tcp_conn_idx >= 0) {
+        int tcp_events = tcp_poll(entry->tcp_conn_idx);
+        return (int16_t)(tcp_events & events);
+    }
+
+    /* epoll/uring fds — not pollable */
+    if (entry->epoll != NULL || entry->uring != NULL)
+        return 0;
+
+    /* Regular file — always ready */
+    if (entry->node != NULL) {
+        if (events & POLLIN) revents |= POLLIN;
+        if (events & POLLOUT) revents |= POLLOUT;
+        return revents;
+    }
+
+    return POLLERR;
+}
 
 int64_t sys_write(uint64_t buf, uint64_t len,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
