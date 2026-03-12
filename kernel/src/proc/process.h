@@ -117,6 +117,7 @@ typedef struct process {
     char          name[32];       /* process name (from exec path) */
     /* SA_RESTART support */
     uint8_t       restart_pending;
+    uint8_t       daemon;           /* 1 = daemon process (managed by supervisor) */
     uint64_t      restart_syscall_num;
     uint64_t      restart_args[5];
 } process_t;

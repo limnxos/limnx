@@ -529,7 +529,7 @@ static inline int umutex_trylock(umutex_t *m) {
     return __sync_val_compare_and_swap(&m->state, 0, 1) == 0 ? 0 : -1;
 }
 
-/* Process info (matches kernel layout: 56 bytes) */
+/* Process info (matches kernel layout: 64 bytes) */
 typedef struct proc_info {
     long     pid;
     long     parent_pid;
@@ -537,6 +537,8 @@ typedef struct proc_info {
     unsigned short uid;
     unsigned short gid;
     char     name[32];
+    unsigned char daemon;  /* 1 = daemon (managed by supervisor) */
+    unsigned char reserved[7];
 } proc_info_t;
 
 long sys_procinfo(long index, proc_info_t *info);
@@ -608,6 +610,20 @@ long sys_super_create(const char *name);
 long sys_super_add(long super_id, const char *elf_path, long ns_id, long caps);
 long sys_super_set_policy(long super_id, long policy);
 long sys_super_start(long super_id);
+long sys_super_list(void *buf, long max_count);
+long sys_super_stop(long super_id);
+
+/* Supervisor info structure (matches kernel super_info_t) */
+typedef struct super_info {
+    unsigned int id;
+    unsigned char used;
+    unsigned char policy;
+    unsigned char child_count;
+    char name[32];
+    unsigned long owner_pid;
+    unsigned long child_pids[8];
+    unsigned int restart_count;
+} super_info_t;
 
 /* pipe2 flags */
 #define O_CLOEXEC 0x01

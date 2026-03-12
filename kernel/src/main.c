@@ -862,6 +862,38 @@ void kmain(void) {
         if (crt) sched_add(crt);
     }
 
+    /* Create /etc/services config for serviced */
+    {
+        vfs_mkdir("/etc");
+        int svc_node = vfs_create("/etc/services");
+        if (svc_node >= 0) {
+            /* Default config: empty (no auto-start services) */
+            /* Format: name|elf_path|policy|after */
+            /* Users can add services via shell: write /etc/services */
+            const char *default_cfg =
+                "# Service config: name|path|policy|after\n"
+                "# policy: one-for-one, one-for-all\n"
+                "# after: dependency name, or none\n";
+            int len = 0;
+            while (default_cfg[len]) len++;
+            vfs_write(svc_node, 0, (const uint8_t *)default_cfg, len);
+            pr_info("Created /etc/services\n");
+        }
+    }
+
+    /* Load and run serviced.elf — persistent service daemon */
+    pr_info("\nLoading serviced.elf...\n");
+    {
+        process_t *sd_proc = load_elf_from_vfs("/serviced.elf");
+        if (sd_proc) {
+            sd_proc->capabilities = 0xFFF;  /* full caps for service management */
+            pr_info("serviced.elf spawned (pid %lu)\n", sd_proc->pid);
+            sched_add(sd_proc->main_thread);
+        } else {
+            pr_warn("serviced.elf not found\n");
+        }
+    }
+
     /* Load and run shell.elf with console PTY as stdin/stdout/stderr */
     pr_info("\nLoading shell.elf...\n");
     {
@@ -892,7 +924,7 @@ void kmain(void) {
             }
             /* Set LIMNX_VERSION env on shell */
             {
-                const char *env_entry = "LIMNX_VERSION=0.89";
+                const char *env_entry = "LIMNX_VERSION=0.92";
                 int elen = 0;
                 while (env_entry[elen]) elen++;
                 for (int i = 0; i <= elen; i++)

@@ -802,7 +802,8 @@ static int is_builtin(const char *cmd) {
            strcmp(cmd, "df") == 0 || strcmp(cmd, "mount") == 0 ||
            strcmp(cmd, "test") == 0 || strcmp(cmd, "cp") == 0 ||
            strcmp(cmd, "head") == 0 || strcmp(cmd, "tail") == 0 ||
-           strcmp(cmd, "wc") == 0;
+           strcmp(cmd, "wc") == 0 || strcmp(cmd, "wait") == 0 ||
+           strcmp(cmd, "fg") == 0 || strcmp(cmd, "service") == 0;
 }
 
 static void cmd_help(void) {
@@ -832,6 +833,9 @@ static void cmd_help(void) {
     printf("  pid                  Show shell PID\n");
     printf("  history              Show command history\n");
     printf("  jobs                 Show background jobs\n");
+    printf("  wait [pid|%%job]      Wait for background job(s)\n");
+    printf("  fg [%%job]            Bring job to foreground\n");
+    printf("  service <cmd> [...]  Manage services (start/stop/list/restart)\n");
     printf("  test [name|all]      Run test(s)\n");
     printf("  exit                 Exit shell\n");
     printf("\nFeatures: pipes (|), redirection (> >> <),\n");
@@ -1083,13 +1087,347 @@ static void cmd_jobs(void) {
     if (!any) printf("No background jobs.\n");
 }
 
+/* Parse a job specifier: %N → job index, or raw PID number. Returns -1 on error. */
+static int parse_job_spec(const char *arg, long *out_pid) {
+    if (arg[0] == '%') {
+        /* Job ID */
+        int job_id = 0;
+        for (int i = 1; arg[i]; i++) {
+            if (arg[i] < '0' || arg[i] > '9') return -1;
+            job_id = job_id * 10 + (arg[i] - '0');
+        }
+        job_id--;  /* 1-based → 0-based */
+        if (job_id < 0 || job_id >= MAX_JOBS || !jobs[job_id].active)
+            return -1;
+        *out_pid = jobs[job_id].pid;
+        return job_id;
+    }
+    /* Raw PID */
+    long pid = 0;
+    for (int i = 0; arg[i]; i++) {
+        if (arg[i] < '0' || arg[i] > '9') return -1;
+        pid = pid * 10 + (arg[i] - '0');
+    }
+    *out_pid = pid;
+    /* Find matching job */
+    for (int i = 0; i < MAX_JOBS; i++) {
+        if (jobs[i].active && jobs[i].pid == pid) return i;
+    }
+    return -2;  /* valid PID but not in jobs table */
+}
+
+static void cmd_wait(int argc, char **argv) {
+    if (argc < 2) {
+        /* Wait for all background jobs */
+        int any = 0;
+        for (int i = 0; i < MAX_JOBS; i++) {
+            if (jobs[i].active) {
+                any = 1;
+                long st = sys_waitpid(jobs[i].pid);
+                printf("[%d] Done (%ld)  %s\n", i + 1, st, jobs[i].name);
+                jobs[i].active = 0;
+            }
+        }
+        if (!any) printf("wait: no background jobs\n");
+    } else {
+        long pid;
+        int idx = parse_job_spec(argv[1], &pid);
+        if (idx == -1) {
+            printf("wait: invalid job spec '%s'\n", argv[1]);
+            return;
+        }
+        long st = sys_waitpid(pid);
+        if (idx >= 0) {
+            printf("[%d] Done (%ld)  %s\n", idx + 1, st, jobs[idx].name);
+            jobs[idx].active = 0;
+        } else {
+            printf("pid %ld exited (%ld)\n", pid, st);
+        }
+    }
+}
+
+static void cmd_fg(int argc, char **argv) {
+    int job_idx = -1;
+
+    if (argc < 2) {
+        /* Find the last active job */
+        for (int i = MAX_JOBS - 1; i >= 0; i--) {
+            if (jobs[i].active) { job_idx = i; break; }
+        }
+        if (job_idx < 0) {
+            printf("fg: no background jobs\n");
+            return;
+        }
+    } else {
+        long pid;
+        job_idx = parse_job_spec(argv[1], &pid);
+        if (job_idx < 0) {
+            printf("fg: invalid job spec '%s'\n", argv[1]);
+            return;
+        }
+    }
+
+    printf("%s\n", jobs[job_idx].name);
+    long st = sys_waitpid(jobs[job_idx].pid);
+    jobs[job_idx].active = 0;
+    (void)st;
+}
+
+/* ---- Service IPC protocol (must match serviced.c) ---- */
+
+#define SVC_CMD_START    1
+#define SVC_CMD_STOP     2
+#define SVC_CMD_LIST     3
+#define SVC_CMD_RESTART  4
+
+#define SVC_RESP_OK      0
+#define SVC_RESP_ERR     1
+#define SVC_RESP_LIST    2
+
+typedef struct svc_request {
+    unsigned char cmd;
+    unsigned char policy;
+    unsigned char reserved[2];
+    char reply_agent[32];
+    char name[32];
+    char elf_path[128];
+    unsigned long caps;
+    long ns_id;
+} svc_request_t;
+
+typedef struct svc_response {
+    unsigned char status;
+    unsigned char count;
+    unsigned char health;    /* 0=DOWN, 1=UP */
+    unsigned char reserved;
+    int result;
+    unsigned int id;
+    unsigned char policy;
+    unsigned char child_count;
+    unsigned char pad[2];
+    unsigned int restart_count;
+    unsigned long owner_pid;
+    char name[32];
+    unsigned long child_pids[8];
+} svc_response_t;
+
+/* Format PID-based reply agent name: "svc-<pid>" */
+static void svc_reply_name(char *buf, long pid) {
+    buf[0] = 's'; buf[1] = 'v'; buf[2] = 'c'; buf[3] = '-';
+    /* Convert PID to string */
+    char digits[16];
+    int n = 0;
+    long v = pid;
+    if (v == 0) { digits[n++] = '0'; }
+    else { while (v > 0) { digits[n++] = '0' + (v % 10); v /= 10; } }
+    for (int i = 0; i < n; i++) buf[4 + i] = digits[n - 1 - i];
+    buf[4 + n] = '\0';
+}
+
+/* Wait for a response from serviced with yield-based polling */
+static int svc_recv_response(svc_response_t *resp) {
+    long sender = 0, tok = 0;
+    for (int i = 0; i < 2000; i++) {
+        long r = sys_agent_recv(resp, sizeof(*resp), &sender, &tok);
+        if (r > 0) return 0;
+        sys_yield();
+    }
+    return -1;  /* timeout */
+}
+
+static void cmd_service(int argc, char **argv) {
+    if (argc < 2) {
+        printf("usage: service <start|stop|list|restart> [args...]\n");
+        printf("  service start <name> <path>  Start a supervised service\n");
+        printf("  service stop <name>          Stop a supervised service\n");
+        printf("  service list                 List all services\n");
+        printf("  service restart <name>       Restart a service\n");
+        return;
+    }
+
+    /* Register temporary reply agent */
+    char reply_name[32];
+    svc_reply_name(reply_name, sys_getpid());
+    sys_agent_register(reply_name);
+
+    /* Build request */
+    svc_request_t req;
+    memset(&req, 0, sizeof(req));
+    int i = 0;
+    while (reply_name[i] && i < 31) { req.reply_agent[i] = reply_name[i]; i++; }
+    req.reply_agent[i] = '\0';
+
+    if (strcmp(argv[1], "list") == 0) {
+        req.cmd = SVC_CMD_LIST;
+
+        if (sys_agent_send("serviced", &req, sizeof(req), 0) < 0) {
+            printf("service: serviced not running\n");
+            return;
+        }
+
+        svc_response_t resp;
+        if (svc_recv_response(&resp) < 0) {
+            printf("service: timeout\n");
+            return;
+        }
+
+        if (resp.count == 0) {
+            printf("No active services.\n");
+            return;
+        }
+
+        printf("  ID  NAME                       STATUS  POLICY         CHILDREN  RESTARTS  OWNER\n");
+
+        /* First response is already received */
+        int total = resp.count;
+        for (int idx = 0; idx < total; idx++) {
+            if (idx > 0) {
+                if (svc_recv_response(&resp) < 0) break;
+            }
+            const char *pol = (resp.policy == SUPER_ONE_FOR_ALL) ? "one-for-all" : "one-for-one";
+            const char *health = resp.health ? "UP" : "DOWN";
+            printf("  %-3u %-26s %-6s  %-14s %-9u %-9u pid %lu\n",
+                   resp.id, resp.name, health, pol, resp.child_count,
+                   resp.restart_count, resp.owner_pid);
+            for (int j = 0; j < 8; j++) {
+                if (resp.child_pids[j] != 0)
+                    printf("       child pid %lu\n", resp.child_pids[j]);
+            }
+        }
+
+    } else if (strcmp(argv[1], "start") == 0) {
+        if (argc < 4) {
+            printf("usage: service start <name> <path> [policy]\n");
+            return;
+        }
+
+        req.cmd = SVC_CMD_START;
+
+        /* Copy service name */
+        int ni = 0;
+        while (argv[2][ni] && ni < 31) { req.name[ni] = argv[2][ni]; ni++; }
+        req.name[ni] = '\0';
+
+        /* Resolve ELF path */
+        const char *path = argv[3];
+        char elf_path[128];
+        if (path[0] == '/') {
+            int pi = 0;
+            while (path[pi] && pi < 126) { elf_path[pi] = path[pi]; pi++; }
+            elf_path[pi] = '\0';
+        } else {
+            elf_path[0] = '/';
+            int pi = 0;
+            while (path[pi] && pi < 125) { elf_path[pi + 1] = path[pi]; pi++; }
+            elf_path[pi + 1] = '\0';
+        }
+
+        /* Add .elf extension if missing */
+        int has_dot = 0;
+        for (int ei = 0; elf_path[ei]; ei++) if (elf_path[ei] == '.') has_dot = 1;
+        if (!has_dot) {
+            int len = 0;
+            while (elf_path[len]) len++;
+            if (len < 123) {
+                elf_path[len] = '.'; elf_path[len+1] = 'e';
+                elf_path[len+2] = 'l'; elf_path[len+3] = 'f';
+                elf_path[len+4] = '\0';
+            }
+        }
+
+        int ei = 0;
+        while (elf_path[ei] && ei < 127) { req.elf_path[ei] = elf_path[ei]; ei++; }
+        req.elf_path[ei] = '\0';
+
+        req.caps = 0xFFF;
+        if (argc >= 5 && strcmp(argv[4], "one-for-all") == 0)
+            req.policy = SUPER_ONE_FOR_ALL;
+
+        if (sys_agent_send("serviced", &req, sizeof(req), 0) < 0) {
+            printf("service: serviced not running\n");
+            return;
+        }
+
+        svc_response_t resp;
+        if (svc_recv_response(&resp) < 0) {
+            printf("service: timeout\n");
+            return;
+        }
+
+        if (resp.status == SVC_RESP_OK)
+            printf("Service '%s' started (supervisor %d)\n", argv[2], resp.result);
+        else
+            printf("service: failed to start '%s' (error %d)\n", argv[2], resp.result);
+
+    } else if (strcmp(argv[1], "stop") == 0) {
+        if (argc < 3) {
+            printf("usage: service stop <name>\n");
+            return;
+        }
+
+        req.cmd = SVC_CMD_STOP;
+        int ni = 0;
+        while (argv[2][ni] && ni < 31) { req.name[ni] = argv[2][ni]; ni++; }
+        req.name[ni] = '\0';
+
+        if (sys_agent_send("serviced", &req, sizeof(req), 0) < 0) {
+            printf("service: serviced not running\n");
+            return;
+        }
+
+        svc_response_t resp;
+        if (svc_recv_response(&resp) < 0) {
+            printf("service: timeout\n");
+            return;
+        }
+
+        if (resp.status == SVC_RESP_OK)
+            printf("Service '%s' stopped.\n", argv[2]);
+        else
+            printf("service: '%s' not found or failed (%d)\n", argv[2], resp.result);
+
+    } else if (strcmp(argv[1], "restart") == 0) {
+        if (argc < 3) {
+            printf("usage: service restart <name>\n");
+            return;
+        }
+
+        req.cmd = SVC_CMD_RESTART;
+        int ni = 0;
+        while (argv[2][ni] && ni < 31) { req.name[ni] = argv[2][ni]; ni++; }
+        req.name[ni] = '\0';
+
+        if (sys_agent_send("serviced", &req, sizeof(req), 0) < 0) {
+            printf("service: serviced not running\n");
+            return;
+        }
+
+        svc_response_t resp;
+        if (svc_recv_response(&resp) < 0) {
+            printf("service: timeout\n");
+            return;
+        }
+
+        if (resp.status == SVC_RESP_OK)
+            printf("Service '%s' restarting (%d child(ren) killed, supervisor will restart)\n",
+                   argv[2], resp.result);
+        else
+            printf("service: '%s' not found (%d)\n", argv[2], resp.result);
+
+    } else {
+        printf("service: unknown command '%s'\n", argv[1]);
+        printf("usage: service <start|stop|list|restart> [args...]\n");
+    }
+}
+
 static void cmd_ps(void) {
-    printf("  PID  PPID  UID  STATE  NAME\n");
+    printf("  PID  PPID  UID  STATE    TYPE    NAME\n");
     proc_info_t info;
     for (long i = 0; sys_procinfo(i, &info) == 0; i++) {
         const char *state = info.state == 1 ? "stopped" : "running";
-        printf("%5ld %5ld %4u  %-7s  %s\n",
-               info.pid, info.parent_pid, info.uid, state, info.name);
+        const char *type = info.daemon ? "daemon" : "user";
+        printf("%5ld %5ld %4u  %-7s  %-6s  %s\n",
+               info.pid, info.parent_pid, info.uid, state, type, info.name);
     }
 }
 
@@ -1223,6 +1561,12 @@ static int run_builtin(command_t *cmd, int *should_exit) {
         }
     } else if (strcmp(name, "jobs") == 0) {
         cmd_jobs();
+    } else if (strcmp(name, "wait") == 0) {
+        cmd_wait(argc, argv);
+    } else if (strcmp(name, "fg") == 0) {
+        cmd_fg(argc, argv);
+    } else if (strcmp(name, "service") == 0) {
+        cmd_service(argc, argv);
     } else if (strcmp(name, "ps") == 0) {
         cmd_ps();
     } else if (strcmp(name, "df") == 0) {

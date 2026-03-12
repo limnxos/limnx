@@ -3,6 +3,7 @@
 
 #include "ipc/supervisor.h"
 #include "proc/process.h"
+#include "errno.h"
 #include "proc/elf.h"
 #include "fs/vfs.h"
 #include "sched/sched.h"
@@ -138,6 +139,7 @@ static void supervisor_restart_child(supervisor_t *sv, int child_idx) {
 
     proc->parent_pid = sv->owner_pid;
     proc->capabilities = (uint32_t)ch->caps;
+    proc->daemon = 1;
     ch->pid = proc->pid;
     sched_add(proc->main_thread);
     pr_info("Restarted %s as pid %lu\n",
@@ -171,6 +173,75 @@ int supervisor_start(uint32_t super_id) {
         launched++;
     }
     return launched;
+}
+
+int supervisor_list(super_info_t *buf, int max_count) {
+    uint64_t flags;
+    spin_lock_irqsave(&supervisor_lock, &flags);
+
+    int count = 0;
+    for (int i = 0; i < MAX_SUPERVISORS && count < max_count; i++) {
+        if (!supervisors[i].used) continue;
+        supervisor_t *sv = &supervisors[i];
+        super_info_t *out = &buf[count];
+        out->id = sv->id;
+        out->used = 1;
+        out->policy = sv->policy;
+        out->child_count = sv->child_count;
+        out->owner_pid = sv->owner_pid;
+        out->restart_count = sv->restart_count;
+        for (int j = 0; j < SUPER_NAME_MAX; j++)
+            out->name[j] = sv->name[j];
+        for (int j = 0; j < MAX_SUPER_CHILDREN; j++)
+            out->child_pids[j] = sv->children[j].used ? sv->children[j].pid : 0;
+        count++;
+    }
+
+    spin_unlock_irqrestore(&supervisor_lock, flags);
+    return count;
+}
+
+int supervisor_stop(uint32_t super_id, uint64_t caller_pid) {
+    uint64_t flags;
+    spin_lock_irqsave(&supervisor_lock, &flags);
+
+    if (super_id >= MAX_SUPERVISORS || !supervisors[super_id].used) {
+        spin_unlock_irqrestore(&supervisor_lock, flags);
+        return -EINVAL;
+    }
+
+    supervisor_t *sv = &supervisors[super_id];
+    if (sv->owner_pid != caller_pid) {
+        spin_unlock_irqrestore(&supervisor_lock, flags);
+        return -EACCES;
+    }
+
+    /* Mark unused first to prevent supervisor_on_exit from restarting */
+    sv->used = 0;
+
+    /* Collect child PIDs to kill */
+    uint64_t kill_pids[MAX_SUPER_CHILDREN];
+    int kill_count = 0;
+    for (int i = 0; i < MAX_SUPER_CHILDREN; i++) {
+        if (sv->children[i].used && sv->children[i].pid != 0)
+            kill_pids[kill_count++] = sv->children[i].pid;
+        sv->children[i].used = 0;
+        sv->children[i].pid = 0;
+    }
+    sv->child_count = 0;
+
+    spin_unlock_irqrestore(&supervisor_lock, flags);
+
+    /* Kill children outside lock */
+    for (int i = 0; i < kill_count; i++) {
+        process_t *p = process_lookup(kill_pids[i]);
+        if (p && !p->exited)
+            process_deliver_signal(p, SIGKILL);
+    }
+
+    pr_info("Supervisor '%s' stopped (%d children killed)\n",
+            sv->name, kill_count);
+    return 0;
 }
 
 void supervisor_on_exit(uint64_t pid, int exit_status) {

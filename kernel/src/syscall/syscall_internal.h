@@ -198,5 +198,7 @@ int64_t sys_super_create(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_super_add(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_super_set_policy(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_super_start(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_super_list(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_super_stop(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
 #endif /* LIMNX_SYSCALL_INTERNAL_H */

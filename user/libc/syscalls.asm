@@ -963,3 +963,17 @@ sys_environ:
     mov rax, 130        ; SYS_ENVIRON
     syscall
     ret
+
+; --- sys_super_list(buf, max_count) ---
+global sys_super_list
+sys_super_list:
+    mov rax, 131        ; SYS_SUPER_LIST
+    syscall
+    ret
+
+; --- sys_super_stop(super_id) ---
+global sys_super_stop
+sys_super_stop:
+    mov rax, 132        ; SYS_SUPER_STOP
+    syscall
+    ret

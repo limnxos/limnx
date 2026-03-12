@@ -35,6 +35,18 @@ typedef struct supervisor {
     uint32_t       restart_count;        /* restarts in current window */
 } supervisor_t;
 
+/* Userspace-visible supervisor info (for SYS_SUPER_LIST) */
+typedef struct super_info {
+    uint32_t id;
+    uint8_t  used;
+    uint8_t  policy;
+    uint8_t  child_count;
+    char     name[SUPER_NAME_MAX];
+    uint64_t owner_pid;
+    uint64_t child_pids[MAX_SUPER_CHILDREN];
+    uint32_t restart_count;
+} super_info_t;
+
 void supervisor_init(void);
 int  supervisor_create(uint64_t owner_pid, const char *name);
 int  supervisor_add_child(uint32_t super_id, const char *elf_path,
@@ -42,5 +54,11 @@ int  supervisor_add_child(uint32_t super_id, const char *elf_path,
 int  supervisor_set_policy(uint32_t super_id, uint8_t policy);
 int  supervisor_start(uint32_t super_id);
 void supervisor_on_exit(uint64_t pid, int exit_status);
+
+/* List all supervisors. Returns count of entries filled. */
+int  supervisor_list(super_info_t *buf, int max_count);
+
+/* Stop a supervisor: kill children, mark unused. Returns 0 or -errno. */
+int  supervisor_stop(uint32_t super_id, uint64_t caller_pid);
 
 #endif

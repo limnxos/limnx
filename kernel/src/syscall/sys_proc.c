@@ -769,7 +769,7 @@ int64_t sys_getpgid(uint64_t pid_arg, uint64_t a2,
 int64_t sys_procinfo(uint64_t index, uint64_t buf_ptr,
                              uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a3; (void)a4; (void)a5;
-    if (validate_user_ptr(buf_ptr, 56) != 0) return -1;
+    if (validate_user_ptr(buf_ptr, 64) != 0) return -1;
 
     /* Find the index-th active process */
     extern process_t *proc_table_get(int idx);
@@ -790,6 +790,10 @@ int64_t sys_procinfo(uint64_t index, uint64_t buf_ptr,
             *(uint16_t *)(out + 22) = p->gid;
             for (int j = 0; j < 32; j++)
                 out[24 + j] = (uint8_t)p->name[j];
+            out[56] = p->daemon;
+            /* bytes 57-63 reserved */
+            for (int j = 57; j < 64; j++)
+                out[j] = 0;
             return 0;
         }
         count++;

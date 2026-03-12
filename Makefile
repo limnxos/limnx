@@ -88,7 +88,8 @@ USER_C_PROGRAMS := build/user/programs/shell.elf build/user/programs/agent.elf \
                    build/user/programs/learn.elf build/user/programs/infer.elf \
                    build/user/programs/inferd.elf build/user/programs/worker.elf \
                    build/user/programs/multiagent.elf build/user/programs/netagent.elf \
-                   build/user/programs/crasher.elf
+                   build/user/programs/crasher.elf \
+                   build/user/programs/serviced.elf
 
 # Test programs
 USER_C_TESTS := build/user/tests/mathtest.elf build/user/tests/agenttest.elf \

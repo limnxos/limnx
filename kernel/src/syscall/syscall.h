@@ -136,7 +136,9 @@
 #define SYS_TOPIC_RECV     128
 #define SYS_INFER_SWAP     129
 #define SYS_ENVIRON        130
-#define SYS_NR             131
+#define SYS_SUPER_LIST     131
+#define SYS_SUPER_STOP     132
+#define SYS_NR             133
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

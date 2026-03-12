@@ -496,6 +496,8 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_TOPIC_RECV]       = sys_topic_recv,
     [SYS_INFER_SWAP]       = sys_infer_swap,
     [SYS_ENVIRON]          = sys_environ,
+    [SYS_SUPER_LIST]       = sys_super_list,
+    [SYS_SUPER_STOP]       = sys_super_stop,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).

@@ -137,6 +137,24 @@ int64_t sys_super_start(uint64_t super_id, uint64_t a2,
     return supervisor_start((uint32_t)super_id);
 }
 
+int64_t sys_super_list(uint64_t buf_ptr, uint64_t max_count,
+                               uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    if (max_count == 0) return 0;
+    if (max_count > MAX_SUPERVISORS) max_count = MAX_SUPERVISORS;
+    if (validate_user_ptr(buf_ptr, max_count * sizeof(super_info_t)) != 0)
+        return -EFAULT;
+    return supervisor_list((super_info_t *)buf_ptr, (int)max_count);
+}
+
+int64_t sys_super_stop(uint64_t super_id, uint64_t a2,
+                               uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;
+    return supervisor_stop((uint32_t)super_id, t->process->pid);
+}
+
 int64_t sys_clock_gettime(uint64_t clockid, uint64_t ts_ptr,
                                    uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a3; (void)a4; (void)a5;
