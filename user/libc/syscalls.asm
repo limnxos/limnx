@@ -911,3 +911,11 @@ sys_infer_result:
     mov rax, 123        ; SYS_INFER_RESULT
     syscall
     ret
+
+; --- sys_execve(path, argv) ---
+; True exec: replaces current process image. Only returns on error.
+global sys_execve
+sys_execve:
+    mov rax, 124        ; SYS_EXECVE
+    syscall
+    ret

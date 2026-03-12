@@ -129,7 +129,8 @@
 #define SYS_INFER_SUBMIT   121
 #define SYS_INFER_POLL     122
 #define SYS_INFER_RESULT   123
-#define SYS_NR             124
+#define SYS_EXECVE         124
+#define SYS_NR             125
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

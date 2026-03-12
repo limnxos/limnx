@@ -26,6 +26,7 @@ long sys_read(long fd, void *buf, unsigned long len);
 long sys_close(long fd);
 long sys_stat(const char *path, void *stat_buf);
 long sys_exec(const char *path, const char **argv);
+long sys_execve(const char *path, const char **argv);
 long sys_socket(void);
 long sys_bind(long sockfd, unsigned long port);
 long sys_sendto(long sockfd, const void *buf, unsigned long len,

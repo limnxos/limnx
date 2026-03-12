@@ -1391,14 +1391,39 @@ static void execute_pipeline(command_t *cmds, int ncmds) {
                 sys_exit(0);
             }
 
-            /* External */
-            long exec_pid = run_external(&cmds[i]);
-            if (exec_pid <= 0) {
+            /* External — use true exec to replace fork child */
+            {
+                char epath[256];
+                if (cmds[i].argv[0][0] == '/') {
+                    int ei = 0;
+                    while (cmds[i].argv[0][ei] && ei < 255) { epath[ei] = cmds[i].argv[0][ei]; ei++; }
+                    epath[ei] = '\0';
+                } else {
+                    epath[0] = '/';
+                    int ei = 0;
+                    while (cmds[i].argv[0][ei] && ei < 254) { epath[ei + 1] = cmds[i].argv[0][ei]; ei++; }
+                    epath[ei + 1] = '\0';
+                }
+                /* Try with .elf extension */
+                char epath_elf[256];
+                int has_dot = 0;
+                for (int j = 0; epath[j]; j++) if (epath[j] == '.') has_dot = 1;
+                if (!has_dot) {
+                    int j = 0;
+                    while (epath[j]) { epath_elf[j] = epath[j]; j++; }
+                    epath_elf[j] = '.'; epath_elf[j+1] = 'e'; epath_elf[j+2] = 'l';
+                    epath_elf[j+3] = 'f'; epath_elf[j+4] = '\0';
+                } else {
+                    int j = 0;
+                    while (epath[j]) { epath_elf[j] = epath[j]; j++; }
+                    epath_elf[j] = '\0';
+                }
+                /* sys_execve replaces this process — only returns on error */
+                sys_execve(epath_elf, (const char **)cmds[i].argv);
+                sys_execve(epath, (const char **)cmds[i].argv);
                 printf("%s: command not found\n", cmds[i].argv[0]);
                 sys_exit(127);
             }
-            long st = waitpid_retry(exec_pid);
-            sys_exit((int)st);
         }
 
         pids[i] = pid;

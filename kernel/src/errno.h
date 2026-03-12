@@ -32,6 +32,7 @@
 #define EMFILE          24  /* Too many open files */
 #define ENOSPC          28  /* No space left on device */
 #define ESPIPE          29  /* Illegal seek */
+#define ENOEXEC          8  /* Exec format error */
 #define EPIPE           32  /* Broken pipe */
 
 /* Extended errno (Linux errno.h equivalent, codes 35+) */

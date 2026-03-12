@@ -309,6 +309,250 @@ int64_t sys_exec(uint64_t path_ptr, uint64_t argv_ptr,
     return (int64_t)child->pid;
 }
 
+int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
+                           uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    /* Copy path from user space (before we destroy the address space) */
+    char raw_path[MAX_PATH], path[MAX_PATH];
+    if (copy_string_from_user((const char *)path_ptr, raw_path, MAX_PATH) != 0)
+        return -EFAULT;
+    resolve_user_path(proc, raw_path, path);
+
+    /* Check CAP_EXEC */
+    if (!(proc->capabilities & CAP_EXEC) &&
+        !cap_token_check(proc->pid, CAP_EXEC, path))
+        return -EACCES;
+
+    /* Open and read the ELF file */
+    int node_idx = vfs_open(path);
+    if (node_idx < 0)
+        return -ENOENT;
+
+    vfs_node_t *exec_node = vfs_get_node(node_idx);
+    if (exec_node && !(exec_node->mode & VFS_PERM_EXEC))
+        return -EACCES;
+
+    vfs_stat_t st;
+    if (vfs_stat(path, &st) != 0 || st.size == 0)
+        return -ENOENT;
+
+    uint8_t *buf = (uint8_t *)kmalloc(st.size);
+    if (!buf)
+        return -ENOMEM;
+
+    int64_t n = vfs_read(node_idx, 0, buf, st.size);
+    if (n != (int64_t)st.size) {
+        kfree(buf);
+        return -EIO;
+    }
+
+    /* Copy argv from user space (before we destroy the address space) */
+    int argc = 0;
+    char argv_buf[PROC_ARGV_BUF_SIZE];
+    int buf_pos = 0;
+
+    if (argv_ptr != 0 && validate_user_ptr(argv_ptr, 8) == 0) {
+        const char **user_argv = (const char **)argv_ptr;
+        while (argc < PROC_MAX_ARGS) {
+            if (validate_user_ptr((uint64_t)&user_argv[argc], 8) != 0)
+                break;
+            const char *arg = user_argv[argc];
+            if (arg == NULL)
+                break;
+            char tmp[128];
+            if (copy_string_from_user(arg, tmp, sizeof(tmp)) != 0)
+                break;
+            int slen = 0;
+            while (tmp[slen]) slen++;
+            if (buf_pos + slen + 1 > PROC_ARGV_BUF_SIZE)
+                break;
+            for (int j = 0; j <= slen; j++)
+                argv_buf[buf_pos + j] = tmp[j];
+            buf_pos += slen + 1;
+            argc++;
+        }
+    }
+
+    /* Load ELF into a new address space */
+    elf_load_result_t result;
+    if (elf_load(buf, st.size, &result) != 0) {
+        kfree(buf);
+        return -ENOEXEC;
+    }
+    kfree(buf);
+
+    /* Map new user stack in the new address space */
+    uint64_t stack_pages = USER_STACK_SIZE / PAGE_SIZE;
+    uint64_t stack_bottom = USER_STACK_TOP - USER_STACK_SIZE;
+    for (uint64_t i = 0; i < stack_pages; i++) {
+        uint64_t phys = pmm_alloc_page();
+        if (phys == 0) {
+            vmm_free_user_pages(result.cr3);
+            return -ENOMEM;
+        }
+        uint8_t *dst = (uint8_t *)PHYS_TO_VIRT(phys);
+        for (uint64_t j = 0; j < PAGE_SIZE; j++)
+            dst[j] = 0;
+        if (vmm_map_page_in(result.cr3, stack_bottom + i * PAGE_SIZE, phys,
+                            PTE_USER | PTE_WRITABLE | PTE_NX) != 0) {
+            vmm_free_user_pages(result.cr3);
+            return -ENOMEM;
+        }
+    }
+
+    /* === POINT OF NO RETURN === */
+
+    /* Close FD_CLOEXEC file descriptors */
+    for (int i = 0; i < MAX_FDS; i++) {
+        if (proc->fd_table[i].fd_flags & FD_CLOEXEC)
+            fd_close(&proc->fd_table[i]);
+        else
+            proc->fd_table[i].fd_flags = 0;  /* clear cloexec in surviving fds */
+    }
+
+    /* Close TCP connections (not inherited across exec) */
+    for (int i = 0; i < 8; i++) {
+        if (proc->tcp_conns[i]) {
+            tcp_close(i);
+            proc->tcp_conns[i] = 0;
+        }
+    }
+
+    /* Detach shared memory regions */
+    {
+        uint64_t sflags;
+        shm_lock_acquire(&sflags);
+        for (int i = 0; i < MMAP_MAX_ENTRIES; i++) {
+            if (proc->mmap_table[i].used &&
+                proc->mmap_table[i].shm_id >= 0) {
+                int32_t sid = proc->mmap_table[i].shm_id;
+                if (sid < MAX_SHM_REGIONS && shm_table[sid].ref_count > 0) {
+                    shm_table[sid].ref_count--;
+                    if (shm_table[sid].ref_count == 0) {
+                        for (uint32_t pi = 0; pi < shm_table[sid].num_pages; pi++) {
+                            if (shm_table[sid].phys_pages[pi]) {
+                                pmm_free_page(shm_table[sid].phys_pages[pi]);
+                                shm_table[sid].phys_pages[pi] = 0;
+                            }
+                        }
+                        shm_table[sid].key = -1;
+                        shm_table[sid].num_pages = 0;
+                    }
+                }
+                proc->mmap_table[i].used = 0;
+                proc->mmap_table[i].shm_id = -1;
+            }
+        }
+        shm_unlock_release(sflags);
+    }
+
+    /* Free old address space */
+    uint64_t old_cr3 = proc->cr3;
+    arch_switch_address_space(vmm_get_kernel_pml4());
+    vmm_free_user_pages(old_cr3);
+
+    /* Install new address space */
+    proc->cr3 = result.cr3;
+    proc->user_entry = result.entry;
+    proc->user_stack_top = USER_STACK_TOP;
+
+    /* Reset mmap table */
+    for (int i = 0; i < MMAP_MAX_ENTRIES; i++) {
+        proc->mmap_table[i].used = 0;
+        proc->mmap_table[i].shm_id = -1;
+        proc->mmap_table[i].demand = 0;
+    }
+    proc->mmap_next_addr = MMAP_REGION_BASE;
+    proc->used_mem_pages = 0;
+
+    /* Set process name from path */
+    {
+        const char *base = path;
+        for (const char *p = path; *p; p++)
+            if (*p == '/') base = p + 1;
+        int ni = 0;
+        while (base[ni] && ni < 31) { proc->name[ni] = base[ni]; ni++; }
+        proc->name[ni] = '\0';
+        if (ni > 4 && proc->name[ni-4] == '.' && proc->name[ni-3] == 'e' &&
+            proc->name[ni-2] == 'l' && proc->name[ni-1] == 'f')
+            proc->name[ni-4] = '\0';
+    }
+
+    /* Set argv */
+    proc->argc = argc;
+    proc->argv_buf_len = buf_pos;
+    for (int i = 0; i < buf_pos; i++)
+        proc->argv_buf[i] = argv_buf[i];
+
+    /* Reset signals: handlers to SIG_DFL (except SIG_IGN stays) */
+    proc->pending_signals = 0;
+    proc->signal_mask = 0;
+    for (int i = 0; i < MAX_SIGNALS; i++) {
+        if (proc->sig_handlers[i].sa_handler != SIG_IGN) {
+            proc->sig_handlers[i].sa_handler = SIG_DFL;
+            proc->sig_handlers[i].sa_flags = 0;
+        }
+    }
+    proc->sig_queue.head = 0;
+    proc->sig_queue.tail = 0;
+    proc->sig_queue.count = 0;
+    proc->signal_depth = 0;
+    proc->restart_pending = 0;
+
+    /* Reset security state */
+    proc->seccomp_mask = 0;
+    proc->seccomp_mask_hi = 0;
+    proc->seccomp_strict = 0;
+
+    /* Set up argv on user stack and enter usermode.
+     * This mirrors process_enter_usermode() logic. */
+    arch_switch_address_space(proc->cr3);
+    syscall_set_kernel_stack(t->stack_base + t->stack_size);
+
+    uint64_t user_rsp = proc->user_stack_top;
+    uint64_t user_rdi = 0;
+    uint64_t user_rsi = 0;
+
+    if (proc->argc > 0) {
+        uint64_t sp = proc->user_stack_top;
+        uint64_t str_addrs[PROC_MAX_ARGS];
+        int idx = 0;
+        int ii = 0;
+        while (ii < proc->argv_buf_len && idx < proc->argc) {
+            int slen = 0;
+            while (ii + slen < proc->argv_buf_len && proc->argv_buf[ii + slen] != '\0')
+                slen++;
+            slen++;
+            sp -= (uint64_t)slen;
+            char *dst = (char *)sp;
+            for (int j = 0; j < slen; j++)
+                dst[j] = proc->argv_buf[ii + j];
+            str_addrs[idx] = sp;
+            idx++;
+            ii += slen;
+        }
+        sp &= ~7ULL;
+        sp -= (uint64_t)(idx + 1) * 8;
+        uint64_t *argv_arr = (uint64_t *)sp;
+        for (int j = 0; j < idx; j++)
+            argv_arr[j] = str_addrs[j];
+        argv_arr[idx] = 0;
+        sp &= ~0xFULL;
+        user_rsp = sp;
+        user_rdi = (uint64_t)idx;
+        user_rsi = (uint64_t)argv_arr;
+    }
+
+    arch_prepare_usermode_return();
+    arch_enter_usermode(proc->user_entry, user_rsp, user_rdi, user_rsi);
+    /* Never reached */
+}
+
 int64_t sys_fork(uint64_t a1, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
