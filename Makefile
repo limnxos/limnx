@@ -65,8 +65,8 @@ ASM_SRCS := kernel/src/idt/isr_stubs.asm \
 ASM_OBJS := $(patsubst kernel/src/%.asm,build/%.o,$(ASM_SRCS))
 
 # User-space ASM ELF programs (placed in initrd, loaded at runtime)
-USER_ASM_ELFS := build/user/hello.elf build/user/cat.elf build/user/udpecho.elf \
-                 build/user/writetest.elf
+USER_ASM_ELFS := build/user/asm/hello.elf build/user/asm/cat.elf \
+                 build/user/asm/udpecho.elf build/user/asm/writetest.elf
 
 # User-space C libc objects
 LIBC_ASM_SRCS := user/libc/start.asm user/libc/syscalls.asm
@@ -80,66 +80,50 @@ LIBC_C_OBJS   := $(patsubst user/libc/%.c,build/user/libc/%.o,$(LIBC_C_SRCS))
 LIBC_OBJS     := $(LIBC_ASM_OBJS) $(LIBC_C_OBJS)
 
 # User-space C ELF programs (linked with libc)
-USER_C_ELFS := build/user/mathtest.elf build/user/agenttest.elf build/user/agentrt.elf \
-               build/user/infertest.elf build/user/pipetest.elf build/user/shell.elf \
-               build/user/generate.elf build/user/chat.elf build/user/learn.elf \
-               build/user/agent.elf build/user/toolagent.elf build/user/memtest.elf \
-               build/user/ragtest.elf build/user/fstest.elf build/user/fstest2.elf \
-               build/user/lmstest.elf build/user/gguftest.elf build/user/gguf2test.elf \
-               build/user/agenttest2.elf build/user/ostest.elf \
-               build/user/infer.elf build/user/worker.elf \
-               build/user/multiagent.elf build/user/s25test.elf \
-               build/user/s26test.elf \
-               build/user/s27test.elf \
-               build/user/s28test.elf \
-               build/user/s29test.elf \
-               build/user/s30test.elf \
-               build/user/s31test.elf \
-               build/user/s32test.elf \
-               build/user/s33test.elf \
-               build/user/s34test.elf \
-               build/user/s35test.elf \
-               build/user/s36test.elf \
-               build/user/s37test.elf \
-               build/user/s38test.elf \
-               build/user/s39test.elf \
-               build/user/s41test.elf \
-               build/user/s42test.elf \
-               build/user/s44test.elf \
-               build/user/s45test.elf \
-               build/user/s47test.elf \
-               build/user/s48test.elf \
-               build/user/s49test.elf \
-               build/user/s50test.elf \
-               build/user/s51test.elf \
-               build/user/s52test.elf \
-               build/user/s53test.elf \
-               build/user/s54test.elf \
-               build/user/s55test.elf \
-               build/user/s56test.elf \
-               build/user/s57test.elf \
-               build/user/s58test.elf \
-               build/user/s59test.elf \
-               build/user/s61test.elf \
-               build/user/s63test.elf \
-               build/user/s64test.elf \
-               build/user/s65test.elf \
-               build/user/s66test.elf \
-               build/user/s67test.elf \
-               build/user/s68test.elf \
-               build/user/s69test.elf \
-               build/user/s70test.elf \
-               build/user/s71test.elf \
-               build/user/s72test.elf \
-               build/user/s73test.elf \
-               build/user/s74test.elf \
-               build/user/s75test.elf \
-               build/user/s76test.elf \
-               build/user/s77test.elf \
-               build/user/s78test.elf \
-               build/user/crasher.elf \
-               build/user/inferd.elf \
-               build/user/netagent.elf
+# Programs, agents, daemons
+USER_C_PROGRAMS := build/user/programs/shell.elf build/user/programs/agent.elf \
+                   build/user/programs/agentrt.elf build/user/programs/toolagent.elf \
+                   build/user/programs/chat.elf build/user/programs/generate.elf \
+                   build/user/programs/learn.elf build/user/programs/infer.elf \
+                   build/user/programs/inferd.elf build/user/programs/worker.elf \
+                   build/user/programs/multiagent.elf build/user/programs/netagent.elf \
+                   build/user/programs/crasher.elf
+
+# Test programs
+USER_C_TESTS := build/user/tests/mathtest.elf build/user/tests/agenttest.elf \
+                build/user/tests/agenttest2.elf build/user/tests/infertest.elf \
+                build/user/tests/pipetest.elf build/user/tests/memtest.elf \
+                build/user/tests/ragtest.elf build/user/tests/fstest.elf \
+                build/user/tests/fstest2.elf build/user/tests/lmstest.elf \
+                build/user/tests/gguftest.elf build/user/tests/gguf2test.elf \
+                build/user/tests/ostest.elf \
+                build/user/tests/s25test.elf build/user/tests/s26test.elf \
+                build/user/tests/s27test.elf build/user/tests/s28test.elf \
+                build/user/tests/s29test.elf build/user/tests/s30test.elf \
+                build/user/tests/s31test.elf build/user/tests/s32test.elf \
+                build/user/tests/s33test.elf build/user/tests/s34test.elf \
+                build/user/tests/s35test.elf build/user/tests/s36test.elf \
+                build/user/tests/s37test.elf build/user/tests/s38test.elf \
+                build/user/tests/s39test.elf build/user/tests/s41test.elf \
+                build/user/tests/s42test.elf build/user/tests/s44test.elf \
+                build/user/tests/s45test.elf build/user/tests/s47test.elf \
+                build/user/tests/s48test.elf build/user/tests/s49test.elf \
+                build/user/tests/s50test.elf build/user/tests/s51test.elf \
+                build/user/tests/s52test.elf build/user/tests/s53test.elf \
+                build/user/tests/s54test.elf build/user/tests/s55test.elf \
+                build/user/tests/s56test.elf build/user/tests/s57test.elf \
+                build/user/tests/s58test.elf build/user/tests/s59test.elf \
+                build/user/tests/s61test.elf build/user/tests/s63test.elf \
+                build/user/tests/s64test.elf build/user/tests/s65test.elf \
+                build/user/tests/s66test.elf build/user/tests/s67test.elf \
+                build/user/tests/s68test.elf build/user/tests/s69test.elf \
+                build/user/tests/s70test.elf build/user/tests/s71test.elf \
+                build/user/tests/s72test.elf build/user/tests/s73test.elf \
+                build/user/tests/s74test.elf build/user/tests/s75test.elf \
+                build/user/tests/s76test.elf build/user/tests/s77test.elf \
+                build/user/tests/s78test.elf
+
+USER_C_ELFS := $(USER_C_PROGRAMS) $(USER_C_TESTS)
 
 USER_ELFS := $(USER_ASM_ELFS) $(USER_C_ELFS)
 
