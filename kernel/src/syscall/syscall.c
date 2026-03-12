@@ -497,6 +497,10 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_INFER_POLL]       = sys_infer_poll,
     [SYS_INFER_RESULT]     = sys_infer_result,
     [SYS_EXECVE]           = sys_execve,
+    [SYS_TOPIC_CREATE]     = sys_topic_create,
+    [SYS_TOPIC_SUB]        = sys_topic_subscribe,
+    [SYS_TOPIC_PUB]        = sys_topic_publish,
+    [SYS_TOPIC_RECV]       = sys_topic_recv,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).

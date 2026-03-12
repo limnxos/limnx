@@ -56,6 +56,7 @@ SRCS     := kernel/src/main.c kernel/src/serial.c \
             kernel/src/ipc/epoll.c kernel/src/ipc/infer_svc.c kernel/src/ipc/uring.c \
             kernel/src/ipc/cap_token.c kernel/src/ipc/agent_ns.c kernel/src/ipc/taskgraph.c \
             kernel/src/ipc/supervisor.c kernel/src/ipc/pipe.c kernel/src/ipc/shm.c \
+            kernel/src/ipc/pubsub.c \
             kernel/src/mm/swap.c
 OBJS     := $(patsubst kernel/src/%.c,build/%.o,$(SRCS))
 

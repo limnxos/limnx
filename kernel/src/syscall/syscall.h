@@ -130,7 +130,11 @@
 #define SYS_INFER_POLL     122
 #define SYS_INFER_RESULT   123
 #define SYS_EXECVE         124
-#define SYS_NR             125
+#define SYS_TOPIC_CREATE   125
+#define SYS_TOPIC_SUB      126
+#define SYS_TOPIC_PUB      127
+#define SYS_TOPIC_RECV     128
+#define SYS_NR             129
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)
@@ -142,7 +146,9 @@
 #define CAP_FS_WRITE  (1 << 6)
 #define CAP_FS_READ   (1 << 7)
 #define CAP_INFER     (1 << 8)
-#define CAP_ALL       0x1FF
+#define CAP_XNS_TASK  (1 << 9)
+#define CAP_XNS_PUBSUB (1 << 10)
+#define CAP_ALL       0x7FF
 
 /* Resource limit IDs */
 #define RLIMIT_MEM   0

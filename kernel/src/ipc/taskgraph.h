@@ -40,8 +40,10 @@ typedef struct task_status {
 /* Create a task. Returns task_id or -errno. */
 int  taskgraph_create(const char *name, uint32_t ns_id, uint64_t owner_pid);
 
-/* Add dependency: task_id depends on dep_id. Returns 0 or -errno. */
-int  taskgraph_depend(uint32_t task_id, uint32_t dep_id, uint64_t caller_pid);
+/* Add dependency: task_id depends on dep_id.
+ * Cross-namespace deps require CAP_XNS_TASK. Returns 0 or -errno. */
+int  taskgraph_depend(uint32_t task_id, uint32_t dep_id,
+                      uint64_t caller_pid, uint32_t caller_caps);
 
 /* Mark task as RUNNING (fails if deps not DONE). Returns 0 or -errno. */
 int  taskgraph_start(uint32_t task_id, uint64_t caller_pid);

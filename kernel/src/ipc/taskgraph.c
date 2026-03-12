@@ -2,6 +2,8 @@
 #include "klog.h"
 
 #include "ipc/taskgraph.h"
+#include "ipc/cap_token.h"
+#include "syscall/syscall.h"
 #include "sync/spinlock.h"
 #include "errno.h"
 
@@ -51,7 +53,8 @@ int taskgraph_create(const char *name, uint32_t ns_id, uint64_t owner_pid) {
     return -ENOMEM;
 }
 
-int taskgraph_depend(uint32_t task_id, uint32_t dep_id, uint64_t caller_pid) {
+int taskgraph_depend(uint32_t task_id, uint32_t dep_id,
+                     uint64_t caller_pid, uint32_t caller_caps) {
     uint64_t flags;
     spin_lock_irqsave(&taskgraph_lock, &flags);
 
@@ -64,8 +67,36 @@ int taskgraph_depend(uint32_t task_id, uint32_t dep_id, uint64_t caller_pid) {
     workflow_task_t *dep = find_task(dep_id);
     if (!dep) { spin_unlock_irqrestore(&taskgraph_lock, flags); return -ENOENT; }
 
-    /* Check same namespace */
-    if (dep->ns_id != t->ns_id) { spin_unlock_irqrestore(&taskgraph_lock, flags); return -EPERM; }
+    /* Cross-namespace dependency requires CAP_XNS_TASK */
+    if (dep->ns_id != t->ns_id) {
+        uint32_t dep_ns = dep->ns_id;
+        spin_unlock_irqrestore(&taskgraph_lock, flags);
+
+        /* Check capability or token */
+        if (!(caller_caps & CAP_XNS_TASK)) {
+            char res[16];
+            res[0] = 'n'; res[1] = 's'; res[2] = '/';
+            /* Convert dep_ns to string */
+            if (dep_ns < 10) {
+                res[3] = '0' + (char)dep_ns;
+                res[4] = '\0';
+            } else {
+                res[3] = '0' + (char)(dep_ns / 10);
+                res[4] = '0' + (char)(dep_ns % 10);
+                res[5] = '\0';
+            }
+            if (!cap_token_check(caller_pid, CAP_XNS_TASK, res))
+                return -EPERM;
+        }
+
+        /* Re-acquire lock and re-validate */
+        spin_lock_irqsave(&taskgraph_lock, &flags);
+        t = find_task(task_id);
+        dep = find_task(dep_id);
+        if (!t || !dep) { spin_unlock_irqrestore(&taskgraph_lock, flags); return -ENOENT; }
+        if (t->owner_pid != caller_pid) { spin_unlock_irqrestore(&taskgraph_lock, flags); return -EPERM; }
+        if (t->status != TASK_PENDING) { spin_unlock_irqrestore(&taskgraph_lock, flags); return -EINVAL; }
+    }
 
     /* Prevent self-dependency */
     if (task_id == dep_id) { spin_unlock_irqrestore(&taskgraph_lock, flags); return -EINVAL; }

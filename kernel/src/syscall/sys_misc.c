@@ -684,7 +684,8 @@ int64_t sys_task_depend(uint64_t task_id, uint64_t dep_id,
     (void)a3; (void)a4; (void)a5;
     thread_t *t = thread_get_current();
     if (!t || !t->process) return -1;
-    return taskgraph_depend((uint32_t)task_id, (uint32_t)dep_id, t->process->pid);
+    return taskgraph_depend((uint32_t)task_id, (uint32_t)dep_id,
+                           t->process->pid, t->process->capabilities);
 }
 
 int64_t sys_task_start(uint64_t task_id, uint64_t a2,

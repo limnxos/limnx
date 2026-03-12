@@ -6,6 +6,7 @@
 #include "ipc/agent_reg.h"
 #include "ipc/epoll.h"
 #include "ipc/cap_token.h"
+#include "ipc/pubsub.h"
 #include "sync/futex.h"
 #include "idt/idt.h"
 
@@ -469,4 +470,79 @@ int64_t sys_futex_wake(uint64_t uaddr, uint64_t max_wake,
     if (validate_user_ptr(uaddr, sizeof(uint32_t)) != 0) return -EFAULT;
     if (max_wake == 0) max_wake = 1;
     return futex_wake(t->process->pid, (uint32_t *)uaddr, (uint32_t)max_wake);
+}
+
+/* --- Pub/Sub --- */
+
+int64_t sys_topic_create(uint64_t name_ptr, uint64_t ns_id,
+                                  uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;
+
+    char name[TOPIC_NAME_MAX];
+    if (copy_string_from_user((const char *)name_ptr, name, TOPIC_NAME_MAX) != 0)
+        return -EFAULT;
+
+    return pubsub_topic_create(name, (uint32_t)ns_id, t->process->pid);
+}
+
+int64_t sys_topic_subscribe(uint64_t topic_id, uint64_t a2,
+                                     uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;
+
+    return pubsub_subscribe((uint32_t)topic_id, t->process->pid,
+                            t->process->ns_id, t->process->capabilities);
+}
+
+int64_t sys_topic_publish(uint64_t topic_id, uint64_t buf_ptr,
+                                   uint64_t len, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;
+
+    if (len > TOPIC_MSG_MAX) return -EMSGSIZE;
+    if (len > 0 && validate_user_ptr(buf_ptr, len) != 0)
+        return -EFAULT;
+
+    /* Copy data from user space to kernel buffer */
+    uint8_t kbuf[TOPIC_MSG_MAX];
+    const uint8_t *src = (const uint8_t *)buf_ptr;
+    for (uint32_t i = 0; i < (uint32_t)len; i++)
+        kbuf[i] = src[i];
+
+    return pubsub_publish((uint32_t)topic_id, t->process->pid,
+                          t->process->ns_id, t->process->capabilities,
+                          kbuf, (uint32_t)len);
+}
+
+int64_t sys_topic_recv(uint64_t topic_id, uint64_t buf_ptr,
+                                uint64_t max_len, uint64_t pub_pid_ptr, uint64_t a5) {
+    (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return -1;
+
+    if (max_len > TOPIC_MSG_MAX) max_len = TOPIC_MSG_MAX;
+    if (max_len > 0 && validate_user_ptr(buf_ptr, max_len) != 0)
+        return -EFAULT;
+
+    uint8_t kbuf[TOPIC_MSG_MAX];
+    uint64_t pub_pid = 0;
+    int rc = pubsub_recv((uint32_t)topic_id, t->process->pid,
+                         &pub_pid, kbuf, (uint32_t)max_len);
+    if (rc < 0) return rc;
+
+    /* Copy data to user space */
+    uint8_t *dst = (uint8_t *)buf_ptr;
+    for (int i = 0; i < rc; i++)
+        dst[i] = kbuf[i];
+
+    /* Optionally return publisher pid */
+    if (pub_pid_ptr && validate_user_ptr(pub_pid_ptr, sizeof(uint64_t)) == 0) {
+        *(uint64_t *)pub_pid_ptr = pub_pid;
+    }
+
+    return rc;
 }

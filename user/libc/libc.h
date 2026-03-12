@@ -27,6 +27,10 @@ long sys_close(long fd);
 long sys_stat(const char *path, void *stat_buf);
 long sys_exec(const char *path, const char **argv);
 long sys_execve(const char *path, const char **argv);
+long sys_topic_create(const char *name, unsigned long ns_id);
+long sys_topic_subscribe(unsigned long topic_id);
+long sys_topic_publish(unsigned long topic_id, const void *buf, unsigned long len);
+long sys_topic_recv(unsigned long topic_id, void *buf, unsigned long max_len, unsigned long *pub_pid_ptr);
 long sys_socket(void);
 long sys_bind(long sockfd, unsigned long port);
 long sys_sendto(long sockfd, const void *buf, unsigned long len,

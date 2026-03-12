@@ -919,3 +919,33 @@ sys_execve:
     mov rax, 124        ; SYS_EXECVE
     syscall
     ret
+
+; --- sys_topic_create(name, ns_id) ---
+global sys_topic_create
+sys_topic_create:
+    mov rax, 125        ; SYS_TOPIC_CREATE
+    syscall
+    ret
+
+; --- sys_topic_subscribe(topic_id) ---
+global sys_topic_subscribe
+sys_topic_subscribe:
+    mov rax, 126        ; SYS_TOPIC_SUB
+    syscall
+    ret
+
+; --- sys_topic_publish(topic_id, buf, len) ---
+global sys_topic_publish
+sys_topic_publish:
+    mov rax, 127        ; SYS_TOPIC_PUB
+    syscall
+    ret
+
+; --- sys_topic_recv(topic_id, buf, max_len, pub_pid_ptr) ---
+; 4 args: rdi, rsi, rdx, rcx→r10
+global sys_topic_recv
+sys_topic_recv:
+    mov r10, rcx        ; 4th arg
+    mov rax, 128        ; SYS_TOPIC_RECV
+    syscall
+    ret

@@ -16,6 +16,7 @@
 #include "ipc/infer_svc.h"
 #include "ipc/taskgraph.h"
 #include "ipc/supervisor.h"
+#include "ipc/pubsub.h"
 #include "net/tcp.h"
 #include "serial.h"
 #include "arch/cpu.h"
@@ -45,6 +46,8 @@ int64_t sys_exit(uint64_t status, uint64_t a2,
         agent_ns_cleanup_pid(t->process->pid);
         /* Cleanup workflow tasks owned by this process */
         taskgraph_cleanup_pid(t->process->pid);
+        /* Cleanup pub/sub topics and subscriptions */
+        pubsub_cleanup_pid(t->process->pid);
         /* Decrement namespace process count */
         agent_ns_quota_adjust(t->process->ns_id, NS_QUOTA_PROCS, -1);
         /* Unregister inference services for dying process */

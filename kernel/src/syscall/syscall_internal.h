@@ -135,6 +135,10 @@ int64_t sys_epoll_ctl(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_epoll_wait(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_futex_wait(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_futex_wake(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_topic_create(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_topic_subscribe(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_topic_publish(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_topic_recv(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
 /* Security */
 int64_t sys_getuid(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
