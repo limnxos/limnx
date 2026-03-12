@@ -124,14 +124,19 @@ int64_t sys_read(uint64_t fd, uint64_t buf_ptr, uint64_t len,
         uint8_t *dst = (uint8_t *)buf_ptr;
         uint64_t total = 0;
         while (total < len) {
+            uint64_t pflags;
+            pipe_lock_acquire(&pflags);
             if (pp->count > 0) {
                 dst[total] = pp->buf[pp->read_pos];
                 pp->read_pos = (pp->read_pos + 1) % PIPE_BUF_SIZE;
                 pp->count--;
+                pipe_unlock_release(pflags);
                 total++;
             } else if (pp->closed_write) {
+                pipe_unlock_release(pflags);
                 break;  /* EOF — writer closed */
             } else {
+                pipe_unlock_release(pflags);
                 if (total > 0) break;  /* return what we have */
                 if (entry->fd_flags & 0x02)  /* O_NONBLOCK */
                     return -EAGAIN;
@@ -213,6 +218,8 @@ int64_t sys_close(uint64_t fd, uint64_t a2,
 
     /* Pipe close */
     if (entry->pipe != NULL) {
+        uint64_t pflags;
+        pipe_lock_acquire(&pflags);
         pipe_t *pp = (pipe_t *)entry->pipe;
         if (entry->pipe_write) {
             if (pp->write_refs > 0)
@@ -228,6 +235,7 @@ int64_t sys_close(uint64_t fd, uint64_t a2,
         /* Free pipe if both ends fully closed */
         if (pp->closed_read && pp->closed_write)
             pp->used = 0;
+        pipe_unlock_release(pflags);
         entry->pipe = NULL;
         entry->pipe_write = 0;
         return 0;
@@ -354,14 +362,20 @@ int64_t sys_fwrite(uint64_t fd, uint64_t buf_ptr, uint64_t len,
         const uint8_t *src = (const uint8_t *)buf_ptr;
         uint64_t total = 0;
         while (total < len) {
-            if (pp->closed_read)
+            uint64_t pflags;
+            pipe_lock_acquire(&pflags);
+            if (pp->closed_read) {
+                pipe_unlock_release(pflags);
                 return total > 0 ? (int64_t)total : -1;
+            }
             if (pp->count < PIPE_BUF_SIZE) {
                 pp->buf[pp->write_pos] = src[total];
                 pp->write_pos = (pp->write_pos + 1) % PIPE_BUF_SIZE;
                 pp->count++;
+                pipe_unlock_release(pflags);
                 total++;
             } else {
+                pipe_unlock_release(pflags);
                 if (entry->fd_flags & 0x02)  /* O_NONBLOCK */
                     return total > 0 ? (int64_t)total : -1;
                 if (proc->pending_signals & ~proc->signal_mask)

@@ -64,12 +64,12 @@ void unix_sock_close(unix_sock_t *us);
 unix_sock_t *unix_sock_get(int idx);
 
 /* Check readability (data available or peer_closed) */
-int  unix_sock_readable(unix_sock_t *us);
+int  unix_sock_readable(const unix_sock_t *us);
 
 /* Check writability (peer has space) */
-int  unix_sock_writable(unix_sock_t *us);
+int  unix_sock_writable(const unix_sock_t *us);
 
 /* Check if listening socket has pending connections */
-int  unix_sock_has_backlog(unix_sock_t *us);
+int  unix_sock_has_backlog(const unix_sock_t *us);
 
 #endif

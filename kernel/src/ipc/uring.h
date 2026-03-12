@@ -43,6 +43,6 @@ void uring_ref(int idx);
 uring_instance_t *uring_get(int idx);
 
 /* Find index of an instance pointer, returns -1 if not found */
-int uring_index(uring_instance_t *ur);
+int uring_index(const uring_instance_t *ur);
 
 #endif

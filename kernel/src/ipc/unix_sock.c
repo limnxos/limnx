@@ -352,18 +352,18 @@ unix_sock_t *unix_sock_get(int idx) {
     return &unix_socks[idx];
 }
 
-int unix_sock_readable(unix_sock_t *us) {
+int unix_sock_readable(const unix_sock_t *us) {
     if (!us) return 0;
     return us->count > 0 || us->peer_closed;
 }
 
-int unix_sock_writable(unix_sock_t *us) {
+int unix_sock_writable(const unix_sock_t *us) {
     if (!us) return 0;
     if (!us->peer) return 0;
     return us->peer->count < UNIX_SOCK_BUF_SZ;
 }
 
-int unix_sock_has_backlog(unix_sock_t *us) {
+int unix_sock_has_backlog(const unix_sock_t *us) {
     if (!us) return 0;
     return us->backlog_count > 0;
 }

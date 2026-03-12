@@ -40,6 +40,6 @@ void epoll_ref(int idx);
 epoll_instance_t *epoll_get(int idx);
 
 /* Find index of an instance pointer, returns -1 if not found */
-int epoll_index(epoll_instance_t *ep);
+int epoll_index(const epoll_instance_t *ep);
 
 #endif

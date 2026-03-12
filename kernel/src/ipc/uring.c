@@ -66,7 +66,7 @@ uring_instance_t *uring_get(int idx) {
     return &uring_table[idx];
 }
 
-int uring_index(uring_instance_t *ur) {
+int uring_index(const uring_instance_t *ur) {
     if (!ur) return -1;
     for (int i = 0; i < MAX_URING_INSTANCES; i++) {
         if (&uring_table[i] == ur)

@@ -134,7 +134,7 @@ epoll_instance_t *epoll_get(int idx) {
     return &epoll_table[idx];
 }
 
-int epoll_index(epoll_instance_t *ep) {
+int epoll_index(const epoll_instance_t *ep) {
     if (!ep) return -1;
     for (int i = 0; i < MAX_EPOLL_INSTANCES; i++) {
         if (&epoll_table[i] == ep)

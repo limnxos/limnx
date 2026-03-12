@@ -23,6 +23,8 @@ int64_t sys_pipe(uint64_t rfd_ptr, uint64_t wfd_ptr,
         return -EMFILE;
 
     /* Find free pipe slot */
+    uint64_t pflags;
+    pipe_lock_acquire(&pflags);
     int slot = -1;
     for (int i = 0; i < MAX_PIPES; i++) {
         if (!pipes[i].used) {
@@ -30,7 +32,7 @@ int64_t sys_pipe(uint64_t rfd_ptr, uint64_t wfd_ptr,
             break;
         }
     }
-    if (slot < 0) return -1;
+    if (slot < 0) { pipe_unlock_release(pflags); return -1; }
 
     pipe_t *pp = &pipes[slot];
     pp->read_pos = 0;
@@ -41,6 +43,7 @@ int64_t sys_pipe(uint64_t rfd_ptr, uint64_t wfd_ptr,
     pp->used = 1;
     pp->read_refs = 1;
     pp->write_refs = 1;
+    pipe_unlock_release(pflags);
 
     /* Find two free fd slots */
     int rfd = -1, wfd = -1;
@@ -95,11 +98,13 @@ int64_t sys_pipe2(uint64_t rfd_ptr, uint64_t wfd_ptr,
         (uint32_t)(count_open_fds(proc) + 2) > proc->rlimit_nfds)
         return -EMFILE;
 
+    uint64_t pflags;
+    pipe_lock_acquire(&pflags);
     int slot = -1;
     for (int i = 0; i < MAX_PIPES; i++) {
         if (!pipes[i].used) { slot = i; break; }
     }
-    if (slot < 0) return -1;
+    if (slot < 0) { pipe_unlock_release(pflags); return -1; }
 
     pipe_t *pp = &pipes[slot];
     pp->read_pos = 0;
@@ -110,6 +115,7 @@ int64_t sys_pipe2(uint64_t rfd_ptr, uint64_t wfd_ptr,
     pp->used = 1;
     pp->read_refs = 1;
     pp->write_refs = 1;
+    pipe_unlock_release(pflags);
 
     int rfd = -1, wfd = -1;
     for (int fd = 0; fd < MAX_FDS; fd++) {
@@ -178,11 +184,14 @@ int64_t sys_dup(uint64_t fd, uint64_t a2,
             proc->fd_table[newfd].fd_flags = 0;  /* dup clears cloexec */
             /* Increment pipe ref count */
             if (src->pipe != NULL) {
+                uint64_t pflags;
+                pipe_lock_acquire(&pflags);
                 pipe_t *pp = (pipe_t *)src->pipe;
                 if (src->pipe_write)
                     pp->write_refs++;
                 else
                     pp->read_refs++;
+                pipe_unlock_release(pflags);
             }
             /* Increment PTY ref count */
             if (src->pty != NULL) {
@@ -243,6 +252,8 @@ int64_t sys_dup2(uint64_t oldfd, uint64_t newfd,
     /* Close newfd if open */
     fd_entry_t *dst = &proc->fd_table[newfd];
     if (dst->pipe != NULL) {
+        uint64_t pflags;
+        pipe_lock_acquire(&pflags);
         pipe_t *pp = (pipe_t *)dst->pipe;
         if (dst->pipe_write) {
             if (pp->write_refs > 0)
@@ -257,6 +268,7 @@ int64_t sys_dup2(uint64_t oldfd, uint64_t newfd,
         }
         if (pp->closed_read && pp->closed_write)
             pp->used = 0;
+        pipe_unlock_release(pflags);
     }
     if (dst->pty != NULL) {
         int pty_idx = pty_index((pty_t *)dst->pty);
@@ -291,11 +303,14 @@ int64_t sys_dup2(uint64_t oldfd, uint64_t newfd,
     proc->fd_table[newfd].fd_flags = 0;  /* dup2 clears cloexec */
     /* Increment pipe ref count for new copy */
     if (src->pipe != NULL) {
+        uint64_t pflags;
+        pipe_lock_acquire(&pflags);
         pipe_t *pp = (pipe_t *)src->pipe;
         if (src->pipe_write)
             pp->write_refs++;
         else
             pp->read_refs++;
+        pipe_unlock_release(pflags);
     }
     /* Increment PTY ref count for new copy */
     if (src->pty != NULL) {

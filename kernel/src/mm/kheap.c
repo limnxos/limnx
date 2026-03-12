@@ -122,53 +122,54 @@ void *kmalloc(uint64_t size) {
     if (size == 0)
         return NULL;
 
-    uint64_t flags;
-    spin_lock_irqsave(&kheap_lock, &flags);
-
-    /* Align requested size */
     uint64_t total_needed = align_up(size + HEADER_SIZE, ALIGNMENT);
     if (total_needed < HEADER_SIZE + ALIGNMENT)
         total_needed = HEADER_SIZE + ALIGNMENT;
 
-    /* First-fit search */
-    block_header_t *block = heap_head;
-    while (block) {
-        if (block->is_free && block->size >= total_needed) {
-            /* Split if remainder is large enough */
-            uint64_t remainder = block->size - total_needed;
-            if (remainder >= HEADER_SIZE + ALIGNMENT) {
-                block_header_t *split = (block_header_t *)((uint64_t)block + total_needed);
-                split->size = remainder;
-                split->is_free = 1;
-                split->next = block->next;
-                split->prev = block;
-                if (block->next)
-                    block->next->prev = split;
-                block->next = split;
-                block->size = total_needed;
+    uint64_t flags;
+    spin_lock_irqsave(&kheap_lock, &flags);
+
+    for (int attempt = 0; attempt < 2; attempt++) {
+        /* First-fit search */
+        block_header_t *block = heap_head;
+        while (block) {
+            if (block->is_free && block->size >= total_needed) {
+                /* Split if remainder is large enough */
+                uint64_t remainder = block->size - total_needed;
+                if (remainder >= HEADER_SIZE + ALIGNMENT) {
+                    block_header_t *split = (block_header_t *)((uint64_t)block + total_needed);
+                    split->size = remainder;
+                    split->is_free = 1;
+                    split->next = block->next;
+                    split->prev = block;
+                    if (block->next)
+                        block->next->prev = split;
+                    block->next = split;
+                    block->size = total_needed;
+                }
+
+                block->is_free = 0;
+                spin_unlock_irqrestore(&kheap_lock, flags);
+                return (void *)((uint64_t)block + HEADER_SIZE);
             }
-
-            block->is_free = 0;
-            spin_unlock_irqrestore(&kheap_lock, flags);
-            return (void *)((uint64_t)block + HEADER_SIZE);
+            block = block->next;
         }
-        block = block->next;
+
+        /* No suitable block — expand heap (only on first attempt) */
+        if (attempt == 0) {
+            block_header_t *new_block = heap_expand(total_needed);
+            if (!new_block) {
+                spin_unlock_irqrestore(&kheap_lock, flags);
+                return NULL;
+            }
+            if (!heap_head)
+                heap_head = new_block;
+            /* Loop back to retry first-fit search */
+        }
     }
 
-    /* No suitable block — expand heap */
-    block_header_t *new_block = heap_expand(total_needed);
-    if (!new_block) {
-        spin_unlock_irqrestore(&kheap_lock, flags);
-        return NULL;
-    }
-
-    /* If heap_head was NULL (shouldn't happen after init), set it */
-    if (!heap_head)
-        heap_head = new_block;
-
-    /* Retry allocation on the (possibly coalesced) new block — unlock first to avoid recursion */
     spin_unlock_irqrestore(&kheap_lock, flags);
-    return kmalloc(size);
+    return NULL;
 }
 
 void kfree(void *ptr) {

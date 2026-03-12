@@ -7,37 +7,9 @@
 #include "proc/process.h"
 #include "fs/vfs.h"
 
-/* ---- Pipe infrastructure ---- */
-
-#define PIPE_BUF_SIZE 4096
-#define MAX_PIPES     8
-
-typedef struct pipe {
-    uint8_t  buf[PIPE_BUF_SIZE];
-    uint32_t read_pos;
-    uint32_t write_pos;
-    uint32_t count;
-    uint8_t  closed_read;
-    uint8_t  closed_write;
-    uint8_t  used;
-    uint32_t read_refs;
-    uint32_t write_refs;
-} pipe_t;
-
-extern pipe_t pipes[MAX_PIPES];
-
-/* ---- Shared memory infrastructure ---- */
-
-#define MAX_SHM_REGIONS 16
-
-typedef struct shm_region {
-    int32_t  key;
-    uint64_t phys_pages[16];
-    uint32_t num_pages;
-    uint32_t ref_count;
-} shm_region_t;
-
-extern shm_region_t shm_table[MAX_SHM_REGIONS];
+/* ---- Pipe and shared memory (extracted to ipc/) ---- */
+#include "ipc/pipe.h"
+#include "ipc/shm.h"
 
 /* ---- Syscall handler function type ---- */
 
@@ -66,8 +38,8 @@ static inline void invlpg_addr(uint64_t addr) {
 int validate_user_ptr(uint64_t ptr, uint64_t len);
 int copy_string_from_user(const char *user_src, char *kern_dst, uint64_t max_len);
 void resolve_user_path(process_t *proc, const char *path, char *out);
-int fd_is_free(fd_entry_t *e);
-int check_file_perm(process_t *proc, vfs_node_t *node, uint8_t access);
+int fd_is_free(const fd_entry_t *e);
+int check_file_perm(const process_t *proc, const vfs_node_t *node, uint8_t access);
 int count_open_fds(process_t *proc);
 int16_t poll_check_fd(process_t *proc, int fd, int16_t events);
 

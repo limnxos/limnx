@@ -497,12 +497,15 @@ static int64_t uring_do_read(process_t *proc, int fd, uint8_t *buf, uint32_t len
     if (entry->pipe != NULL) {
         pipe_t *pp = (pipe_t *)entry->pipe;
         uint64_t total = 0;
+        uint64_t pflags;
+        pipe_lock_acquire(&pflags);
         while (total < len && pp->count > 0) {
             buf[total] = pp->buf[pp->read_pos];
             pp->read_pos = (pp->read_pos + 1) % PIPE_BUF_SIZE;
             pp->count--;
             total++;
         }
+        pipe_unlock_release(pflags);
         return (int64_t)total;
     }
 
@@ -542,8 +545,13 @@ static int64_t uring_do_write(process_t *proc, int fd, const uint8_t *buf, uint3
     if (entry->pipe != NULL) {
         pipe_t *pp = (pipe_t *)entry->pipe;
         uint64_t total = 0;
+        uint64_t pflags;
+        pipe_lock_acquire(&pflags);
         while (total < len) {
-            if (pp->closed_read) return total > 0 ? (int64_t)total : -1;
+            if (pp->closed_read) {
+                pipe_unlock_release(pflags);
+                return total > 0 ? (int64_t)total : -1;
+            }
             if (pp->count < PIPE_BUF_SIZE) {
                 pp->buf[pp->write_pos] = buf[total];
                 pp->write_pos = (pp->write_pos + 1) % PIPE_BUF_SIZE;
@@ -551,6 +559,7 @@ static int64_t uring_do_write(process_t *proc, int fd, const uint8_t *buf, uint3
                 total++;
             } else break;
         }
+        pipe_unlock_release(pflags);
         return (int64_t)total;
     }
 

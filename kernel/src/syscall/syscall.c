@@ -31,12 +31,6 @@
 #include "smp/percpu.h"
 #include "serial.h"
 
-/* --- Pipe infrastructure (non-static, accessed by subsystem files) --- */
-pipe_t pipes[MAX_PIPES];
-
-/* --- Shared memory infrastructure (non-static, accessed by subsystem files) --- */
-shm_region_t shm_table[MAX_SHM_REGIONS];
-
 /* MSR addresses */
 #define MSR_EFER   0xC0000080
 #define MSR_STAR   0xC0000081
@@ -117,7 +111,7 @@ void resolve_user_path(process_t *proc, const char *path, char *out) {
 }
 
 /* Check if fd slot is free (no node, no pipe, no pty) */
-int fd_is_free(fd_entry_t *e) {
+int fd_is_free(const fd_entry_t *e) {
     return e->node == NULL && e->pipe == NULL && e->pty == NULL
         && e->unix_sock == NULL && e->eventfd == NULL
         && e->epoll == NULL && e->uring == NULL
@@ -126,7 +120,7 @@ int fd_is_free(fd_entry_t *e) {
 
 /* --- Permission helper --- */
 
-int check_file_perm(process_t *proc, vfs_node_t *node, uint8_t access) {
+int check_file_perm(const process_t *proc, const vfs_node_t *node, uint8_t access) {
     if (proc->uid == 0) return 0;  /* root bypasses */
     uint16_t perm_bits;
     if (proc->uid == node->uid)
@@ -165,6 +159,8 @@ int16_t poll_check_fd(process_t *proc, int fd, int16_t events) {
 
     /* Pipe */
     if (entry->pipe != NULL) {
+        uint64_t pflags;
+        pipe_lock_acquire(&pflags);
         pipe_t *pp = (pipe_t *)entry->pipe;
         if (!entry->pipe_write) {
             /* Read end */
@@ -179,6 +175,7 @@ int16_t poll_check_fd(process_t *proc, int fd, int16_t events) {
             if (pp->closed_read)
                 revents |= POLLERR;
         }
+        pipe_unlock_release(pflags);
         return revents;
     }
 
@@ -375,6 +372,11 @@ kill:
         }
     }
     proc->exit_status = -11;  /* SIGSEGV */
+    /* Switch to kernel address space BEFORE freeing user pages.
+     * Without this, vmm_free_user_pages frees the page tables
+     * we're currently running on, risking triple faults. */
+    __asm__ volatile ("cli");
+    __asm__ volatile ("mov %0, %%cr3" : : "r"(vmm_get_kernel_pml4()) : "memory");
     vmm_free_user_pages(proc->cr3);
     proc->cr3 = 0;
     t->state = THREAD_DEAD;

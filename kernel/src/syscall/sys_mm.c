@@ -4,13 +4,6 @@
 #include "mm/vmm.h"
 #include "ipc/agent_ns.h"
 
-static void shm_init(void) {
-    for (int i = 0; i < MAX_SHM_REGIONS; i++)
-        shm_table[i].key = -1;
-}
-
-static int shm_inited = 0;
-
 static inline void flush_page(uint64_t addr) {
     __asm__ volatile ("invlpg (%0)" : : "r"(addr) : "memory");
 }
@@ -103,12 +96,27 @@ int64_t sys_munmap(uint64_t virt_addr, uint64_t a2,
             if (proc->mmap_table[i].shm_id >= 0) {
                 /* Shared memory: don't free phys pages, just decrement ref */
                 int32_t sid = proc->mmap_table[i].shm_id;
+                uint64_t sflags;
+                shm_lock_acquire(&sflags);
                 if (sid < MAX_SHM_REGIONS && shm_table[sid].ref_count > 0)
                     shm_table[sid].ref_count--;
+                shm_unlock_release(sflags);
             } else {
-                /* Private mapping: free physical pages */
-                for (uint32_t j = 0; j < npages; j++)
-                    pmm_free_page(phys + j * PAGE_SIZE);
+                /* Private mapping: clear PTEs, flush TLB, free physical pages */
+                for (uint32_t j = 0; j < npages; j++) {
+                    uint64_t va = virt_addr + (uint64_t)j * PAGE_SIZE;
+                    uint64_t *pte = vmm_get_pte(proc->cr3, va);
+                    if (pte && (*pte & PTE_PRESENT)) {
+                        uint64_t page_phys = *pte & PTE_ADDR_MASK;
+                        *pte = 0;
+                        flush_page(va);
+                        pmm_free_page(page_phys);
+                    } else {
+                        /* Fallback: page not in PTE (demand-paged, never faulted) */
+                        if (phys)
+                            pmm_free_page(phys + (uint64_t)j * PAGE_SIZE);
+                    }
+                }
             }
 
             proc->mmap_table[i].used = 0;
@@ -214,15 +222,18 @@ int64_t sys_shmget(uint64_t key, uint64_t num_pages,
                             uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a3; (void)a4; (void)a5;
 
-    if (!shm_inited) { shm_init(); shm_inited = 1; }
-
     if (num_pages == 0 || num_pages > 16)
         return -1;
 
+    uint64_t sflags;
+    shm_lock_acquire(&sflags);
+
     /* Search for existing key match */
     for (int i = 0; i < MAX_SHM_REGIONS; i++) {
-        if (shm_table[i].key == (int32_t)key)
+        if (shm_table[i].key == (int32_t)key) {
+            shm_unlock_release(sflags);
             return i;
+        }
     }
 
     /* Allocate new region */
@@ -230,15 +241,24 @@ int64_t sys_shmget(uint64_t key, uint64_t num_pages,
     for (int i = 0; i < MAX_SHM_REGIONS; i++) {
         if (shm_table[i].key == -1) { slot = i; break; }
     }
-    if (slot < 0) return -1;
+    if (slot < 0) { shm_unlock_release(sflags); return -1; }
 
-    /* Allocate physical pages individually */
+    /* Mark slot as taken before releasing lock for page allocation */
+    shm_table[slot].key = (int32_t)key;
+    shm_table[slot].num_pages = (uint32_t)num_pages;
+    shm_table[slot].ref_count = 0;
+    shm_unlock_release(sflags);
+
+    /* Allocate physical pages individually (outside lock — pmm has its own) */
     for (uint32_t i = 0; i < (uint32_t)num_pages; i++) {
         uint64_t pg = pmm_alloc_page();
         if (pg == 0) {
             /* Free already allocated */
             for (uint32_t j = 0; j < i; j++)
                 pmm_free_page(shm_table[slot].phys_pages[j]);
+            shm_lock_acquire(&sflags);
+            shm_table[slot].key = -1;
+            shm_unlock_release(sflags);
             return -1;
         }
         /* Zero the page */
@@ -248,9 +268,6 @@ int64_t sys_shmget(uint64_t key, uint64_t num_pages,
         shm_table[slot].phys_pages[i] = pg;
     }
 
-    shm_table[slot].key = (int32_t)key;
-    shm_table[slot].num_pages = (uint32_t)num_pages;
-    shm_table[slot].ref_count = 0;
     return slot;
 }
 
@@ -258,10 +275,18 @@ int64_t sys_shmat(uint64_t shmid, uint64_t a2,
                            uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a2; (void)a3; (void)a4; (void)a5;
 
-    if (!shm_inited) { shm_init(); shm_inited = 1; }
-
-    if (shmid >= MAX_SHM_REGIONS || shm_table[shmid].key == -1)
+    uint64_t sflags;
+    shm_lock_acquire(&sflags);
+    if (shmid >= MAX_SHM_REGIONS || shm_table[shmid].key == -1) {
+        shm_unlock_release(sflags);
         return 0;
+    }
+
+    uint32_t npages = shm_table[shmid].num_pages;
+    uint64_t phys_pages_copy[16];
+    for (uint32_t i = 0; i < npages; i++)
+        phys_pages_copy[i] = shm_table[shmid].phys_pages[i];
+    shm_unlock_release(sflags);
 
     thread_t *t = thread_get_current();
     process_t *proc = t->process;
@@ -274,12 +299,11 @@ int64_t sys_shmat(uint64_t shmid, uint64_t a2,
     }
     if (slot < 0) return 0;
 
-    uint32_t npages = shm_table[shmid].num_pages;
     uint64_t virt = proc->mmap_next_addr;
 
     /* Map each page individually and increment refcount for PTE reference */
     for (uint32_t i = 0; i < npages; i++) {
-        uint64_t page_phys = shm_table[shmid].phys_pages[i];
+        uint64_t page_phys = phys_pages_copy[i];
         uint64_t page_virt = virt + (uint64_t)i * PAGE_SIZE;
         if (vmm_map_page_in(proc->cr3, page_virt, page_phys,
                             PTE_USER | PTE_WRITABLE | PTE_NX) != 0)
@@ -288,14 +312,17 @@ int64_t sys_shmat(uint64_t shmid, uint64_t a2,
     }
 
     proc->mmap_table[slot].virt_addr = virt;
-    proc->mmap_table[slot].phys_addr = shm_table[shmid].phys_pages[0];
+    proc->mmap_table[slot].phys_addr = phys_pages_copy[0];
     proc->mmap_table[slot].num_pages = npages;
     proc->mmap_table[slot].used = 1;
     proc->mmap_table[slot].shm_id = (int32_t)shmid;
     proc->mmap_table[slot].vfs_node = -1;
     proc->mmap_table[slot].file_offset = 0;
     proc->mmap_next_addr = virt + (uint64_t)(npages + 1) * PAGE_SIZE;
+
+    shm_lock_acquire(&sflags);
     shm_table[shmid].ref_count++;
+    shm_unlock_release(sflags);
 
     return (int64_t)virt;
 }
@@ -303,8 +330,6 @@ int64_t sys_shmat(uint64_t shmid, uint64_t a2,
 int64_t sys_shmdt(uint64_t virt_addr, uint64_t a2,
                            uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a2; (void)a3; (void)a4; (void)a5;
-
-    if (!shm_inited) return -1;
 
     thread_t *t = thread_get_current();
     process_t *proc = t->process;
@@ -316,8 +341,13 @@ int64_t sys_shmdt(uint64_t virt_addr, uint64_t a2,
             proc->mmap_table[i].shm_id >= 0) {
             int32_t sid = proc->mmap_table[i].shm_id;
             uint32_t npages = proc->mmap_table[i].num_pages;
-            if (sid < MAX_SHM_REGIONS && shm_table[sid].ref_count > 0)
-                shm_table[sid].ref_count--;
+            {
+                uint64_t sflags;
+                shm_lock_acquire(&sflags);
+                if (sid < MAX_SHM_REGIONS && shm_table[sid].ref_count > 0)
+                    shm_table[sid].ref_count--;
+                shm_unlock_release(sflags);
+            }
             /* Unmap pages from page table and drop PTE refcount */
             for (uint32_t p = 0; p < npages; p++) {
                 uint64_t pv = virt_addr + (uint64_t)p * PAGE_SIZE;

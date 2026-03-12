@@ -29,6 +29,8 @@ int64_t sys_exit(uint64_t status, uint64_t a2,
         for (int i = 0; i < MAX_FDS; i++) {
             fd_entry_t *entry = &t->process->fd_table[i];
             if (entry->pipe != NULL) {
+                uint64_t pflags;
+                pipe_lock_acquire(&pflags);
                 pipe_t *pp = (pipe_t *)entry->pipe;
                 if (entry->pipe_write) {
                     if (pp->write_refs > 0) pp->write_refs--;
@@ -38,6 +40,7 @@ int64_t sys_exit(uint64_t status, uint64_t a2,
                     if (pp->read_refs == 0) pp->closed_read = 1;
                 }
                 if (pp->closed_read && pp->closed_write) pp->used = 0;
+                pipe_unlock_release(pflags);
                 entry->pipe = NULL;
                 entry->pipe_write = 0;
             }
@@ -105,15 +108,20 @@ int64_t sys_exit(uint64_t status, uint64_t a2,
         /* Cleanup async inference slots owned by dying process */
         infer_async_cleanup_pid(t->process->pid);
         /* Detach shared memory regions */
-        for (int i = 0; i < MMAP_MAX_ENTRIES; i++) {
-            if (t->process->mmap_table[i].used &&
-                t->process->mmap_table[i].shm_id >= 0) {
-                int32_t sid = t->process->mmap_table[i].shm_id;
-                if (sid < MAX_SHM_REGIONS && shm_table[sid].ref_count > 0)
-                    shm_table[sid].ref_count--;
-                t->process->mmap_table[i].used = 0;
-                t->process->mmap_table[i].shm_id = -1;
+        {
+            uint64_t sflags;
+            shm_lock_acquire(&sflags);
+            for (int i = 0; i < MMAP_MAX_ENTRIES; i++) {
+                if (t->process->mmap_table[i].used &&
+                    t->process->mmap_table[i].shm_id >= 0) {
+                    int32_t sid = t->process->mmap_table[i].shm_id;
+                    if (sid < MAX_SHM_REGIONS && shm_table[sid].ref_count > 0)
+                        shm_table[sid].ref_count--;
+                    t->process->mmap_table[i].used = 0;
+                    t->process->mmap_table[i].shm_id = -1;
+                }
             }
+            shm_unlock_release(sflags);
         }
         /* Free user-space pages (respects COW refcounts) */
         if (t->process->cr3) {
@@ -294,11 +302,14 @@ int64_t sys_exec(uint64_t path_ptr, uint64_t argv_ptr,
         child->fd_table[i].fd_flags = 0;  /* clear cloexec in child */
         /* Increment pipe ref counts for inherited pipe fds */
         if (proc->fd_table[i].pipe != NULL) {
+            uint64_t pflags;
+            pipe_lock_acquire(&pflags);
             pipe_t *pp = (pipe_t *)proc->fd_table[i].pipe;
             if (proc->fd_table[i].pipe_write)
                 pp->write_refs++;
             else
                 pp->read_refs++;
+            pipe_unlock_release(pflags);
         }
         /* Increment PTY ref counts for inherited pty fds */
         if (proc->fd_table[i].pty != NULL) {
@@ -385,11 +396,14 @@ int64_t sys_fork(uint64_t a1, uint64_t a2,
     /* Increment pipe, PTY, unix_sock, eventfd, epoll, uring ref counts for inherited fds */
     for (int i = 0; i < MAX_FDS; i++) {
         if (proc->fd_table[i].pipe != NULL) {
+            uint64_t pflags;
+            pipe_lock_acquire(&pflags);
             pipe_t *pp = (pipe_t *)proc->fd_table[i].pipe;
             if (proc->fd_table[i].pipe_write)
                 pp->write_refs++;
             else
                 pp->read_refs++;
+            pipe_unlock_release(pflags);
         }
         if (proc->fd_table[i].pty != NULL) {
             pty_t *pt = (pty_t *)proc->fd_table[i].pty;
@@ -419,12 +433,17 @@ int64_t sys_fork(uint64_t a1, uint64_t a2,
     }
 
     /* Increment shm ref counts */
-    for (int i = 0; i < MMAP_MAX_ENTRIES; i++) {
-        if (proc->mmap_table[i].used && proc->mmap_table[i].shm_id >= 0) {
-            int32_t sid = proc->mmap_table[i].shm_id;
-            if (sid < MAX_SHM_REGIONS)
-                shm_table[sid].ref_count++;
+    {
+        uint64_t sflags;
+        shm_lock_acquire(&sflags);
+        for (int i = 0; i < MMAP_MAX_ENTRIES; i++) {
+            if (proc->mmap_table[i].used && proc->mmap_table[i].shm_id >= 0) {
+                int32_t sid = proc->mmap_table[i].shm_id;
+                if (sid < MAX_SHM_REGIONS)
+                    shm_table[sid].ref_count++;
+            }
         }
+        shm_unlock_release(sflags);
     }
 
     /* Schedule the child AFTER all ref counts are incremented.
