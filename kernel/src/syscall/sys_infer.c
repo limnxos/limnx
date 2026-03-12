@@ -57,8 +57,15 @@ int64_t sys_infer_request(uint64_t name_ptr, uint64_t req_buf,
         if (cached > 0) return cached;
     }
 
-    /* Route to best available service (load-balanced) */
-    int svc_idx = infer_route(name);
+    /* Route to best available service — try same namespace first */
+    int svc_idx = infer_route_ns(name, proc->ns_id);
+    if (svc_idx < 0 && proc->ns_id != 0) {
+        /* No same-namespace provider — try global, requires CAP_XNS_INFER */
+        if (!(proc->capabilities & CAP_XNS_INFER) &&
+            !cap_token_check(proc->pid, CAP_XNS_INFER, name))
+            return -EACCES;
+        svc_idx = infer_route_ns(name, 0);
+    }
     if (svc_idx < 0) {
         /* No provider available — queue the request and wait */
         int slot = infer_queue_enqueue(name, proc->pid);
@@ -70,7 +77,12 @@ int64_t sys_infer_request(uint64_t name_ptr, uint64_t req_buf,
             if (status == 1) {
                 /* Provider available — retry route */
                 infer_queue_remove(slot);
-                svc_idx = infer_route(name);
+                svc_idx = infer_route_ns(name, proc->ns_id);
+                if (svc_idx < 0 && proc->ns_id != 0) {
+                    if ((proc->capabilities & CAP_XNS_INFER) ||
+                        cap_token_check(proc->pid, CAP_XNS_INFER, name))
+                        svc_idx = infer_route_ns(name, 0);
+                }
                 if (svc_idx < 0) return -ENOENT;
                 break;
             }
@@ -213,6 +225,18 @@ int64_t sys_infer_submit(uint64_t name_ptr, uint64_t req_buf,
     if (!(proc->capabilities & CAP_INFER) &&
         !cap_token_check(proc->pid, CAP_INFER, name))
         return -EACCES;
+
+    /* Early cross-namespace check: if no same-namespace provider exists,
+     * verify the caller can access cross-namespace services before queuing */
+    if (proc->ns_id != 0) {
+        int local = infer_route_ns(name, proc->ns_id);
+        if (local < 0) {
+            /* No local provider — need cross-namespace access */
+            if (!(proc->capabilities & CAP_XNS_INFER) &&
+                !cap_token_check(proc->pid, CAP_XNS_INFER, name))
+                return -EACCES;
+        }
+    }
 
     /* Resolve eventfd file descriptor to raw eventfd index */
     int32_t efd_idx = -1;

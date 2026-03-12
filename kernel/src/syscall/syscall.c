@@ -356,16 +356,9 @@ kill:
                     proc->pid, fault_addr, err_code, frame->rip);
         }
     }
-    proc->exit_status = -11;  /* SIGSEGV */
-    /* Switch to kernel address space BEFORE freeing user pages.
-     * Without this, vmm_free_user_pages frees the page tables
-     * we're currently running on, risking triple faults. */
-    arch_irq_disable();
-    arch_switch_address_space(vmm_get_kernel_pml4());
-    vmm_free_user_pages(proc->cr3);
-    proc->cr3 = 0;
-    t->state = THREAD_DEAD;
-    schedule();
+    /* Full process termination: FDs, TCP, agents, SHM, signals, etc. */
+    process_terminate(t, -11);  /* SIGSEGV */
+    /* Never returns */
     return 0;
 }
 

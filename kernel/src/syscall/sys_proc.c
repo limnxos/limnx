@@ -22,12 +22,12 @@
 #include "arch/cpu.h"
 #include "arch/paging.h"
 
-int64_t sys_exit(uint64_t status, uint64_t a2,
-                         uint64_t a3, uint64_t a4, uint64_t a5) {
-    (void)a2; (void)a3; (void)a4; (void)a5;
-    thread_t *t = thread_get_current();
+/* Shared process termination — called from sys_exit and page fault kill path.
+ * Performs full cleanup: FDs, TCP, agents, caps, namespaces, SHM, signals, etc.
+ * Does NOT return. */
+void process_terminate(thread_t *t, int64_t status) {
     if (t->process) {
-        t->process->exit_status = (int64_t)status;
+        t->process->exit_status = status;
         /* Close all open file descriptors */
         for (int i = 0; i < MAX_FDS; i++)
             fd_close(&t->process->fd_table[i]);
@@ -93,11 +93,7 @@ int64_t sys_exit(uint64_t status, uint64_t a2,
         }
         /* Notify supervisors about exit */
         supervisor_on_exit(t->process->pid, (int)status);
-        /* Deliver SIGCHLD to parent if parent has a user handler.
-         * Only set pending bit — actual delivery happens on kernel→user return.
-         * Guard: parent must exist, not exited, and have a real handler (not DFL/IGN).
-         * We directly set the pending bit instead of calling process_deliver_signal
-         * to avoid any side effects from the signal dispatch switch statement. */
+        /* Deliver SIGCHLD to parent */
         if (t->process->parent_pid != 0) {
             process_t *parent = process_lookup(t->process->parent_pid);
             if (parent && !parent->exited &&
@@ -105,7 +101,7 @@ int64_t sys_exit(uint64_t status, uint64_t a2,
                 process_deliver_signal(parent, SIGCHLD);
         }
     }
-    serial_printf("[proc] Process exited with status %lu\n", status);
+    serial_printf("[proc] Process terminated with status %ld\n", status);
     /* CRITICAL: Disable interrupts from here until thread_exit().
      * After cr3 is zeroed above, if a timer interrupt preempts us and the
      * scheduler context-switches to another thread, when we're later
@@ -129,6 +125,13 @@ int64_t sys_exit(uint64_t status, uint64_t a2,
             sched_wake(waiter);
     }
     thread_exit();
+}
+
+int64_t sys_exit(uint64_t status, uint64_t a2,
+                         uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    process_terminate(t, (int64_t)status);
     /* Never returns */
     return 0;
 }
