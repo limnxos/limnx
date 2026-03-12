@@ -11,6 +11,8 @@
 #include "serial.h"
 #include "sync/spinlock.h"
 #include "errno.h"
+#include "arch/cpu.h"
+#include "arch/paging.h"
 
 static uint64_t next_pid = 1;
 static process_t *proc_table[MAX_PROCS];
@@ -86,7 +88,7 @@ static void process_enter_usermode(void) {
     syscall_set_kernel_stack(t->stack_base + t->stack_size);
 
     /* Load the process's address space */
-    __asm__ volatile ("mov %0, %%cr3" : : "r"(proc->cr3) : "memory");
+    arch_switch_address_space(proc->cr3);
 
     uint64_t user_rsp = proc->user_stack_top;
     uint64_t user_rdi = 0;  /* argc */
@@ -148,22 +150,14 @@ static void process_enter_usermode(void) {
      * Read current GS.base; if non-zero (percpu), move it to KERNEL_GS_BASE
      * and clear GS.base.
      */
-    {
-        uint32_t gs_lo, gs_hi;
-        __asm__ volatile ("rdmsr" : "=a"(gs_lo), "=d"(gs_hi) : "c"((uint32_t)0xC0000101));
-        if (gs_lo || gs_hi) {
-            /* Move percpu pointer from GS.base → KERNEL_GS_BASE */
-            __asm__ volatile ("wrmsr" : : "c"((uint32_t)0xC0000102), "a"(gs_lo), "d"(gs_hi));
-            __asm__ volatile ("wrmsr" : : "c"((uint32_t)0xC0000101), "a"((uint32_t)0), "d"((uint32_t)0));
-        }
-    }
+    arch_prepare_usermode_return();
 
     /*
-     * Jump to ring 3 via SYSRETQ:
-     *   RCX = user RIP (entry point)
-     *   R11 = user RFLAGS (IF=1 to enable interrupts)
-     *   RSP = user stack top
-     *   RDI = argc, RSI = argv
+     * Jump to ring 3 via SYSRETQ (x86_64) or ERET (arm64):
+     *   entry = user RIP
+     *   user_rsp = user stack pointer
+     *   user_rdi = argc
+     *   user_rsi = argv
      */
     __asm__ volatile (
         "mov %0, %%rcx\n"
@@ -514,7 +508,7 @@ void process_reap(process_t *proc) {
     thread_t *me = thread_get_current();
     while (!proc->exited) {
         proc->wait_thread = me;
-        __asm__ volatile ("" ::: "memory");  /* compiler barrier */
+        arch_memory_barrier();
         if (proc->exited) {
             proc->wait_thread = NULL;
             break;
@@ -533,25 +527,9 @@ static void fork_child_entry(void) {
     process_t *proc = t->process;
 
     syscall_set_kernel_stack(t->stack_base + t->stack_size);
-    __asm__ volatile ("mov %0, %%cr3" : : "r"(proc->cr3) : "memory");
-
-    /* Fix GS state: move percpu from GS.base → KERNEL_GS_BASE for SYSRETQ */
-    {
-        uint32_t gs_lo, gs_hi;
-        __asm__ volatile ("rdmsr" : "=a"(gs_lo), "=d"(gs_hi) : "c"((uint32_t)0xC0000101));
-        if (gs_lo || gs_hi) {
-            __asm__ volatile ("wrmsr" : : "c"((uint32_t)0xC0000102), "a"(gs_lo), "d"(gs_hi));
-            __asm__ volatile ("wrmsr" : : "c"((uint32_t)0xC0000101), "a"((uint32_t)0), "d"((uint32_t)0));
-        }
-    }
-
-    /* Restore FS.base (TLS) for child — inherited from parent */
-    {
-        uint64_t fb = t->fs_base;
-        uint32_t lo = (uint32_t)fb;
-        uint32_t hi = (uint32_t)(fb >> 32);
-        __asm__ volatile ("wrmsr" : : "c"((uint32_t)0xC0000100), "a"(lo), "d"(hi));
-    }
+    arch_switch_address_space(proc->cr3);
+    arch_prepare_usermode_return();
+    arch_set_tls_base(t->fs_base);
 
     /* Load per-child fork context address into rax, then restore all regs.
      * Order matters: rsp must be loaded last (before sysretq). */

@@ -283,6 +283,72 @@ test:
 -include $(OBJS:.o=.d)
 -include $(LIBC_C_OBJS:.o=.d)
 
+# =============================================================
+# ARM64 cross-compilation targets
+# =============================================================
+
+ARM64_CC     := aarch64-elf-gcc
+ARM64_LD     := aarch64-elf-ld
+ARM64_AS     := aarch64-elf-as
+ARM64_OBJCOPY := aarch64-elf-objcopy
+
+# Fallback to linux-gnu toolchain if elf toolchain not found
+ARM64_CC_CHECK := $(shell which $(ARM64_CC) 2>/dev/null)
+ifeq ($(ARM64_CC_CHECK),)
+ARM64_CC     := aarch64-linux-gnu-gcc
+ARM64_LD     := aarch64-linux-gnu-ld
+ARM64_AS     := aarch64-linux-gnu-as
+ARM64_OBJCOPY := aarch64-linux-gnu-objcopy
+endif
+
+ARM64_CFLAGS := -ffreestanding -nostdinc -isystem $(shell $(ARM64_CC) -print-file-name=include 2>/dev/null || echo /dev/null) \
+                -fno-stack-protector -fno-pic \
+                -Wall -Wextra -O2 -g -MMD -MP \
+                -Ikernel/src
+ARM64_LDFLAGS := -nostdlib -static -T kernel/src/arch/arm64/linker.ld
+
+ARM64_KERNEL := build/arm64/kernel
+
+ARM64_C_SRCS := kernel/src/arch/arm64/main.c \
+                kernel/src/arch/arm64/serial.c
+ARM64_ASM_SRCS := kernel/src/arch/arm64/boot.S
+
+ARM64_C_OBJS := $(patsubst kernel/src/%.c,build/arm64/%.o,$(ARM64_C_SRCS))
+ARM64_ASM_OBJS := $(patsubst kernel/src/%.S,build/arm64/%.o,$(ARM64_ASM_SRCS))
+ARM64_OBJS := $(ARM64_C_OBJS) $(ARM64_ASM_OBJS)
+
+.PHONY: arm64 arm64-run arm64-clean
+
+# ARM64 C compilation
+build/arm64/%.o: kernel/src/%.c
+	@mkdir -p $(dir $@)
+	$(ARM64_CC) $(ARM64_CFLAGS) -c $< -o $@
+
+# ARM64 assembly
+build/arm64/%.o: kernel/src/%.S
+	@mkdir -p $(dir $@)
+	$(ARM64_CC) $(ARM64_CFLAGS) -c $< -o $@
+
+# ARM64 kernel ELF
+$(ARM64_KERNEL): $(ARM64_OBJS)
+	$(ARM64_LD) $(ARM64_LDFLAGS) $(ARM64_OBJS) -o $@
+
+arm64: $(ARM64_KERNEL)
+	@echo "ARM64 kernel built: $(ARM64_KERNEL)"
+
+# Run ARM64 kernel in QEMU
+arm64-run: $(ARM64_KERNEL)
+	qemu-system-aarch64 \
+		-M virt \
+		-cpu cortex-a57 \
+		-m 256M \
+		-nographic \
+		-kernel $(ARM64_KERNEL) \
+		-no-reboot
+
+arm64-clean:
+	rm -rf build/arm64
+
 # --- Clean ---
 
 clean:

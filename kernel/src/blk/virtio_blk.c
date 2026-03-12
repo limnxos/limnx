@@ -6,6 +6,7 @@
 #include "idt/idt.h"
 #include "io.h"
 #include "mm/pmm.h"
+#include "arch/cpu.h"
 #include "sched/sched.h"
 #include "serial.h"
 
@@ -154,7 +155,7 @@ static int blk_do_request(uint32_t type, uint64_t sector, void *data_buf) {
     /* Add to available ring */
     uint16_t avail_idx = q_avail->idx;
     q_avail->ring[avail_idx % q_size] = d0;
-    __asm__ volatile ("" ::: "memory");
+    arch_memory_barrier();
     q_avail->idx = avail_idx + 1;
 
     /* Notify device */

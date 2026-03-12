@@ -3,6 +3,7 @@
 #include "mm/kheap.h"
 #include "sync/spinlock.h"
 #include "serial.h"
+#include "arch/cpu.h"
 
 static uint64_t next_tid = 0;
 static spinlock_t thread_lock = SPINLOCK_INIT;
@@ -13,7 +14,7 @@ void thread_entry_wrapper(void (*entry)(void)) {
     /* Enable interrupts — schedule() keeps CLI during context_switch,
      * and new threads arrive here via thread_trampoline without going
      * through the RFLAGS restore path in schedule(). */
-    __asm__ volatile ("sti");
+    arch_irq_enable();
     entry();
     thread_exit();
 }
@@ -105,5 +106,5 @@ void thread_exit(void) {
     cur->state = THREAD_DEAD;
     schedule();
     /* Never returns */
-    for (;;) __asm__ volatile("hlt");
+    for (;;) arch_halt();
 }

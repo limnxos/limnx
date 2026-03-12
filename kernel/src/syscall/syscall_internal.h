@@ -6,6 +6,7 @@
 #include "syscall/syscall.h"
 #include "proc/process.h"
 #include "fs/vfs.h"
+#include "arch/paging.h"
 
 /* ---- Pipe and shared memory (extracted to ipc/) ---- */
 #include "ipc/pipe.h"
@@ -27,10 +28,10 @@ typedef int64_t (*syscall_fn_t)(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t
 #define ARCH_SET_FS 0x1002
 #define ARCH_GET_FS 0x1003
 
-/* ---- invlpg inline ---- */
+/* ---- TLB flush (via HAL) ---- */
 
 static inline void invlpg_addr(uint64_t addr) {
-    __asm__ volatile ("invlpg (%0)" : : "r"(addr) : "memory");
+    arch_flush_tlb_page(addr);
 }
 
 /* ---- Shared helper prototypes (defined in syscall.c) ---- */

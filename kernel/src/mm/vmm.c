@@ -6,19 +6,10 @@
 #include "mm/swap.h"
 #include "proc/process.h"
 #include "serial.h"
+#include "arch/paging.h"
 
 /* PML4 physical address, read from CR3 */
 static uint64_t pml4_phys;
-
-static inline uint64_t read_cr3(void) {
-    uint64_t val;
-    __asm__ volatile ("mov %%cr3, %0" : "=r"(val));
-    return val;
-}
-
-static inline void invlpg(uint64_t addr) {
-    __asm__ volatile ("invlpg (%0)" : : "r"(addr) : "memory");
-}
 
 /* Zero a page-table page (512 entries of 8 bytes) */
 static void zero_page(void *page) {
@@ -56,7 +47,7 @@ static uint64_t *get_or_create_table(uint64_t *table, uint64_t index, int create
 }
 
 void vmm_init(void) {
-    pml4_phys = read_cr3() & PTE_ADDR_MASK;
+    pml4_phys = arch_get_address_space() & PTE_ADDR_MASK;
     pr_info("PML4 at phys %lx\n", pml4_phys);
     pr_info("Virtual memory manager initialized\n");
 }
@@ -76,7 +67,7 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     /* Set leaf PTE */
     pt[PT_INDEX(virt)] = (phys & PTE_ADDR_MASK) | flags | PTE_PRESENT;
 
-    invlpg(virt);
+    arch_flush_tlb_page(virt);
     return 0;
 }
 
@@ -93,7 +84,7 @@ void vmm_unmap_page(uint64_t virt) {
     if (!pt) return;
 
     pt[PT_INDEX(virt)] = 0;
-    invlpg(virt);
+    arch_flush_tlb_page(virt);
 }
 
 uint64_t vmm_get_phys(uint64_t virt) {
@@ -302,7 +293,7 @@ uint64_t vmm_clone_cow(uint64_t parent_cr3,
     }
 
     /* Flush parent's TLB since we changed parent PTEs */
-    __asm__ volatile ("mov %0, %%cr3" : : "r"(parent_cr3) : "memory");
+    arch_switch_address_space(parent_cr3);
 
     return child_cr3;
 }

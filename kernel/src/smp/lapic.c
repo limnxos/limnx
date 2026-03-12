@@ -7,6 +7,7 @@
 #include "mm/vmm.h"
 #include "io.h"
 #include "serial.h"
+#include "arch/cpu.h"
 
 /* LAPIC base virtual address (HHDM-mapped) */
 static volatile uint32_t *lapic_base;
@@ -122,5 +123,5 @@ void lapic_send_ipi(uint32_t target_lapic_id, uint32_t vector) {
 
     /* Wait for delivery */
     while (lapic_read(LAPIC_ICR_LO) & (1 << 12))
-        __asm__ volatile ("pause");
+        arch_pause();
 }

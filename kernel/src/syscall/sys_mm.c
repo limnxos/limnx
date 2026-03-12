@@ -4,8 +4,10 @@
 #include "mm/vmm.h"
 #include "ipc/agent_ns.h"
 
+#include "arch/paging.h"
+
 static inline void flush_page(uint64_t addr) {
-    __asm__ volatile ("invlpg (%0)" : : "r"(addr) : "memory");
+    arch_flush_tlb_page(addr);
 }
 
 int64_t sys_mmap(uint64_t num_pages, uint64_t a2,

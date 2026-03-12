@@ -5,6 +5,7 @@
 #include "serial.h"
 #include "sched/sched.h"
 #include "errno.h"
+#include "arch/cpu.h"
 
 /* --- Configuration (QEMU user-mode networking) --- */
 
@@ -313,7 +314,7 @@ static void handle_udp(uint32_t src_ip, const uint8_t *data, uint32_t len) {
                 sockets[i].rx_len = copy_len;
                 sockets[i].rx_src_ip = src_ip;
                 sockets[i].rx_src_port = src_port;
-                __asm__ volatile ("" ::: "memory");
+                arch_memory_barrier();
                 sockets[i].rx_ready = 1;
             }
             return;

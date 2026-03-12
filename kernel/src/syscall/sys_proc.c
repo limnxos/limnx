@@ -18,6 +18,8 @@
 #include "ipc/supervisor.h"
 #include "net/tcp.h"
 #include "serial.h"
+#include "arch/cpu.h"
+#include "arch/paging.h"
 
 int64_t sys_exit(uint64_t status, uint64_t a2,
                          uint64_t a3, uint64_t a4, uint64_t a5) {
@@ -126,7 +128,7 @@ int64_t sys_exit(uint64_t status, uint64_t a2,
         /* Free user-space pages (respects COW refcounts) */
         if (t->process->cr3) {
             /* Switch to kernel PML4 before freeing */
-            __asm__ volatile ("mov %0, %%cr3" : : "r"(vmm_get_kernel_pml4()) : "memory");
+            arch_switch_address_space(vmm_get_kernel_pml4());
             vmm_free_user_pages(t->process->cr3);
             t->process->cr3 = 0;
         }
@@ -152,14 +154,14 @@ int64_t sys_exit(uint64_t status, uint64_t a2,
      * causing a triple fault (looks like a hang with -no-reboot).
      * Disabling interrupts ensures we reach thread_exit() atomically,
      * which sets THREAD_DEAD so the scheduler won't re-enqueue us. */
-    __asm__ volatile ("cli");
+    arch_irq_disable();
     /* Mark process as exited and wake any waitpid waiter BEFORE thread_exit.
      * Save wait_thread before setting exited=1, because after exited=1 the
      * waiter may kfree the process at any time. */
     if (t->process) {
         thread_t *waiter = t->process->wait_thread;
         t->process->wait_thread = NULL;
-        __asm__ volatile ("" ::: "memory");  /* compiler barrier */
+        arch_memory_barrier();
         t->process->exited = 1;
         t->process = NULL;
         /* Wake the waiter. sched_wake acquires rq_lock with irqsave,
@@ -480,7 +482,7 @@ int64_t sys_waitpid(uint64_t pid, uint64_t flags,
         /* Register as waiter and block instead of spin-yielding.
          * Double-check pattern: set wait_thread, barrier, re-check exited. */
         child->wait_thread = wt;
-        __asm__ volatile ("" ::: "memory");  /* compiler barrier */
+        arch_memory_barrier();
         if (child->exited) {
             child->wait_thread = NULL;
             break;

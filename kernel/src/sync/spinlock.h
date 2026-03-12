@@ -2,6 +2,7 @@
 #define LIMNX_SPINLOCK_H
 
 #include <stdint.h>
+#include "arch/cpu.h"
 
 typedef struct {
     volatile uint64_t locked;
@@ -11,7 +12,7 @@ typedef struct {
 
 static inline void spin_lock(spinlock_t *lock) {
     while (__sync_lock_test_and_set(&lock->locked, 1))
-        __asm__ volatile ("pause");
+        arch_pause();
 }
 
 static inline void spin_unlock(spinlock_t *lock) {
@@ -19,13 +20,13 @@ static inline void spin_unlock(spinlock_t *lock) {
 }
 
 static inline void spin_lock_irqsave(spinlock_t *lock, uint64_t *flags) {
-    __asm__ volatile ("pushfq; pop %0; cli" : "=r"(*flags) : : "memory");
+    *flags = arch_irq_save();
     spin_lock(lock);
 }
 
 static inline void spin_unlock_irqrestore(spinlock_t *lock, uint64_t flags) {
     spin_unlock(lock);
-    __asm__ volatile ("push %0; popfq" : : "r"(flags) : "memory");
+    arch_irq_restore(flags);
 }
 
 #endif

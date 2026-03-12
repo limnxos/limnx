@@ -8,6 +8,7 @@
 #include "mm/swap.h"
 #include "ipc/uring.h"
 #include "ipc/taskgraph.h"
+#include "arch/cpu.h"
 #include "ipc/supervisor.h"
 #include "ipc/agent_ns.h"
 #include "pty/pty.h"
@@ -69,11 +70,7 @@ int64_t sys_arch_prctl(uint64_t code, uint64_t addr,
             return -EFAULT;
         t->fs_base = addr;
         /* Apply immediately */
-        {
-            uint32_t lo = (uint32_t)addr;
-            uint32_t hi = (uint32_t)(addr >> 32);
-            __asm__ volatile ("wrmsr" : : "c"((uint32_t)0xC0000100), "a"(lo), "d"(hi));
-        }
+        arch_set_tls_base(addr);
         return 0;
     case ARCH_GET_FS:
         if (t->process && addr) {

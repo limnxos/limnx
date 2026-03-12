@@ -6,6 +6,7 @@
 #include "sched/sched.h"
 #include "serial.h"
 #include "errno.h"
+#include "arch/cpu.h"
 
 /* Poll event bits for tcp_poll */
 #define POLLIN   0x001
@@ -282,7 +283,7 @@ void tcp_rx(uint32_t src_ip, const uint8_t *data, uint32_t len) {
                     conn->rx_write_pos = (conn->rx_write_pos + 1) % TCP_RX_BUF_SIZE;
                 }
                 /* Barrier + single update so SMP readers see full data */
-                __asm__ volatile ("" ::: "memory");
+                arch_memory_barrier();
                 conn->rx_count += copy;
                 conn->rcv_nxt += copy;
                 conn->rx_data_ready = 1;

@@ -13,6 +13,8 @@
 #include "net/tcp.h"
 #include "ipc/infer_svc.h"
 #include "serial.h"
+#include "arch/cpu.h"
+#include "arch/paging.h"
 
 /* Per-CPU current_thread and idle_thread are in percpu_t.
  * For backward compatibility during early boot (before SMP init),
@@ -210,7 +212,7 @@ static void do_switch(thread_t *old, thread_t *next, uint64_t flags) {
     if (old_cr3 == 0) old_cr3 = vmm_get_kernel_pml4();
     if (new_cr3 == 0) new_cr3 = vmm_get_kernel_pml4();
     if (old_cr3 != new_cr3)
-        __asm__ volatile ("mov %0, %%cr3" : : "r"(new_cr3) : "memory");
+        arch_switch_address_space(new_cr3);
 
     /* Hold the lock THROUGH context_switch. This prevents another CPU from
      * dequeuing and switching to 'old' before its context is saved.
@@ -219,11 +221,7 @@ static void do_switch(thread_t *old, thread_t *next, uint64_t flags) {
 
     if (old != next) {
         /* Save/restore FS.base (TLS) across context switch */
-        {
-            uint32_t lo, hi;
-            __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"((uint32_t)0xC0000100));
-            old->fs_base = ((uint64_t)hi << 32) | lo;
-        }
+        old->fs_base = arch_get_tls_base();
         context_switch(&old->context, &next->context,
                        old->fpu_state, next->fpu_state);
         /* After switch, 'next' is now the current thread.
@@ -231,10 +229,7 @@ static void do_switch(thread_t *old, thread_t *next, uint64_t flags) {
          * belong to the resumed thread, so we use thread_get_current(). */
         {
             thread_t *cur = thread_get_current();
-            uint64_t fb = cur->fs_base;
-            uint32_t lo = (uint32_t)fb;
-            uint32_t hi = (uint32_t)(fb >> 32);
-            __asm__ volatile ("wrmsr" : : "c"((uint32_t)0xC0000100), "a"(lo), "d"(hi));
+            arch_set_tls_base(cur->fs_base);
         }
     }
 
@@ -251,16 +246,16 @@ static void do_switch(thread_t *old, thread_t *next, uint64_t flags) {
     /* Restore interrupt state from the resumed thread's saved flags.
      * After context_switch, 'flags' is this thread's stack-local variable
      * from when it previously entered schedule(). */
-    if (flags & 0x200)
-        __asm__ volatile ("sti");
-    __asm__ volatile ("push %0; popfq" : : "r"(flags) : "memory");
+    arch_irq_restore(flags);
 }
 
 /* --- Idle loop --- */
 
 static void idle_loop(void) {
-    for (;;)
-        __asm__ volatile ("sti; hlt");
+    for (;;) {
+        arch_irq_enable();
+        arch_halt();
+    }
 }
 
 /* --- Init --- */
@@ -290,7 +285,7 @@ void sched_init(void) {
     kmain_thread->last_cpu   = 0;
 
     /* Capture current FPU state into kmain_thread */
-    __asm__ volatile ("fxsave %0" : "=m"(kmain_thread->fpu_state));
+    arch_fpu_save(kmain_thread->fpu_state);
 
     bsp_current_thread = kmain_thread;
 
@@ -412,9 +407,7 @@ static void schedule_smp(void) {
         } else {
             /* Only thread — keep running */
             spin_unlock(my_lock);
-            if (flags & 0x200)
-                __asm__ volatile ("sti");
-            __asm__ volatile ("push %0; popfq" : : "r"(flags) : "memory");
+            arch_irq_restore(flags);
             return;
         }
     }
@@ -645,7 +638,7 @@ void sched_unlock_after_switch(void) {
     } else {
         spin_unlock(&sched_lock);
     }
-    __asm__ volatile ("sti");
+    arch_irq_enable();
 }
 
 int sched_has_pending_signal(void) {

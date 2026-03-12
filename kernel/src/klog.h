@@ -20,6 +20,7 @@
 
 #include "serial.h"
 #include "compiler.h"
+#include "arch/cpu.h"
 
 /* Log levels (matching Linux KERN_* severity) */
 #define KLOG_EMERG   0  /* System is unusable — followed by panic */
@@ -66,8 +67,8 @@
 #define panic(fmt, ...) do { \
     serial_printf("KERNEL PANIC: " fmt "\n", ##__VA_ARGS__); \
     serial_printf("  at %s:%d\n", __FILE__, __LINE__); \
-    asm volatile("cli"); \
-    for (;;) asm volatile("hlt"); \
+    arch_irq_disable(); \
+    for (;;) arch_halt(); \
 } while (0)
 
 /*

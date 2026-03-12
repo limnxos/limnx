@@ -13,25 +13,13 @@
 #include "serial.h"
 #include "limine.h"
 #include "idt/idt.h"
+#include "arch/cpu.h"
 
 /* MSR definitions */
 #define MSR_EFER           0xC0000080
 #define MSR_STAR           0xC0000081
 #define MSR_LSTAR          0xC0000082
 #define MSR_SFMASK         0xC0000084
-#define MSR_KERNEL_GS_BASE 0xC0000102
-
-static inline void wrmsr(uint32_t msr, uint64_t value) {
-    uint32_t lo = (uint32_t)value;
-    uint32_t hi = (uint32_t)(value >> 32);
-    __asm__ volatile ("wrmsr" : : "c"(msr), "a"(lo), "d"(hi));
-}
-
-static inline uint64_t rdmsr(uint32_t msr) {
-    uint32_t lo, hi;
-    __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
-    return ((uint64_t)hi << 32) | lo;
-}
 
 /* Per-CPU data array */
 percpu_t percpu_array[MAX_CPUS] __attribute__((aligned(64)));
@@ -145,9 +133,9 @@ static void percpu_gdt_load(percpu_t *pc) {
 /* Set up SYSCALL MSRs for this CPU */
 static void setup_syscall_msrs(void) {
     /* Enable SCE in EFER */
-    uint64_t efer = rdmsr(MSR_EFER);
+    uint64_t efer = arch_rdmsr(MSR_EFER);
     efer |= 1;  /* SCE bit */
-    wrmsr(MSR_EFER, efer);
+    arch_wrmsr(MSR_EFER, efer);
 
     /* STAR: kernel CS/SS in bits 32-47, user CS/SS in bits 48-63
      * Kernel: CS=0x08, SS=0x10
@@ -168,35 +156,26 @@ static void setup_syscall_msrs(void) {
      * We need SS=0x1B(udata+RPL3) → STAR[48:63]+8 = 0x18 → STAR[48:63]=0x10
      * We need CS=0x23(ucode+RPL3) → STAR[48:63]+16= 0x20, 0x10+16=0x20+RPL3=0x23 ✓
      */
-    wrmsr(MSR_STAR, ((uint64_t)0x0010 << 48) | ((uint64_t)0x0008 << 32));
+    arch_wrmsr(MSR_STAR, ((uint64_t)0x0010 << 48) | ((uint64_t)0x0008 << 32));
 
     /* LSTAR: SYSCALL entry point */
-    wrmsr(MSR_LSTAR, (uint64_t)syscall_entry);
+    arch_wrmsr(MSR_LSTAR, (uint64_t)syscall_entry);
 
     /* SFMASK: clear IF on syscall entry */
-    wrmsr(MSR_SFMASK, (1 << 9));  /* bit 9 = IF */
+    arch_wrmsr(MSR_SFMASK, (1 << 9));  /* bit 9 = IF */
 }
 
 /* AP idle loop — runs on each AP after initialization */
 static void ap_idle_loop(void) {
-    for (;;)
-        __asm__ volatile ("sti; hlt");
+    for (;;) {
+        arch_irq_enable();
+        arch_halt();
+    }
 }
 
 /* Enable FPU/SSE on this CPU (same as fpu_init in main.c) */
 static void ap_fpu_init(void) {
-    uint64_t cr0, cr4;
-    __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
-    cr0 &= ~(1ULL << 2);  /* clear CR0.EM */
-    cr0 |=  (1ULL << 1);  /* set CR0.MP */
-    __asm__ volatile ("mov %0, %%cr0" : : "r"(cr0));
-
-    __asm__ volatile ("mov %%cr4, %0" : "=r"(cr4));
-    cr4 |= (1ULL << 9);   /* CR4.OSFXSR */
-    cr4 |= (1ULL << 10);  /* CR4.OSXMMEXCPT */
-    __asm__ volatile ("mov %0, %%cr4" : : "r"(cr4));
-
-    __asm__ volatile ("fninit");
+    arch_fpu_init();
 }
 
 /* AP entry point — called by Limine when AP is woken up */
@@ -217,7 +196,7 @@ static void ap_entry(struct limine_smp_info *info) {
 
     /* Set GS.base directly for kernel mode (percpu_get reads gs:16).
      * KERNEL_GS_BASE stays 0; process_enter_usermode sets it before SYSRETQ. */
-    wrmsr(0xC0000101, (uint64_t)pc);  /* MSR_GS_BASE */
+    arch_wrmsr(0xC0000101, (uint64_t)pc);  /* MSR_GS_BASE */
 
     /* Initialize LAPIC */
     lapic_init();
@@ -233,7 +212,7 @@ static void ap_entry(struct limine_smp_info *info) {
     }
 
     /* Signal BSP that we're ready */
-    __asm__ volatile ("" ::: "memory");
+    arch_memory_barrier();
     pc->started = 1;
 
     pr_info("AP %u ready (LAPIC ID %u)\n", pc->cpu_id, pc->lapic_id);
@@ -256,9 +235,9 @@ static void ap_entry(struct limine_smp_info *info) {
     }
 
     /* Fallback (shouldn't reach here) */
-    __asm__ volatile ("sti");
+    arch_irq_enable();
     for (;;)
-        __asm__ volatile ("hlt");
+        arch_halt();
 }
 
 void smp_init(void) {
@@ -302,7 +281,7 @@ void smp_init(void) {
 
     /* Set GS.base for kernel mode (percpu_gdt_load zeroed GS selector).
      * KERNEL_GS_BASE stays 0; process_enter_usermode sets it before SYSRETQ. */
-    wrmsr(0xC0000101, (uint64_t)bsp);  /* MSR_GS_BASE */
+    arch_wrmsr(0xC0000101, (uint64_t)bsp);  /* MSR_GS_BASE */
 
     /* Re-setup SYSCALL MSRs (already done by syscall_init, but repoint LSTAR) */
     setup_syscall_msrs();
@@ -352,7 +331,7 @@ void smp_init(void) {
         info->extra_argument = (uint64_t)pc;
 
         /* Wake up the AP */
-        __asm__ volatile ("" ::: "memory");
+        arch_memory_barrier();
         info->goto_address = ap_entry;
 
         ap_started++;
@@ -363,7 +342,7 @@ void smp_init(void) {
         volatile uint32_t *flag = &percpu_array[i].started;
         int timeout = 1000000;
         while (!*flag && --timeout > 0)
-            __asm__ volatile ("pause");
+            arch_pause();
 
         if (!*flag)
             pr_warn("AP %u did not start\n", i);

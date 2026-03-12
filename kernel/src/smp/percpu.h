@@ -52,11 +52,21 @@ extern percpu_t percpu_array[MAX_CPUS];
 extern uint32_t cpu_count;
 extern uint32_t bsp_cpu_id;
 
-/* Read the per-CPU pointer from GS:16 (self field) */
+/* Read the per-CPU pointer from GS:16 (self field).
+ * On x86_64, uses GS segment override.
+ * On ARM64, would use TPIDR_EL1 (future). */
 static inline percpu_t *percpu_get(void) {
+#if defined(__x86_64__)
     percpu_t *p;
     __asm__ volatile ("mov %%gs:16, %0" : "=r"(p));
     return p;
+#elif defined(__aarch64__)
+    percpu_t *p;
+    __asm__ volatile ("mrs %0, tpidr_el1" : "=r"(p));
+    return p;
+#else
+#error "Unsupported architecture"
+#endif
 }
 
 /* Read per-CPU pointer without GS (for BSP before SWAPGS setup) */

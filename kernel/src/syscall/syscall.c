@@ -30,24 +30,14 @@
 #include "blk/limnfs.h"
 #include "smp/percpu.h"
 #include "serial.h"
+#include "arch/cpu.h"
+#include "arch/paging.h"
 
-/* MSR addresses */
+/* MSR addresses (x86_64-specific, used by syscall_init) */
 #define MSR_EFER   0xC0000080
 #define MSR_STAR   0xC0000081
 #define MSR_LSTAR  0xC0000082
 #define MSR_SFMASK 0xC0000084
-
-static inline void wrmsr(uint32_t msr, uint64_t value) {
-    uint32_t lo = (uint32_t)value;
-    uint32_t hi = (uint32_t)(value >> 32);
-    __asm__ volatile ("wrmsr" : : "c"(msr), "a"(lo), "d"(hi));
-}
-
-static inline uint64_t rdmsr(uint32_t msr) {
-    uint32_t lo, hi;
-    __asm__ volatile ("rdmsr" : "=a"(lo), "=d"(hi) : "c"(msr));
-    return ((uint64_t)hi << 32) | lo;
-}
 
 /* Assembly entry point */
 extern void syscall_entry(void);
@@ -375,8 +365,8 @@ kill:
     /* Switch to kernel address space BEFORE freeing user pages.
      * Without this, vmm_free_user_pages frees the page tables
      * we're currently running on, risking triple faults. */
-    __asm__ volatile ("cli");
-    __asm__ volatile ("mov %0, %%cr3" : : "r"(vmm_get_kernel_pml4()) : "memory");
+    arch_irq_disable();
+    arch_switch_address_space(vmm_get_kernel_pml4());
     vmm_free_user_pages(proc->cr3);
     proc->cr3 = 0;
     t->state = THREAD_DEAD;
@@ -594,13 +584,13 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
                 serial_printf("[proc] Process %lu terminated (signal %d)\n",
                     proc->pid, sig);
                 if (proc->cr3) {
-                    __asm__ volatile ("mov %0, %%cr3" : : "r"(vmm_get_kernel_pml4()) : "memory");
+                    arch_switch_address_space(vmm_get_kernel_pml4());
                     vmm_free_user_pages(proc->cr3);
                     proc->cr3 = 0;
                 }
                 /* Disable interrupts before thread_exit to prevent
                  * preemption with cr3=0 (same fix as sys_exit). */
-                __asm__ volatile ("cli");
+                arch_irq_disable();
                 proc->exited = 1;
                 t->process = NULL;
                 thread_exit();
@@ -685,7 +675,7 @@ void syscall_set_kernel_stack(uint64_t rsp) {
     /* Update per-CPU kernel_rsp (read by syscall_entry.asm via gs:0).
      * Read MSR_GS_BASE to get percpu pointer if available,
      * otherwise fall back to BSP (early boot before syscall_init). */
-    uint64_t gs_base = rdmsr(0xC0000101);
+    uint64_t gs_base = arch_rdmsr(0xC0000101);
     if (gs_base) {
         ((percpu_t *)gs_base)->kernel_rsp = rsp;
     } else {
@@ -695,8 +685,8 @@ void syscall_set_kernel_stack(uint64_t rsp) {
 
 void syscall_init(void) {
     /* Enable SYSCALL/SYSRET in EFER */
-    uint64_t efer = rdmsr(MSR_EFER);
-    wrmsr(MSR_EFER, efer | 1);  /* bit 0 = SCE (Syscall Enable) */
+    uint64_t efer = arch_rdmsr(MSR_EFER);
+    arch_wrmsr(MSR_EFER, efer | 1);  /* bit 0 = SCE (Syscall Enable) */
 
     /*
      * STAR MSR:
@@ -706,13 +696,13 @@ void syscall_init(void) {
      *             SYSRET loads CS=0x10+16=0x20 (|3=0x23), SS=0x10+8=0x18 (|3=0x1B)
      */
     uint64_t star = (0x0010ULL << 48) | (0x0008ULL << 32);
-    wrmsr(MSR_STAR, star);
+    arch_wrmsr(MSR_STAR, star);
 
     /* LSTAR = syscall entry point */
-    wrmsr(MSR_LSTAR, (uint64_t)syscall_entry);
+    arch_wrmsr(MSR_LSTAR, (uint64_t)syscall_entry);
 
     /* SFMASK = bits to clear in RFLAGS on SYSCALL (clear IF to disable interrupts) */
-    wrmsr(MSR_SFMASK, 0x200);
+    arch_wrmsr(MSR_SFMASK, 0x200);
 
     /* Set up BSP per-CPU data early so SWAPGS works from the first SYSCALL.
      * smp_init() will re-initialize this more fully later. */
@@ -727,7 +717,7 @@ void syscall_init(void) {
      * KERNEL_GS_BASE starts as 0; process_enter_usermode will set it
      * to percpu before SYSRETQ (so SWAPGS in syscall_entry works). */
 #define MSR_GS_BASE        0xC0000101
-    wrmsr(MSR_GS_BASE, (uint64_t)&percpu_array[0]);
+    arch_wrmsr(MSR_GS_BASE, (uint64_t)&percpu_array[0]);
 
     pr_info("STAR=%lx LSTAR=%lx\n", star, (uint64_t)syscall_entry);
     pr_info("SYSCALL/SYSRET initialized (SWAPGS ready)\n");

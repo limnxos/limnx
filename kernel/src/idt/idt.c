@@ -9,6 +9,8 @@
 #include "pty/pty.h"
 #include "smp/lapic.h"
 #include "smp/percpu.h"
+#include "arch/cpu.h"
+#include "arch/paging.h"
 
 static struct idt_entry idt[IDT_ENTRIES];
 static struct idt_ptr   idtp;
@@ -135,8 +137,7 @@ void interrupt_dispatch(interrupt_frame_t *frame) {
     if (vec < 32) {
         /* Page Fault — dispatch to handler */
         if (vec == 14) {
-            uint64_t cr2;
-            __asm__ volatile ("mov %%cr2, %0" : "=r"(cr2));
+            uint64_t cr2 = arch_get_fault_address();
             uint64_t err = frame->err_code;
             extern int page_fault_handler(uint64_t fault_addr, uint64_t err_code,
                                           interrupt_frame_t *frame);
@@ -148,9 +149,9 @@ void interrupt_dispatch(interrupt_frame_t *frame) {
             dump_regs(frame);
             serial_printf("  CR2=%lx (fault address)\n", cr2);
             serial_puts("  HALTING.\n");
-            __asm__ volatile ("cli");
+            arch_irq_disable();
             for (;;)
-                __asm__ volatile ("hlt");
+                arch_halt();
         }
 
         /* CPU exception */
@@ -166,9 +167,9 @@ void interrupt_dispatch(interrupt_frame_t *frame) {
 
         /* Fatal exception — halt */
         serial_puts("  HALTING.\n");
-        __asm__ volatile ("cli");
+        arch_irq_disable();
         for (;;)
-            __asm__ volatile ("hlt");
+            arch_halt();
     }
 
     if (vec >= 32 && vec < 48) {
@@ -315,6 +316,6 @@ void idt_init(void) {
     pr_info("PIC remapped: IRQ0-7 → 32-39, IRQ8-15 → 40-47\n");
 
     /* Enable interrupts */
-    __asm__ volatile ("sti");
+    arch_irq_enable();
     pr_info("Interrupts enabled\n");
 }

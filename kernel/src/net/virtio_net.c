@@ -6,6 +6,7 @@
 #include "io.h"
 #include "mm/pmm.h"
 #include "serial.h"
+#include "arch/cpu.h"
 
 /* Forward declaration — called by net.c, defined there */
 void net_rx(const void *frame, uint32_t len);
@@ -121,7 +122,7 @@ static void rx_fill_descriptors(void) {
 
         uint16_t avail_idx = rxq_avail->idx;
         rxq_avail->ring[avail_idx % rxq_size] = i;
-        __asm__ volatile ("" ::: "memory"); /* barrier */
+        arch_memory_barrier(); /* barrier */
         rxq_avail->idx = avail_idx + 1;
     }
 
@@ -174,7 +175,7 @@ int virtio_net_tx(const void *frame, uint32_t len) {
     /* Add to available ring */
     uint16_t avail_idx = txq_avail->idx;
     txq_avail->ring[avail_idx % txq_size] = desc_idx;
-    __asm__ volatile ("" ::: "memory");
+    arch_memory_barrier();
     txq_avail->idx = avail_idx + 1;
 
     /* Notify device */

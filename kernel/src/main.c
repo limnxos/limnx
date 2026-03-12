@@ -37,6 +37,7 @@
 #include "smp/lapic.h"
 #include "sync/mutex.h"
 #include "mm/swap.h"
+#include "arch/cpu.h"
 
 /* --- Limine requests --- */
 
@@ -83,7 +84,7 @@ static volatile struct limine_module_request module_request = {
 
 static __unused void hlt_loop(void) {
     for (;;)
-        __asm__ volatile ("hlt");
+        arch_halt();
 }
 
 static const char *memmap_type_str(uint64_t type) {
@@ -385,23 +386,7 @@ static process_t *load_and_run_elf(const char *path) {
 /* --- FPU/SSE initialization --- */
 
 static void fpu_init(void) {
-    uint64_t cr0, cr4;
-
-    /* Read CR0: clear EM (bit 2), set MP (bit 1) */
-    __asm__ volatile ("mov %%cr0, %0" : "=r"(cr0));
-    cr0 &= ~(1ULL << 2);  /* clear CR0.EM */
-    cr0 |=  (1ULL << 1);  /* set CR0.MP */
-    __asm__ volatile ("mov %0, %%cr0" : : "r"(cr0));
-
-    /* Read CR4: set OSFXSR (bit 9), set OSXMMEXCPT (bit 10) */
-    __asm__ volatile ("mov %%cr4, %0" : "=r"(cr4));
-    cr4 |= (1ULL << 9);   /* CR4.OSFXSR */
-    cr4 |= (1ULL << 10);  /* CR4.OSXMMEXCPT */
-    __asm__ volatile ("mov %0, %%cr4" : : "r"(cr4));
-
-    /* Initialize x87 FPU */
-    __asm__ volatile ("fninit");
-
+    arch_fpu_init();
     serial_puts("[fpu]  FPU/SSE enabled (CR0.EM=0, CR4.OSFXSR=1, CR4.OSXMMEXCPT=1)\n");
 }
 
