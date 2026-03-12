@@ -3,7 +3,7 @@
 
 #include "ipc/cap_token.h"
 #include "sync/spinlock.h"
-#include "serial.h"
+#include "arch/serial.h"
 #include "errno.h"
 
 static cap_token_t tokens[MAX_TOKENS];

@@ -1,8 +1,9 @@
 #include "syscall/syscall_internal.h"
 #include "sched/sched.h"
 #include "sched/thread.h"
-#include "serial.h"
-#include "idt/idt.h"
+#include "arch/serial.h"
+#include "arch/timer.h"
+#include "arch/interrupt.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "mm/swap.h"
@@ -140,7 +141,7 @@ int64_t sys_getchar(uint64_t a1, uint64_t a2,
     while (1) {
         ch = serial_getchar();
         if (ch) return (int64_t)(uint8_t)ch;
-        ch = kbd_getchar();
+        ch = arch_kbd_getchar();
         if (ch) return (int64_t)(uint8_t)ch;
         if (gc_proc && (gc_proc->pending_signals & ~gc_proc->signal_mask))
             return -EINTR;
@@ -256,7 +257,7 @@ int64_t sys_clock_gettime(uint64_t clockid, uint64_t ts_ptr,
     if (validate_user_ptr(ts_ptr, sizeof(timespec_t)) != 0)
         return -EFAULT;
 
-    uint64_t ticks = pit_get_ticks();
+    uint64_t ticks = arch_timer_get_ticks();
     timespec_t *ts = (timespec_t *)ts_ptr;
     ts->tv_sec = (int64_t)(ticks / 18);
     ts->tv_nsec = (int64_t)((ticks % 18) * 54945055);
@@ -275,10 +276,10 @@ int64_t sys_nanosleep(uint64_t ts_ptr, uint64_t a2,
                            (uint64_t)ts->tv_nsec / 54945055;
     if (delay_ticks == 0) delay_ticks = 1;
 
-    uint64_t deadline = pit_get_ticks() + delay_ticks;
+    uint64_t deadline = arch_timer_get_ticks() + delay_ticks;
     thread_t *ns_t = thread_get_current();
     process_t *ns_proc = ns_t ? ns_t->process : NULL;
-    while (pit_get_ticks() < deadline) {
+    while (arch_timer_get_ticks() < deadline) {
         if (ns_proc && (ns_proc->pending_signals & ~ns_proc->signal_mask))
             return -EINTR;
         sched_yield();
@@ -445,7 +446,7 @@ int64_t sys_poll(uint64_t fds_ptr, uint64_t nfds, uint64_t timeout_ms,
     if (timeout_ms > 0) {
         uint64_t delay_ticks = timeout_ms * 18 / 1000;
         if (delay_ticks == 0) delay_ticks = 1;
-        deadline = pit_get_ticks() + delay_ticks;
+        deadline = arch_timer_get_ticks() + delay_ticks;
     }
 
     for (;;) {
@@ -464,7 +465,7 @@ int64_t sys_poll(uint64_t fds_ptr, uint64_t nfds, uint64_t timeout_ms,
             return 0;
 
         /* Check deadline for positive timeout */
-        if (timeout_ms > 0 && pit_get_ticks() >= deadline)
+        if (timeout_ms > 0 && arch_timer_get_ticks() >= deadline)
             return 0;
 
         if (proc->pending_signals & ~proc->signal_mask)
@@ -513,7 +514,7 @@ int64_t sys_select(uint64_t nfds, uint64_t readfds_ptr,
     if (has_timeout && timeout_us > 0) {
         uint64_t delay_ticks = (timeout_us * 18) / 1000000;
         if (delay_ticks == 0) delay_ticks = 1;
-        deadline = pit_get_ticks() + delay_ticks;
+        deadline = arch_timer_get_ticks() + delay_ticks;
     }
 
     /* Poll loop */
@@ -553,7 +554,7 @@ int64_t sys_select(uint64_t nfds, uint64_t readfds_ptr,
             return ready;
         }
 
-        if (has_timeout && pit_get_ticks() >= deadline)
+        if (has_timeout && arch_timer_get_ticks() >= deadline)
             return 0;  /* timeout */
 
         if (proc->pending_signals & ~proc->signal_mask)

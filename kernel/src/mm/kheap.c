@@ -5,7 +5,7 @@
 #include "mm/vmm.h"
 #include "mm/pmm.h"
 #include "sync/spinlock.h"
-#include "serial.h"
+#include "arch/serial.h"
 
 /*
  * Lock ordering: kheap_lock is at level 3.

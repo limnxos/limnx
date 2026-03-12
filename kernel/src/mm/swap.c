@@ -5,7 +5,7 @@
 #include "mm/vmm.h"
 #include "mm/pmm.h"
 #include "blk/bcache.h"
-#include "serial.h"
+#include "arch/serial.h"
 
 static uint8_t swap_bitmap[SWAP_NUM_PAGES / 8];  /* 256 bytes */
 static uint32_t swap_used_count;

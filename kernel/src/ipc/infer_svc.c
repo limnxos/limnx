@@ -8,8 +8,8 @@
 #include "sched/sched.h"
 #include "sched/thread.h"
 #include "sync/spinlock.h"
-#include "serial.h"
-#include "idt/idt.h"
+#include "arch/serial.h"
+#include "arch/timer.h"
 #include "errno.h"
 #include "kutil.h"
 
@@ -117,7 +117,7 @@ int infer_health(uint64_t pid, uint32_t load) {
         if (infer_table[i].used && infer_table[i].provider_pid == pid) {
             infer_table[i].load = load;
             infer_table[i].healthy = 1;
-            infer_table[i].last_heartbeat = (uint32_t)pit_get_ticks();
+            infer_table[i].last_heartbeat = (uint32_t)arch_timer_get_ticks();
             /* Save name before releasing lock */
             char name[INFER_NAME_MAX];
             str_copy(name, infer_table[i].name, INFER_NAME_MAX);
@@ -135,7 +135,7 @@ int infer_health_check(void) {
     uint64_t flags;
     spin_lock_irqsave(&infer_lock, &flags);
 
-    uint32_t now = (uint32_t)pit_get_ticks();
+    uint32_t now = (uint32_t)arch_timer_get_ticks();
     int unhealthy_count = 0;
 
     for (int i = 0; i < MAX_INFER_SERVICES; i++) {
@@ -461,7 +461,7 @@ void infer_cache_insert(const char *name, const void *req, uint32_t req_len,
             /* Update existing entry */
             mem_copy(infer_cache[i].response, resp, resp_len);
             infer_cache[i].resp_len = resp_len;
-            infer_cache[i].insert_tick = (uint32_t)pit_get_ticks();
+            infer_cache[i].insert_tick = (uint32_t)arch_timer_get_ticks();
             cache_lru_remove(i);
             cache_lru_push_front(i);
             spin_unlock_irqrestore(&infer_lock, flags);
@@ -493,7 +493,7 @@ void infer_cache_insert(const char *name, const void *req, uint32_t req_len,
     str_copy(infer_cache[slot].name, name, INFER_NAME_MAX);
     mem_copy(infer_cache[slot].response, resp, resp_len);
     infer_cache[slot].resp_len = resp_len;
-    infer_cache[slot].insert_tick = (uint32_t)pit_get_ticks();
+    infer_cache[slot].insert_tick = (uint32_t)arch_timer_get_ticks();
     infer_cache[slot].used = 1;
     cache_lru_push_front(slot);
 
@@ -545,7 +545,7 @@ void infer_cache_expire(void) {
     uint64_t flags;
     spin_lock_irqsave(&infer_lock, &flags);
 
-    uint32_t now = (uint32_t)pit_get_ticks();
+    uint32_t now = (uint32_t)arch_timer_get_ticks();
 
     for (int i = 0; i < INFER_CACHE_SIZE; i++) {
         if (!infer_cache[i].used) continue;
@@ -574,7 +574,7 @@ int infer_queue_enqueue(const char *name, uint64_t caller_pid) {
             infer_queue[i].used = 1;
             str_copy(infer_queue[i].name, name, INFER_NAME_MAX);
             infer_queue[i].caller_pid = caller_pid;
-            infer_queue[i].enqueue_tick = (uint32_t)pit_get_ticks();
+            infer_queue[i].enqueue_tick = (uint32_t)arch_timer_get_ticks();
             infer_queue[i].ready = 0;
             infer_queue[i].timed_out = 0;
             infer_queue_total_queued++;
@@ -639,7 +639,7 @@ void infer_queue_expire(void) {
     uint64_t flags;
     spin_lock_irqsave(&infer_lock, &flags);
 
-    uint32_t now = (uint32_t)pit_get_ticks();
+    uint32_t now = (uint32_t)arch_timer_get_ticks();
 
     for (int i = 0; i < INFER_QUEUE_SIZE; i++) {
         if (!infer_queue[i].used) continue;
@@ -695,7 +695,7 @@ int infer_async_submit(const char *name, const void *req, uint32_t req_len,
             infer_async[i].owner_pid = owner_pid;
             infer_async[i].eventfd_idx = eventfd_idx;
             infer_async[i].error_code = 0;
-            infer_async[i].submit_tick = (uint32_t)pit_get_ticks();
+            infer_async[i].submit_tick = (uint32_t)arch_timer_get_ticks();
             infer_async[i].ns_id = 0;
             {
                 process_t *op = process_lookup(owner_pid);
@@ -809,7 +809,7 @@ int infer_async_process_one(void) {
     int svc_idx = infer_route_ns(name, async_ns_id);
     if (svc_idx < 0) {
         /* No provider — check timeout */
-        uint32_t now = (uint32_t)pit_get_ticks();
+        uint32_t now = (uint32_t)arch_timer_get_ticks();
         uint32_t elapsed = now - oldest_tick;
         if (elapsed > INFER_ASYNC_TIMEOUT) {
             spin_lock_irqsave(&infer_lock, &flags);
@@ -926,7 +926,7 @@ void infer_async_expire(void) {
     uint64_t flags;
     spin_lock_irqsave(&infer_lock, &flags);
 
-    uint32_t now = (uint32_t)pit_get_ticks();
+    uint32_t now = (uint32_t)arch_timer_get_ticks();
     for (int i = 0; i < INFER_ASYNC_SIZE; i++) {
         if (infer_async[i].state != INFER_ASYNC_PENDING) continue;
         uint32_t elapsed = now - infer_async[i].submit_tick;

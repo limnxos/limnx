@@ -3,7 +3,7 @@
 
 #include "mm/pmm.h"
 #include "sync/spinlock.h"
-#include "serial.h"
+#include "arch/serial.h"
 #include "limine.h"
 
 /*

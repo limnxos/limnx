@@ -7,7 +7,7 @@
 #include "sched/thread.h"
 #include "proc/process.h"
 #include "mm/vmm.h"
-#include "serial.h"
+#include "arch/serial.h"
 
 typedef struct futex_waiter {
     thread_t  *thread;

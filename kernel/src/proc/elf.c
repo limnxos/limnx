@@ -4,7 +4,7 @@
 #include "proc/elf.h"
 #include "mm/vmm.h"
 #include "mm/pmm.h"
-#include "serial.h"
+#include "arch/serial.h"
 #include "syscall/syscall.h"  /* USER_ADDR_MAX */
 #include "errno.h"
 

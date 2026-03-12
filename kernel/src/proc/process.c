@@ -8,7 +8,7 @@
 #include "mm/kheap.h"
 #include "sched/sched.h"
 #include "syscall/syscall.h"
-#include "serial.h"
+#include "arch/serial.h"
 #include "sync/spinlock.h"
 #include "errno.h"
 #include "arch/cpu.h"

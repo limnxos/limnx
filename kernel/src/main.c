@@ -5,13 +5,14 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "limine.h"
-#include "serial.h"
-#include "gdt/gdt.h"
-#include "idt/idt.h"
+#include "arch/serial.h"
+#include "arch/boot.h"
+#include "arch/timer.h"
+#include "arch/smp_hal.h"
+#include "arch/percpu.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "mm/kheap.h"
-#include "sched/tss.h"
 #include "sched/thread.h"
 #include "sched/sched.h"
 #include "syscall/syscall.h"
@@ -33,8 +34,6 @@
 #include "fb/fbcon.h"
 #include "pty/pty.h"
 #include "net/tcp.h"
-#include "smp/percpu.h"
-#include "smp/lapic.h"
 #include "sync/mutex.h"
 #include "mm/swap.h"
 #include "arch/cpu.h"
@@ -383,13 +382,6 @@ static process_t *load_and_run_elf(const char *path) {
     return proc;
 }
 
-/* --- FPU/SSE initialization --- */
-
-static void fpu_init(void) {
-    arch_fpu_init();
-    serial_puts("[fpu]  FPU/SSE enabled (CR0.EM=0, CR4.OSFXSR=1, CR4.OSXMMEXCPT=1)\n");
-}
-
 /* --- Console PTY master reader thread --- */
 /* Reads slave output from the console PTY s2m buffer and sends it
  * to serial + fbcon for display. Runs forever in kernel space. */
@@ -520,9 +512,7 @@ void kmain(void) {
     /* ======== Stage 2 init ======== */
     serial_puts("\n--- Stage 2 init ---\n");
 
-    gdt_init();
-    idt_init();
-    fpu_init();
+    arch_early_init();
     pmm_init();
 
     /* IDT smoke test: trigger breakpoint (int3) — should print and resume */
@@ -531,7 +521,7 @@ void kmain(void) {
     serial_puts("[test] Resumed after int3 — IDT working!\n");
 
     /* PIT tick check */
-    uint64_t ticks = pit_get_ticks();
+    uint64_t ticks = arch_timer_get_ticks();
     serial_printf("[test] PIT ticks so far: %lu\n", ticks);
 
     /* PMM smoke test */
@@ -560,11 +550,11 @@ void kmain(void) {
     /* ======== Stage 4 init ======== */
     serial_puts("\n--- Stage 4 init ---\n");
 
-    tss_init();
+    arch_late_init();
     sched_init();
 
     /* Enable preemptive scheduling from timer IRQ */
-    pit_enable_sched();
+    arch_timer_enable_sched();
 
     /* Scheduler smoke test */
     sched_smoke_test();
@@ -828,7 +818,7 @@ void kmain(void) {
     shm_init();
 
     /* Initialize SMP (per-CPU data, LAPIC, AP bootstrap) */
-    smp_init();
+    arch_smp_init();
     sched_set_smp_active();
 
     /* Create console PTY */
@@ -924,7 +914,7 @@ void kmain(void) {
             }
             /* Set LIMNX_VERSION env on shell */
             {
-                const char *env_entry = "LIMNX_VERSION=0.93";
+                const char *env_entry = "LIMNX_VERSION=0.94";
                 int elen = 0;
                 while (env_entry[elen]) elen++;
                 for (int i = 0; i <= elen; i++)

@@ -2,9 +2,9 @@
 #include "klog.h"
 #include "net/tcp.h"
 #include "net/net.h"
-#include "idt/idt.h"
+#include "arch/timer.h"
 #include "sched/sched.h"
-#include "serial.h"
+#include "arch/serial.h"
 #include "errno.h"
 #include "arch/cpu.h"
 
@@ -39,7 +39,7 @@ void tcp_init(void) {
 }
 
 static uint32_t tcp_gen_isn(int conn_idx) {
-    return (uint32_t)(pit_get_ticks() * 64000 + (uint32_t)conn_idx * 1000);
+    return (uint32_t)(arch_timer_get_ticks() * 64000 + (uint32_t)conn_idx * 1000);
 }
 
 /* --- TCP Checksum --- */
@@ -316,7 +316,7 @@ void tcp_rx(uint32_t src_ip, const uint8_t *data, uint32_t len) {
                 if (flags & TCP_FIN) {
                     conn->rcv_nxt = seq + payload_len + 1;
                     conn->state = TCP_TIME_WAIT;
-                    conn->time_wait_tick = pit_get_ticks() + 36;
+                    conn->time_wait_tick = arch_timer_get_ticks() + 36;
                     tcp_send_ack(conn);
                 } else {
                     conn->state = TCP_FIN_WAIT_2;
@@ -334,7 +334,7 @@ void tcp_rx(uint32_t src_ip, const uint8_t *data, uint32_t len) {
         if (flags & TCP_FIN) {
             conn->rcv_nxt = seq + payload_len + 1;
             conn->state = TCP_TIME_WAIT;
-            conn->time_wait_tick = pit_get_ticks() + 36;
+            conn->time_wait_tick = arch_timer_get_ticks() + 36;
             tcp_send_ack(conn);
         }
         return;
@@ -342,7 +342,7 @@ void tcp_rx(uint32_t src_ip, const uint8_t *data, uint32_t len) {
     case TCP_CLOSING:
         if ((flags & TCP_ACK) && ack == conn->snd_nxt) {
             conn->state = TCP_TIME_WAIT;
-            conn->time_wait_tick = pit_get_ticks() + 36;
+            conn->time_wait_tick = arch_timer_get_ticks() + 36;
         }
         return;
 
@@ -376,7 +376,7 @@ void tcp_rx(uint32_t src_ip, const uint8_t *data, uint32_t len) {
         /* Respond to any FIN retransmit */
         if (flags & TCP_FIN) {
             tcp_send_ack(conn);
-            conn->time_wait_tick = pit_get_ticks() + 36;
+            conn->time_wait_tick = arch_timer_get_ticks() + 36;
         }
         return;
 
@@ -388,7 +388,7 @@ void tcp_rx(uint32_t src_ip, const uint8_t *data, uint32_t len) {
 /* --- Timer --- */
 
 void tcp_timer_check(void) {
-    uint64_t now = pit_get_ticks();
+    uint64_t now = arch_timer_get_ticks();
 
     for (int i = 0; i < MAX_TCP_CONNS; i++) {
         if (!tcp_conns[i].in_use) continue;
@@ -472,7 +472,7 @@ int tcp_connect(int conn_idx, uint32_t remote_ip, uint16_t remote_port) {
     c->state = TCP_SYN_SENT;
     tcp_send_segment(c, TCP_SYN, 0, 0);
     c->snd_nxt = c->snd_iss + 1;
-    c->rto_tick = pit_get_ticks() + 18;
+    c->rto_tick = arch_timer_get_ticks() + 18;
     c->retransmit_count = 0;
 
     /* Save SYN for retransmit (zero-length, just flags) */
@@ -588,7 +588,7 @@ int tcp_accept(int listen_idx) {
 
     tcp_send_segment(nc, TCP_SYN | TCP_ACK, 0, 0);
     nc->snd_nxt = nc->snd_iss + 1;
-    nc->rto_tick = pit_get_ticks() + 18;
+    nc->rto_tick = arch_timer_get_ticks() + 18;
 
     /* Wait for ESTABLISHED */
     timeout = 10000;
@@ -638,7 +638,7 @@ int64_t tcp_send(int conn_idx, const uint8_t *buf, uint32_t len) {
     c->snd_nxt = orig_nxt;
     tcp_send_segment(c, TCP_ACK | TCP_PSH, buf, len);
     c->snd_nxt = new_nxt;
-    c->rto_tick = pit_get_ticks() + 18;
+    c->rto_tick = arch_timer_get_ticks() + 18;
     c->retransmit_count = 0;
 
     return (int64_t)len;
@@ -702,7 +702,7 @@ int tcp_close(int conn_idx) {
         uint32_t fin_seq = c->snd_nxt;
         c->snd_nxt = fin_seq + 1;
         c->state = TCP_FIN_WAIT_1;
-        c->rto_tick = pit_get_ticks() + 18;
+        c->rto_tick = arch_timer_get_ticks() + 18;
         c->retransmit_count = 0;
         c->tx_buf_len = 0;
         c->tx_buf_seq = fin_seq;
@@ -731,7 +731,7 @@ int tcp_close(int conn_idx) {
         uint32_t fin_seq = c->snd_nxt;
         c->snd_nxt = fin_seq + 1;
         c->state = TCP_LAST_ACK;
-        c->rto_tick = pit_get_ticks() + 18;
+        c->rto_tick = arch_timer_get_ticks() + 18;
         c->retransmit_count = 0;
         c->tx_buf_len = 0;
         c->tx_buf_seq = fin_seq;

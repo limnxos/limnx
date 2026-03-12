@@ -5,7 +5,7 @@
 #include "pty/termios.h"
 #include "proc/process.h"
 #include "sched/sched.h"
-#include "serial.h"
+#include "arch/serial.h"
 
 static pty_t ptys[MAX_PTYS];
 static int console_pty_idx = -1;

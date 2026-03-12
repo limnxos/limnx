@@ -7,10 +7,10 @@
 #include "proc/elf.h"
 #include "fs/vfs.h"
 #include "sched/sched.h"
-#include "serial.h"
+#include "arch/serial.h"
 #include "mm/kheap.h"
 #include "sync/spinlock.h"
-#include "idt/idt.h"
+#include "arch/timer.h"
 
 static supervisor_t supervisors[MAX_SUPERVISORS];
 
@@ -266,7 +266,7 @@ void supervisor_on_exit(uint64_t pid, int exit_status) {
 
             /* Rate limit: prevent restart storms */
             {
-                uint64_t now = pit_get_ticks();
+                uint64_t now = arch_timer_get_ticks();
                 if (now - sv->restart_window_start > SUPER_RESTART_WINDOW) {
                     sv->restart_count = 0;
                     sv->restart_window_start = now;

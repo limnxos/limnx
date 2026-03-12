@@ -4,7 +4,7 @@
  * Full subsystem init (PMM, VMM, scheduler, etc.) is future work.
  */
 
-#include "serial.h"
+#include "arch/serial.h"
 #include "arch/cpu.h"
 
 void kmain(void) {

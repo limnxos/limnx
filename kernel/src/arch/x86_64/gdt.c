@@ -1,8 +1,7 @@
 #define pr_fmt(fmt) "[gdt]  " fmt
 #include "klog.h"
 
-#include "gdt/gdt.h"
-#include "serial.h"
+#include "arch/x86_64/gdt.h"
 
 static struct gdt_entry gdt[7]; /* 5 standard + 2 for TSS (16-byte descriptor) */
 static struct gdt_ptr   gdtp;

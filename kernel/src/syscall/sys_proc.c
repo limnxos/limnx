@@ -18,7 +18,7 @@
 #include "ipc/supervisor.h"
 #include "ipc/pubsub.h"
 #include "net/tcp.h"
-#include "serial.h"
+#include "arch/serial.h"
 #include "arch/cpu.h"
 #include "arch/paging.h"
 

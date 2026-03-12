@@ -4,7 +4,7 @@
 #include "fs/vfs.h"
 #include "mm/kheap.h"
 #include "blk/limnfs.h"
-#include "serial.h"
+#include "arch/serial.h"
 #include "errno.h"
 #include "kutil.h"
 

@@ -4,8 +4,9 @@
 #include "mm/vmm.h"
 #include "mm/swap.h"
 #include "ipc/agent_ns.h"
-#include "serial.h"
-#include "idt/idt.h"
+#include "arch/serial.h"
+#include "arch/timer.h"
+#include "arch/x86_64/idt.h"
 
 #include "arch/paging.h"
 

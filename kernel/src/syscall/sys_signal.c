@@ -2,7 +2,7 @@
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "sched/thread.h"
-#include "smp/percpu.h"
+#include "arch/percpu.h"
 
 extern int64_t syscall_dispatch(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 

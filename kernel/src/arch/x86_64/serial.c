@@ -1,8 +1,10 @@
-#include "serial.h"
-#include "io.h"
+#include "arch/serial.h"
+#include "arch/x86_64/io.h"
 #include "fb/fbcon.h"
 #include "sync/spinlock.h"
 #include <stdarg.h>
+
+#define COM1 0x3F8
 
 static spinlock_t serial_lock = SPINLOCK_INIT;
 

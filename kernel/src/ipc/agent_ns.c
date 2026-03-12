@@ -4,7 +4,7 @@
 #include "ipc/agent_ns.h"
 #include "ipc/agent_reg.h"
 #include "sync/spinlock.h"
-#include "serial.h"
+#include "arch/serial.h"
 #include "errno.h"
 
 static agent_namespace_t namespaces[MAX_NAMESPACES];

@@ -1,5 +1,5 @@
-#ifndef LIMNX_TSS_H
-#define LIMNX_TSS_H
+#ifndef LIMNX_X86_64_TSS_H
+#define LIMNX_X86_64_TSS_H
 
 #include <stdint.h>
 

@@ -4,7 +4,7 @@
 #include "net/netstor.h"
 #include "net/net.h"
 #include "sched/sched.h"
-#include "serial.h"
+#include "arch/serial.h"
 #include "errno.h"
 #include "kutil.h"
 

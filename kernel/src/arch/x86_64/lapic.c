@@ -1,12 +1,11 @@
 #define pr_fmt(fmt) "[lapic] " fmt
 #include "klog.h"
 
-#include "smp/lapic.h"
-#include "smp/percpu.h"
+#include "arch/x86_64/lapic.h"
+#include "arch/percpu.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
-#include "io.h"
-#include "serial.h"
+#include "arch/x86_64/io.h"
 #include "arch/cpu.h"
 
 /* LAPIC base virtual address (HHDM-mapped) */

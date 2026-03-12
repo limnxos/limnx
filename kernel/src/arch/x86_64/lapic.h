@@ -1,5 +1,5 @@
-#ifndef LIMNX_LAPIC_H
-#define LIMNX_LAPIC_H
+#ifndef LIMNX_X86_64_LAPIC_H
+#define LIMNX_X86_64_LAPIC_H
 
 #include <stdint.h>
 

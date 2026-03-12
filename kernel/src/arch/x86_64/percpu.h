@@ -1,17 +1,15 @@
-#ifndef LIMNX_PERCPU_H
-#define LIMNX_PERCPU_H
+#ifndef LIMNX_X86_64_PERCPU_H
+#define LIMNX_X86_64_PERCPU_H
 
 #include <stdint.h>
-#include "gdt/gdt.h"
-#include "sched/tss.h"
-
-#define MAX_CPUS 8
+#include "arch/x86_64/gdt.h"
+#include "arch/x86_64/tss.h"
 
 /* Forward declaration */
 struct thread;
 
 /*
- * Per-CPU data structure.
+ * x86_64 per-CPU data structure.
  * The first fields have FIXED offsets that must match assembly code
  * (syscall_entry.asm, isr_stubs.asm).
  *
@@ -48,33 +46,29 @@ typedef struct percpu {
     tss_t            tss __attribute__((aligned(16)));
 } __attribute__((aligned(64))) percpu_t;
 
-extern percpu_t percpu_array[MAX_CPUS];
-extern uint32_t cpu_count;
-extern uint32_t bsp_cpu_id;
+/* Compile-time offset checks for assembly compatibility */
+_Static_assert(__builtin_offsetof(percpu_t, kernel_rsp) == 0, "percpu offset 0");
+_Static_assert(__builtin_offsetof(percpu_t, user_rsp_save) == 8, "percpu offset 8");
+_Static_assert(__builtin_offsetof(percpu_t, self) == 16, "percpu offset 16");
+_Static_assert(__builtin_offsetof(percpu_t, cpu_id) == 24, "percpu offset 24");
+_Static_assert(__builtin_offsetof(percpu_t, current_thread) == 32, "percpu offset 32");
+_Static_assert(__builtin_offsetof(percpu_t, idle_thread) == 40, "percpu offset 40");
+_Static_assert(__builtin_offsetof(percpu_t, signal_deliver_pending) == 48, "percpu offset 48");
+_Static_assert(__builtin_offsetof(percpu_t, signal_deliver_rdi) == 56, "percpu offset 56");
+_Static_assert(__builtin_offsetof(percpu_t, signal_handler_rip) == 64, "percpu offset 64");
+_Static_assert(__builtin_offsetof(percpu_t, signal_frame_rsp) == 72, "percpu offset 72");
 
-/* Read the per-CPU pointer from GS:16 (self field).
- * On x86_64, uses GS segment override.
- * On ARM64, would use TPIDR_EL1 (future). */
+/* Read the per-CPU pointer from GS:16 (self field) */
 static inline percpu_t *percpu_get(void) {
-#if defined(__x86_64__)
     percpu_t *p;
     __asm__ volatile ("mov %%gs:16, %0" : "=r"(p));
     return p;
-#elif defined(__aarch64__)
-    percpu_t *p;
-    __asm__ volatile ("mrs %0, tpidr_el1" : "=r"(p));
-    return p;
-#else
-#error "Unsupported architecture"
-#endif
 }
 
 /* Read per-CPU pointer without GS (for BSP before SWAPGS setup) */
 static inline percpu_t *percpu_get_bsp(void) {
+    extern percpu_t percpu_array[];
     return &percpu_array[0];
 }
-
-/* SMP initialization */
-void smp_init(void);
 
 #endif

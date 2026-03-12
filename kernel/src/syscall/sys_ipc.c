@@ -8,7 +8,7 @@
 #include "ipc/cap_token.h"
 #include "ipc/pubsub.h"
 #include "sync/futex.h"
-#include "idt/idt.h"
+#include "arch/timer.h"
 
 int64_t sys_unix_socket(uint64_t a1, uint64_t a2,
                                  uint64_t a3, uint64_t a4, uint64_t a5) {
@@ -378,7 +378,7 @@ int64_t sys_epoll_wait(uint64_t epfd, uint64_t events_ptr,
     if (timeout_ms > 0) {
         uint64_t delay_ticks = timeout_ms * 18 / 1000;
         if (delay_ticks == 0) delay_ticks = 1;
-        deadline = pit_get_ticks() + delay_ticks;
+        deadline = arch_timer_get_ticks() + delay_ticks;
     }
 
     for (;;) {
@@ -399,7 +399,7 @@ int64_t sys_epoll_wait(uint64_t epfd, uint64_t events_ptr,
         if (timeout_ms == 0)
             return 0;
 
-        if (timeout_ms > 0 && pit_get_ticks() >= deadline)
+        if (timeout_ms > 0 && arch_timer_get_ticks() >= deadline)
             return 0;
 
         if (proc->pending_signals & ~proc->signal_mask)

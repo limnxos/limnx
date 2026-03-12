@@ -2,8 +2,8 @@
 #include "klog.h"
 
 #include "pci/pci.h"
-#include "io.h"
-#include "serial.h"
+#include "arch/x86_64/io.h"
+#include "arch/serial.h"
 
 static pci_device_t devices[PCI_MAX_DEVICES];
 static uint32_t device_count = 0;

@@ -25,11 +25,14 @@ USER_CFLAGS := -ffreestanding -nostdinc -isystem $(GCC_INCL) \
 KERNEL   := build/kernel
 ISO      := limnx.iso
 
-SRCS     := kernel/src/main.c kernel/src/serial.c \
-            kernel/src/gdt/gdt.c kernel/src/idt/idt.c \
+SRCS     := kernel/src/main.c \
+            kernel/src/arch/x86_64/serial.c \
+            kernel/src/arch/x86_64/gdt.c kernel/src/arch/x86_64/idt.c \
+            kernel/src/arch/x86_64/tss.c kernel/src/arch/x86_64/lapic.c \
+            kernel/src/arch/x86_64/smp.c kernel/src/arch/x86_64/boot.c \
             kernel/src/mm/pmm.c kernel/src/mm/vmm.c \
             kernel/src/mm/kheap.c \
-            kernel/src/sched/tss.c kernel/src/sched/thread.c \
+            kernel/src/sched/thread.c \
             kernel/src/sched/sched.c \
             kernel/src/syscall/syscall.c \
             kernel/src/syscall/sys_fs.c \
@@ -51,7 +54,6 @@ SRCS     := kernel/src/main.c kernel/src/serial.c \
             kernel/src/fb/fbcon.c \
             kernel/src/pty/pty.c \
             kernel/src/sync/mutex.c kernel/src/sync/futex.c \
-            kernel/src/smp/smp.c kernel/src/smp/lapic.c \
             kernel/src/ipc/unix_sock.c kernel/src/ipc/eventfd.c kernel/src/ipc/agent_reg.c \
             kernel/src/ipc/epoll.c kernel/src/ipc/infer_svc.c kernel/src/ipc/uring.c \
             kernel/src/ipc/cap_token.c kernel/src/ipc/agent_ns.c kernel/src/ipc/taskgraph.c \
@@ -60,9 +62,9 @@ SRCS     := kernel/src/main.c kernel/src/serial.c \
             kernel/src/mm/swap.c
 OBJS     := $(patsubst kernel/src/%.c,build/%.o,$(SRCS))
 
-ASM_SRCS := kernel/src/idt/isr_stubs.asm \
-            kernel/src/sched/switch.asm \
-            kernel/src/syscall/syscall_entry.asm
+ASM_SRCS := kernel/src/arch/x86_64/isr_stubs.asm \
+            kernel/src/arch/x86_64/switch.asm \
+            kernel/src/arch/x86_64/syscall_entry.asm
 ASM_OBJS := $(patsubst kernel/src/%.asm,build/%.o,$(ASM_SRCS))
 
 # User-space ASM ELF programs (placed in initrd, loaded at runtime)
@@ -312,7 +314,11 @@ ARM64_LDFLAGS := -nostdlib -static -T kernel/src/arch/arm64/linker.ld
 ARM64_KERNEL := build/arm64/kernel
 
 ARM64_C_SRCS := kernel/src/arch/arm64/main.c \
-                kernel/src/arch/arm64/serial.c
+                kernel/src/arch/arm64/serial.c \
+                kernel/src/arch/arm64/boot.c \
+                kernel/src/arch/arm64/interrupt.c \
+                kernel/src/arch/arm64/timer.c \
+                kernel/src/arch/arm64/smp.c
 ARM64_ASM_SRCS := kernel/src/arch/arm64/boot.S
 
 ARM64_C_OBJS := $(patsubst kernel/src/%.c,build/arm64/%.o,$(ARM64_C_SRCS))

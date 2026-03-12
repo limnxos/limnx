@@ -1,14 +1,13 @@
 #define pr_fmt(fmt) "[idt]  " fmt
 #include "klog.h"
 
-#include "idt/idt.h"
-#include "gdt/gdt.h"
-#include "io.h"
-#include "serial.h"
+#include "arch/x86_64/idt.h"
+#include "arch/x86_64/gdt.h"
+#include "arch/x86_64/io.h"
+#include "arch/x86_64/lapic.h"
+#include "arch/percpu.h"
 #include "sched/sched.h"
 #include "pty/pty.h"
-#include "smp/lapic.h"
-#include "smp/percpu.h"
 #include "arch/cpu.h"
 #include "arch/paging.h"
 
@@ -330,3 +329,12 @@ void idt_init(void) {
     arch_irq_enable();
     pr_info("Interrupts enabled\n");
 }
+
+/* HAL wrappers — implement arch_* interfaces */
+uint64_t arch_timer_get_ticks(void) { return pit_get_ticks(); }
+void arch_timer_enable_sched(void) { pit_enable_sched(); }
+void arch_timer_disable_sched(void) { pit_disable_sched(); }
+char arch_kbd_getchar(void) { return kbd_getchar(); }
+void arch_irq_register(uint8_t irq, irq_handler_t handler) { irq_register_handler(irq, handler); }
+void arch_irq_unmask(uint8_t irq) { irq_unmask(irq); }
+void arch_interrupt_init(void) { idt_init(); }

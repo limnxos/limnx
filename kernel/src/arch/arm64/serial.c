@@ -6,7 +6,7 @@
 #include <stdint.h>
 #include <stdarg.h>
 #include <stddef.h>
-#include "serial.h"
+#include "arch/serial.h"
 
 /* PL011 register offsets */
 #define UART_BASE   0x09000000ULL

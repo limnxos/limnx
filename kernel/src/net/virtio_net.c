@@ -2,10 +2,11 @@
 #include "klog.h"
 #include "net/virtio_net.h"
 #include "pci/pci.h"
-#include "idt/idt.h"
-#include "io.h"
+#include "arch/interrupt.h"
+#include "arch/x86_64/idt.h"
+#include "arch/x86_64/io.h"
 #include "mm/pmm.h"
-#include "serial.h"
+#include "arch/serial.h"
 #include "arch/cpu.h"
 
 /* Forward declaration — called by net.c, defined there */
@@ -292,8 +293,8 @@ int virtio_net_init(void) {
     pr_info("Device status: %u\n", (unsigned)status);
 
     /* 8. Register IRQ handler and unmask */
-    irq_register_handler(irq_line, virtio_net_irq);
-    irq_unmask(irq_line);
+    arch_irq_register(irq_line, virtio_net_irq);
+    arch_irq_unmask(irq_line);
     pr_info("Registered IRQ %u\n", (unsigned)irq_line);
 
     /* 9. Fill RX ring */

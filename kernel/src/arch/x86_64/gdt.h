@@ -1,5 +1,5 @@
-#ifndef LIMNX_GDT_H
-#define LIMNX_GDT_H
+#ifndef LIMNX_X86_64_GDT_H
+#define LIMNX_X86_64_GDT_H
 
 #include <stdint.h>
 

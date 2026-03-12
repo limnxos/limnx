@@ -3,7 +3,7 @@
 
 #include "fs/tar.h"
 #include "fs/vfs.h"
-#include "serial.h"
+#include "arch/serial.h"
 
 /* Parse an octal ASCII string (no libc strtol) */
 static uint64_t oct_to_u64(const char *s, int len) {

@@ -2,7 +2,7 @@
 #include "klog.h"
 #include "blk/limnfs.h"
 #include "blk/bcache.h"
-#include "serial.h"
+#include "arch/serial.h"
 
 /* --- In-memory state --- */
 

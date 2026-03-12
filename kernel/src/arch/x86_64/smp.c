@@ -1,18 +1,17 @@
 #define pr_fmt(fmt) "[smp]  " fmt
 #include "klog.h"
 
-#include "smp/percpu.h"
-#include "smp/lapic.h"
-#include "gdt/gdt.h"
-#include "sched/tss.h"
+#include "arch/percpu.h"
+#include "arch/x86_64/lapic.h"
+#include "arch/x86_64/gdt.h"
+#include "arch/x86_64/tss.h"
+#include "arch/x86_64/idt.h"
 #include "sched/sched.h"
 #include "sched/thread.h"
 #include "mm/kheap.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
-#include "serial.h"
 #include "limine.h"
-#include "idt/idt.h"
 #include "arch/cpu.h"
 
 /* MSR definitions */
@@ -137,25 +136,6 @@ static void setup_syscall_msrs(void) {
     efer |= 1;  /* SCE bit */
     arch_wrmsr(MSR_EFER, efer);
 
-    /* STAR: kernel CS/SS in bits 32-47, user CS/SS in bits 48-63
-     * Kernel: CS=0x08, SS=0x10
-     * User: for SYSRET: CS = STAR[48:63]+16 = 0x18+16 = 0x28 (but +RPL3 = 0x23)
-     *                   SS = STAR[48:63]+8  = 0x18+8  = 0x20 (but +RPL3 = 0x1B)
-     * Wait, SYSRET convention on AMD64:
-     *   CS = STAR[48:63] + 16, SS = STAR[48:63] + 8
-     * With STAR[48:63] = 0x0018:
-     *   CS = 0x28 | 3 = 0x2B... no
-     * Actually SYSRET does: CS = STAR[48:63] + 16 with RPL forced to 3
-     *                        SS = STAR[48:63] + 8 with RPL forced to 3
-     * GDT layout: 0=null, 1=kcode, 2=kdata, 3=udata, 4=ucode
-     * For SYSRET64: CS = (selector_base + 16) | 3 = 0x23
-     *               SS = (selector_base + 8) | 3 = 0x1B
-     * So selector_base = 0x0010? No...
-     * Let's think: udata=0x18(idx3), ucode=0x20(idx4)
-     * SYSRET loads: SS = STAR[48:63]+8, CS = STAR[48:63]+16 (in long mode)
-     * We need SS=0x1B(udata+RPL3) → STAR[48:63]+8 = 0x18 → STAR[48:63]=0x10
-     * We need CS=0x23(ucode+RPL3) → STAR[48:63]+16= 0x20, 0x10+16=0x20+RPL3=0x23 ✓
-     */
     arch_wrmsr(MSR_STAR, ((uint64_t)0x0010 << 48) | ((uint64_t)0x0008 << 32));
 
     /* LSTAR: SYSCALL entry point */
@@ -173,7 +153,7 @@ static void ap_idle_loop(void) {
     }
 }
 
-/* Enable FPU/SSE on this CPU (same as fpu_init in main.c) */
+/* Enable FPU/SSE on this CPU */
 static void ap_fpu_init(void) {
     arch_fpu_init();
 }
@@ -240,7 +220,7 @@ static void ap_entry(struct limine_smp_info *info) {
         arch_halt();
 }
 
-void smp_init(void) {
+void arch_smp_init(void) {
     if (!smp_request.response) {
         pr_info("No SMP response from bootloader\n");
         cpu_count = 1;
@@ -279,11 +259,10 @@ void smp_init(void) {
     percpu_gdt_init(bsp);
     percpu_gdt_load(bsp);
 
-    /* Set GS.base for kernel mode (percpu_gdt_load zeroed GS selector).
-     * KERNEL_GS_BASE stays 0; process_enter_usermode sets it before SYSRETQ. */
+    /* Set GS.base for kernel mode */
     arch_wrmsr(0xC0000101, (uint64_t)bsp);  /* MSR_GS_BASE */
 
-    /* Re-setup SYSCALL MSRs (already done by syscall_init, but repoint LSTAR) */
+    /* Re-setup SYSCALL MSRs */
     setup_syscall_msrs();
 
     /* Set kernel_rsp from current thread */
@@ -349,4 +328,18 @@ void smp_init(void) {
     }
 
     pr_info("%u APs started\n", ap_started);
+}
+
+/* TLB shootdown: send IPI to all other CPUs */
+void arch_tlb_shootdown(void) {
+    uint32_t my_id = lapic_get_id();
+    for (uint32_t i = 0; i < cpu_count; i++) {
+        if (percpu_array[i].lapic_id != my_id)
+            lapic_send_ipi(percpu_array[i].lapic_id, LAPIC_TLB_VECTOR);
+    }
+}
+
+/* SYSCALL init wrapper */
+void arch_syscall_init(void) {
+    setup_syscall_msrs();
 }

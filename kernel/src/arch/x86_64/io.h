@@ -1,5 +1,9 @@
-#ifndef LIMNX_IO_H
-#define LIMNX_IO_H
+#ifndef LIMNX_X86_64_IO_H
+#define LIMNX_X86_64_IO_H
+
+/*
+ * x86_64 port I/O — inherently x86-only (no ARM64 equivalent).
+ */
 
 #include <stdint.h>
 

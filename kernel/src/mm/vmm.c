@@ -5,10 +5,10 @@
 #include "mm/pmm.h"
 #include "mm/swap.h"
 #include "proc/process.h"
-#include "serial.h"
+#include "arch/serial.h"
 #include "arch/paging.h"
-#include "smp/lapic.h"
-#include "smp/percpu.h"
+#include "arch/smp_hal.h"
+#include "arch/percpu.h"
 
 /* PML4 physical address, read from CR3 */
 static uint64_t pml4_phys;
@@ -359,10 +359,5 @@ void vmm_free_user_pages(uint64_t cr3) {
  * don't persist on other cores.
  */
 void vmm_tlb_shootdown(void) {
-    extern uint32_t cpu_count;
-    uint32_t my_id = lapic_get_id();
-    for (uint32_t i = 0; i < cpu_count; i++) {
-        if (percpu_array[i].lapic_id != my_id)
-            lapic_send_ipi(percpu_array[i].lapic_id, LAPIC_TLB_VECTOR);
-    }
+    arch_tlb_shootdown();
 }

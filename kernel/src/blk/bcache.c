@@ -5,7 +5,7 @@
 #include "sched/sched.h"
 #include "sched/thread.h"
 #include "sync/spinlock.h"
-#include "serial.h"
+#include "arch/serial.h"
 
 #define SECTORS_PER_BLOCK (BLOCK_SIZE / VIRTIO_BLK_SECTOR_SIZE)  /* 8 */
 #define HASH_BUCKETS 256

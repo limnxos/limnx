@@ -2,7 +2,7 @@
 #include "klog.h"
 #include "net/net.h"
 #include "net/virtio_net.h"
-#include "serial.h"
+#include "arch/serial.h"
 #include "sched/sched.h"
 #include "errno.h"
 #include "arch/cpu.h"

@@ -4,7 +4,7 @@
 #include "ipc/unix_sock.h"
 #include "sched/sched.h"
 #include "sync/spinlock.h"
-#include "serial.h"
+#include "arch/serial.h"
 #include "errno.h"
 
 static unix_sock_t unix_socks[MAX_UNIX_SOCKS];

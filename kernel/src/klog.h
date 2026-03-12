@@ -18,7 +18,7 @@
  *   // Output: [pmm] ERROR: allocation failed
  */
 
-#include "serial.h"
+#include "arch/serial.h"
 #include "compiler.h"
 #include "arch/cpu.h"
 

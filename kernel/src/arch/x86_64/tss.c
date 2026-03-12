@@ -1,9 +1,8 @@
 #define pr_fmt(fmt) "[tss]  " fmt
 #include "klog.h"
 
-#include "sched/tss.h"
-#include "gdt/gdt.h"
-#include "serial.h"
+#include "arch/x86_64/tss.h"
+#include "arch/x86_64/gdt.h"
 
 static tss_t tss;
 

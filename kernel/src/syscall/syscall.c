@@ -13,7 +13,6 @@
 #include "mm/kheap.h"
 #include "net/net.h"
 #include "net/tcp.h"
-#include "idt/idt.h"
 #include "pty/pty.h"
 #include "ipc/unix_sock.h"
 #include "ipc/eventfd.h"
@@ -28,8 +27,8 @@
 #include "ipc/supervisor.h"
 #include "mm/swap.h"
 #include "blk/limnfs.h"
-#include "smp/percpu.h"
-#include "serial.h"
+#include "arch/percpu.h"
+#include "arch/serial.h"
 #include "arch/cpu.h"
 #include "arch/paging.h"
 

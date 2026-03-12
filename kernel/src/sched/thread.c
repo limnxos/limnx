@@ -2,7 +2,7 @@
 #include "sched/sched.h"
 #include "mm/kheap.h"
 #include "sync/spinlock.h"
-#include "serial.h"
+#include "arch/serial.h"
 #include "arch/cpu.h"
 
 static uint64_t next_tid = 0;

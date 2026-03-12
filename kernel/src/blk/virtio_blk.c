@@ -3,12 +3,13 @@
 #include "blk/virtio_blk.h"
 #include "net/virtio_net.h"   /* for VIRTIO_VENDOR_ID and virtqueue structs */
 #include "pci/pci.h"
-#include "idt/idt.h"
-#include "io.h"
+#include "arch/interrupt.h"
+#include "arch/x86_64/idt.h"
+#include "arch/x86_64/io.h"
 #include "mm/pmm.h"
 #include "arch/cpu.h"
 #include "sched/sched.h"
-#include "serial.h"
+#include "arch/serial.h"
 
 /* --- Driver state --- */
 
@@ -246,8 +247,8 @@ int virtio_blk_init(void) {
     pr_info("Device status: %u\n", (unsigned)status);
 
     /* 7. Register IRQ handler and unmask */
-    irq_register_handler(irq_line, virtio_blk_irq);
-    irq_unmask(irq_line);
+    arch_irq_register(irq_line, virtio_blk_irq);
+    arch_irq_unmask(irq_line);
     pr_info("Registered IRQ %u\n", (unsigned)irq_line);
 
     q_last_used = 0;
