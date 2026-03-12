@@ -114,6 +114,25 @@ static inline uint64_t arch_get_percpu_base(void) {
     return base;
 }
 
+/* --- Usermode entry (ARM64 stubs — future work) --- */
+
+static inline __attribute__((noreturn))
+void arch_enter_usermode(uint64_t entry, uint64_t rsp,
+                          uint64_t rdi, uint64_t rsi) {
+    (void)entry; (void)rsp; (void)rdi; (void)rsi;
+    /* TODO: set ELR_EL1=entry, SP_EL0=rsp, SPSR_EL1, then ERET */
+    for (;;) arch_halt();
+    __builtin_unreachable();
+}
+
+static inline __attribute__((noreturn))
+void arch_enter_forked_child(const void *fork_ctx_ptr) {
+    (void)fork_ctx_ptr;
+    /* TODO: restore regs from fork context, then ERET */
+    for (;;) arch_halt();
+    __builtin_unreachable();
+}
+
 /* --- Memory barrier --- */
 
 static inline void arch_memory_barrier(void) {

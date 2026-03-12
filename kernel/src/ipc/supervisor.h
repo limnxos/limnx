@@ -19,6 +19,10 @@ typedef struct super_child {
     uint8_t  used;
 } super_child_t;
 
+/* Restart rate limiting */
+#define SUPER_MAX_RESTARTS      5      /* max restarts within window */
+#define SUPER_RESTART_WINDOW   50      /* window in timer ticks (~5 seconds) */
+
 typedef struct supervisor {
     uint64_t       owner_pid;
     uint32_t       id;
@@ -27,6 +31,8 @@ typedef struct supervisor {
     uint8_t        child_count;
     char           name[SUPER_NAME_MAX];
     super_child_t  children[MAX_SUPER_CHILDREN];
+    uint64_t       restart_window_start; /* tick when current window began */
+    uint32_t       restart_count;        /* restarts in current window */
 } supervisor_t;
 
 void supervisor_init(void);

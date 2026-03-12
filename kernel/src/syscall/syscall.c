@@ -199,12 +199,7 @@ int16_t poll_check_fd(process_t *proc, int fd, int16_t events) {
 
     /* Eventfd */
     if (entry->eventfd != NULL) {
-        int efd_idx = -1;
-        for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
-            if (eventfd_get(ei) == (eventfd_t *)entry->eventfd) {
-                efd_idx = ei; break;
-            }
-        }
+        int efd_idx = eventfd_index((const eventfd_t *)entry->eventfd);
         if (efd_idx >= 0) {
             if ((events & POLLIN) && eventfd_readable(efd_idx))
                 revents |= POLLIN;
@@ -511,16 +506,25 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
     if (num >= SYS_NR)
         return -1;
 
-    /* Seccomp filtering */
+    /* Seccomp filtering (covers syscalls 0-127) */
     thread_t *st = thread_get_current();
-    if (st && st->process && st->process->seccomp_mask != 0 &&
-        num != SYS_EXIT && num != SYS_SIGRETURN &&
-        num < 64 && !(st->process->seccomp_mask & (1ULL << num))) {
-        if (st->process->seccomp_strict) {
-            process_deliver_signal(st->process, SIGKILL);
+    if (st && st->process &&
+        (st->process->seccomp_mask != 0 || st->process->seccomp_mask_hi != 0) &&
+        num != SYS_EXIT && num != SYS_SIGRETURN) {
+        int allowed = 1;
+        if (num < 64)
+            allowed = !!(st->process->seccomp_mask & (1ULL << num));
+        else if (num < 128)
+            allowed = !!(st->process->seccomp_mask_hi & (1ULL << (num - 64)));
+        else
+            allowed = 0;
+        if (!allowed) {
+            if (st->process->seccomp_strict) {
+                process_deliver_signal(st->process, SIGKILL);
+                return -EACCES;
+            }
             return -EACCES;
         }
-        return -EACCES;
     }
 
     int64_t result = syscall_table[num](arg1, arg2, arg3, arg4, arg5);
@@ -579,21 +583,12 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
             if (handler == SIG_DFL) {
                 /* SIGCHLD and SIGCONT default action is ignore */
                 if (sig == SIGCHLD || sig == SIGCONT) continue;
-                /* Default: kill */
-                proc->exit_status = -(int64_t)sig;
+                /* Default: kill — route through sys_exit for full cleanup
+                 * (closes fds, TCP, agents, tokens, re-parents children, etc.) */
                 serial_printf("[proc] Process %lu terminated (signal %d)\n",
                     proc->pid, sig);
-                if (proc->cr3) {
-                    arch_switch_address_space(vmm_get_kernel_pml4());
-                    vmm_free_user_pages(proc->cr3);
-                    proc->cr3 = 0;
-                }
-                /* Disable interrupts before thread_exit to prevent
-                 * preemption with cr3=0 (same fix as sys_exit). */
-                arch_irq_disable();
-                proc->exited = 1;
-                t->process = NULL;
-                thread_exit();
+                sys_exit((uint64_t)(128 + sig), 0, 0, 0, 0);
+                /* sys_exit never returns */
             }
 
             /* User handler: set up signal frame */
@@ -640,7 +635,10 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
             frame[2] = orig_rflags;
             frame[3] = (uint64_t)result;
 
-            proc->signal_frame_addr = frame_rsp;
+            if (proc->signal_depth < MAX_SIGNAL_DEPTH)
+                proc->signal_frame_stack[proc->signal_depth++] = frame_rsp;
+            else
+                break;  /* too many nested signals, defer */
 
             /* SA_RESTART: save syscall info if result was -EINTR */
             if (result == -EINTR &&

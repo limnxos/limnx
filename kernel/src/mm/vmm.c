@@ -7,6 +7,8 @@
 #include "proc/process.h"
 #include "serial.h"
 #include "arch/paging.h"
+#include "smp/lapic.h"
+#include "smp/percpu.h"
 
 /* PML4 physical address, read from CR3 */
 static uint64_t pml4_phys;
@@ -292,8 +294,10 @@ uint64_t vmm_clone_cow(uint64_t parent_cr3,
         }
     }
 
-    /* Flush parent's TLB since we changed parent PTEs */
+    /* Flush parent's TLB since we changed parent PTEs to COW */
     arch_switch_address_space(parent_cr3);
+    /* Flush TLB on all other CPUs too (SMP COW correctness) */
+    vmm_tlb_shootdown();
 
     return child_cr3;
 }
@@ -347,4 +351,18 @@ void vmm_free_user_pages(uint64_t cr3) {
 
     /* Free the PML4 page itself */
     pmm_free_page(cr3);
+}
+
+/*
+ * TLB shootdown: send IPI to all other CPUs to flush their TLBs.
+ * Used after COW PTE modifications to ensure stale writable mappings
+ * don't persist on other cores.
+ */
+void vmm_tlb_shootdown(void) {
+    extern uint32_t cpu_count;
+    uint32_t my_id = lapic_get_id();
+    for (uint32_t i = 0; i < cpu_count; i++) {
+        if (percpu_array[i].lapic_id != my_id)
+            lapic_send_ipi(percpu_array[i].lapic_id, LAPIC_TLB_VECTOR);
+    }
 }

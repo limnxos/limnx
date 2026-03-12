@@ -26,6 +26,9 @@
 /* LAPIC timer vector */
 #define LAPIC_TIMER_VECTOR 48
 
+/* TLB shootdown IPI vector */
+#define LAPIC_TLB_VECTOR   49
+
 /* Spurious vector */
 #define LAPIC_SPURIOUS_VECTOR 255
 

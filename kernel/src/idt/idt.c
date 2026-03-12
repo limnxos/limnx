@@ -228,6 +228,14 @@ void interrupt_dispatch(interrupt_frame_t *frame) {
         return;
     }
 
+    /* TLB shootdown IPI vector */
+    if (vec == 49) {
+        /* Reload CR3 to flush entire TLB on this CPU */
+        arch_switch_address_space(arch_get_address_space());
+        lapic_eoi();
+        return;
+    }
+
     /* LAPIC spurious vector — just return */
     if (vec == 255) {
         return;
@@ -299,8 +307,11 @@ void idt_init(void) {
     /* LAPIC timer vector 48 */
     idt_set_entry(48, (uint64_t)isr_stub_table[48], GDT_KERNEL_CODE, 0x8E);
 
+    /* TLB shootdown IPI vector 49 */
+    idt_set_entry(49, (uint64_t)isr_stub_table[49], GDT_KERNEL_CODE, 0x8E);
+
     /* Zero remaining entries */
-    for (int i = 49; i < IDT_ENTRIES; i++) {
+    for (int i = 50; i < IDT_ENTRIES; i++) {
         idt_set_entry(i, 0, 0, 0);
     }
 

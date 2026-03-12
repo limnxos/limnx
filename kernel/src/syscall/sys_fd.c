@@ -206,12 +206,8 @@ int64_t sys_dup(uint64_t fd, uint64_t a2,
                 ((unix_sock_t *)src->unix_sock)->refs++;
             /* Increment eventfd ref count */
             if (src->eventfd != NULL) {
-                for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
-                    if (eventfd_get(ei) == (eventfd_t *)src->eventfd) {
-                        eventfd_ref(ei);
-                        break;
-                    }
-                }
+                int ei = eventfd_index((const eventfd_t *)src->eventfd);
+                if (ei >= 0) eventfd_ref(ei);
             }
             /* Increment epoll ref count */
             if (src->epoll != NULL) {
@@ -282,12 +278,8 @@ int64_t sys_dup2(uint64_t oldfd, uint64_t newfd,
     if (dst->unix_sock != NULL)
         unix_sock_close((unix_sock_t *)dst->unix_sock);
     if (dst->eventfd != NULL) {
-        for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
-            if (eventfd_get(ei) == (eventfd_t *)dst->eventfd) {
-                eventfd_close(ei);
-                break;
-            }
-        }
+        int ei = eventfd_index((const eventfd_t *)dst->eventfd);
+        if (ei >= 0) eventfd_close(ei);
     }
     if (dst->epoll != NULL) {
         int ep_idx = epoll_index((epoll_instance_t *)dst->epoll);

@@ -45,4 +45,7 @@ uint64_t  vmm_clone_cow(uint64_t parent_cr3,
                          struct mmap_entry *mmap_table, int mmap_count);
 void      vmm_free_user_pages(uint64_t cr3);
 
+/* TLB shootdown: flush TLB on all other CPUs via IPI */
+void      vmm_tlb_shootdown(void);
+
 #endif

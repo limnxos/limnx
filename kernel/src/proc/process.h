@@ -83,6 +83,7 @@ typedef struct process {
     uint32_t      rlimit_nfds;       /* max open fds, 0=unlimited */
     uint64_t      used_mem_pages;    /* current mmap page count */
     uint64_t      seccomp_mask;    /* bit N set = syscall N allowed (0-63) */
+    uint64_t      seccomp_mask_hi; /* bit N set = syscall N+64 allowed (64-127) */
     uint8_t       seccomp_strict;  /* 1=SIGKILL on denied, 0=return -EACCES */
     uint8_t       audit_flags;     /* AUDIT_* flags */
     int64_t       exit_status;
@@ -101,7 +102,10 @@ typedef struct process {
     uint32_t      signal_mask;      /* blocked signals bitmask */
     sigaction_t   sig_handlers[MAX_SIGNALS];
     signal_queue_t sig_queue;       /* queue for duplicate signals */
-    uint64_t      signal_frame_addr; /* for sigreturn validation */
+    /* Signal frame stack for nested signal delivery */
+#define MAX_SIGNAL_DEPTH 4
+    uint64_t      signal_frame_stack[MAX_SIGNAL_DEPTH];
+    int           signal_depth;        /* 0 = no active signal handler */
     int           argc;
     int           argv_buf_len;
     char          argv_buf[PROC_ARGV_BUF_SIZE];  /* packed "arg0\0arg1\0..." */
@@ -132,6 +136,7 @@ uint64_t   process_alloc_pid(void);
 int        process_register(process_t *proc);
 process_t *process_lookup(uint64_t pid);
 void       process_unregister(uint64_t pid);
+void       process_reparent_children(uint64_t dying_pid, uint64_t new_parent);
 
 /* Wait for process to die, unregister, and free */
 void       process_reap(process_t *proc);

@@ -76,6 +76,17 @@ void process_unregister(uint64_t pid) {
     spin_unlock_irqrestore(&proc_table_lock, flags);
 }
 
+/* Re-parent all children of dying_pid to new_parent (typically pid 1 / init) */
+void process_reparent_children(uint64_t dying_pid, uint64_t new_parent) {
+    uint64_t flags;
+    spin_lock_irqsave(&proc_table_lock, &flags);
+    for (int i = 0; i < MAX_PROCS; i++) {
+        if (proc_table[i] && proc_table[i]->parent_pid == dying_pid)
+            proc_table[i]->parent_pid = new_parent;
+    }
+    spin_unlock_irqrestore(&proc_table_lock, flags);
+}
+
 /*
  * Kernel-thread entry point for a user-space process.
  * Switches to the process's address space and jumps to ring 3 via SYSRETQ.
@@ -152,25 +163,8 @@ static void process_enter_usermode(void) {
      */
     arch_prepare_usermode_return();
 
-    /*
-     * Jump to ring 3 via SYSRETQ (x86_64) or ERET (arm64):
-     *   entry = user RIP
-     *   user_rsp = user stack pointer
-     *   user_rdi = argc
-     *   user_rsi = argv
-     */
-    __asm__ volatile (
-        "mov %0, %%rcx\n"
-        "mov %1, %%rsp\n"
-        "mov %2, %%rdi\n"
-        "mov %3, %%rsi\n"
-        "mov $0x202, %%r11\n"
-        "sysretq"
-        :
-        : "r"(proc->user_entry), "r"(user_rsp),
-          "r"(user_rdi), "r"(user_rsi)
-        : "rcx", "r11", "rdi", "rsi", "memory"
-    );
+    /* Jump to ring 3 via arch-specific mechanism (SYSRETQ / ERET) */
+    arch_enter_usermode(proc->user_entry, user_rsp, user_rdi, user_rsi);
 }
 
 process_t *process_create(const uint8_t *code, uint64_t code_size) {
@@ -211,6 +205,7 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
     proc->rlimit_nfds = 0;
     proc->used_mem_pages = 0;
     proc->seccomp_mask = 0;
+    proc->seccomp_mask_hi = 0;
     proc->seccomp_strict = 0;
     proc->audit_flags = 0;
 
@@ -253,7 +248,7 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
     proc->sig_queue.head = 0;
     proc->sig_queue.tail = 0;
     proc->sig_queue.count = 0;
-    proc->signal_frame_addr = 0;
+    proc->signal_depth = 0;
     proc->restart_pending = 0;
 
     /* Initialize argv */
@@ -398,6 +393,7 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
     proc->rlimit_nfds = 0;
     proc->used_mem_pages = 0;
     proc->seccomp_mask = 0;
+    proc->seccomp_mask_hi = 0;
     proc->seccomp_strict = 0;
     proc->audit_flags = 0;
 
@@ -440,7 +436,7 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
     proc->sig_queue.head = 0;
     proc->sig_queue.tail = 0;
     proc->sig_queue.count = 0;
-    proc->signal_frame_addr = 0;
+    proc->signal_depth = 0;
     proc->restart_pending = 0;
 
     /* Initialize argv */
@@ -531,25 +527,8 @@ static void fork_child_entry(void) {
     arch_prepare_usermode_return();
     arch_set_tls_base(t->fs_base);
 
-    /* Load per-child fork context address into rax, then restore all regs.
-     * Order matters: rsp must be loaded last (before sysretq). */
-    __asm__ volatile (
-        "mov %0, %%rax\n"
-        "mov 24(%%rax), %%rbp\n"     /* fork_ctx.rbp (offset 24) */
-        "mov 32(%%rax), %%rbx\n"     /* fork_ctx.rbx (offset 32) */
-        "mov 40(%%rax), %%r12\n"     /* fork_ctx.r12 (offset 40) */
-        "mov 48(%%rax), %%r13\n"     /* fork_ctx.r13 (offset 48) */
-        "mov 56(%%rax), %%r14\n"     /* fork_ctx.r14 (offset 56) */
-        "mov 64(%%rax), %%r15\n"     /* fork_ctx.r15 (offset 64) */
-        "mov 0(%%rax), %%rcx\n"      /* fork_ctx.rip (offset 0) → RCX for SYSRETQ */
-        "mov 16(%%rax), %%r11\n"     /* fork_ctx.rflags (offset 16) → R11 */
-        "mov 8(%%rax), %%rsp\n"      /* fork_ctx.rsp (offset 8) */
-        "xor %%rax, %%rax\n"         /* return 0 */
-        "sysretq"
-        :
-        : "r"(&proc->fork_ctx)
-        : "memory"
-    );
+    /* Enter usermode as fork child — arch-specific register restore + SYSRETQ/ERET */
+    arch_enter_forked_child(&proc->fork_ctx);
 }
 
 process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
@@ -580,7 +559,7 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     child->sig_queue.head = 0;
     child->sig_queue.tail = 0;
     child->sig_queue.count = 0;
-    child->signal_frame_addr = 0;
+    child->signal_depth = 0;
     child->fork_ctx = *ctx;  /* per-child saved user context */
     for (int i = 0; i < 32; i++) child->name[i] = parent->name[i];
 

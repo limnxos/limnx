@@ -104,6 +104,13 @@ eventfd_t *eventfd_get(int idx) {
     return &eventfds[idx];
 }
 
+int eventfd_index(const eventfd_t *efd) {
+    for (int i = 0; i < MAX_EVENTFDS; i++)
+        if (eventfds[i].used && &eventfds[i] == efd)
+            return i;
+    return -1;
+}
+
 int eventfd_readable(int idx) {
     if (idx < 0 || idx >= MAX_EVENTFDS || !eventfds[idx].used)
         return 0;

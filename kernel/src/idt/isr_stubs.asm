@@ -121,6 +121,12 @@ isr_48:
     push 48             ; vector number
     jmp isr_common_stub
 
+global isr_49
+isr_49:
+    push 0              ; dummy error code
+    push 49             ; vector number (TLB shootdown)
+    jmp isr_common_stub
+
 global isr_255
 isr_255:
     push 0
@@ -226,4 +232,4 @@ isr_stub_table:
 %assign i i+1
 %endrep
     dq isr_48           ; slot 48 = LAPIC timer
-    dq isr_255          ; slot 49 = spurious (we map it separately)
+    dq isr_49           ; slot 49 = TLB shootdown IPI

@@ -34,6 +34,9 @@ void eventfd_ref(int idx);
 /* Get eventfd by index */
 eventfd_t *eventfd_get(int idx);
 
+/* Find index of an eventfd by pointer (returns -1 if not found) */
+int  eventfd_index(const eventfd_t *efd);
+
 /* Check if readable (counter > 0) */
 int  eventfd_readable(int idx);
 

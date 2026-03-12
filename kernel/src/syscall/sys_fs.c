@@ -170,12 +170,7 @@ int64_t sys_read(uint64_t fd, uint64_t buf_ptr, uint64_t len,
     if (entry->eventfd != NULL) {
         if (len < 8) return -1;
         int nonblock = (entry->fd_flags & 0x02) ? 1 : 0;
-        int efd_idx = -1;
-        for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
-            if (eventfd_get(ei) == (eventfd_t *)entry->eventfd) {
-                efd_idx = ei; break;
-            }
-        }
+        int efd_idx = eventfd_index((const eventfd_t *)entry->eventfd);
         if (efd_idx < 0) return -1;
         return eventfd_read(efd_idx, (uint64_t *)buf_ptr, nonblock);
     }
@@ -202,6 +197,63 @@ int64_t sys_read(uint64_t fd, uint64_t buf_ptr, uint64_t len,
     return n;
 }
 
+/* Shared fd close helper — closes any IPC resource held by an fd entry
+ * and resets the entry to empty. Used by sys_close, sys_exit, dup2. */
+void fd_close(fd_entry_t *entry) {
+    if (entry->pipe != NULL) {
+        uint64_t pflags;
+        pipe_lock_acquire(&pflags);
+        pipe_t *pp = (pipe_t *)entry->pipe;
+        if (entry->pipe_write) {
+            if (pp->write_refs > 0) pp->write_refs--;
+            if (pp->write_refs == 0) pp->closed_write = 1;
+        } else {
+            if (pp->read_refs > 0) pp->read_refs--;
+            if (pp->read_refs == 0) pp->closed_read = 1;
+        }
+        if (pp->closed_read && pp->closed_write) pp->used = 0;
+        pipe_unlock_release(pflags);
+        entry->pipe = NULL;
+        entry->pipe_write = 0;
+    }
+    if (entry->pty != NULL) {
+        int pty_idx = pty_index((pty_t *)entry->pty);
+        if (pty_idx >= 0) {
+            if (entry->pty_is_master)
+                pty_close_master(pty_idx);
+            else
+                pty_close_slave(pty_idx);
+        }
+        entry->pty = NULL;
+        entry->pty_is_master = 0;
+    }
+    if (entry->unix_sock != NULL) {
+        unix_sock_close((unix_sock_t *)entry->unix_sock);
+        entry->unix_sock = NULL;
+    }
+    if (entry->eventfd != NULL) {
+        int ei = eventfd_index((const eventfd_t *)entry->eventfd);
+        if (ei >= 0) eventfd_close(ei);
+        entry->eventfd = NULL;
+    }
+    if (entry->epoll != NULL) {
+        int ep_idx = epoll_index((epoll_instance_t *)entry->epoll);
+        if (ep_idx >= 0) epoll_close(ep_idx);
+        entry->epoll = NULL;
+    }
+    if (entry->uring != NULL) {
+        int ur_idx = uring_index((uring_instance_t *)entry->uring);
+        if (ur_idx >= 0) uring_close(ur_idx);
+        entry->uring = NULL;
+    }
+    if (entry->tcp_conn_idx >= 0)
+        entry->tcp_conn_idx = -1;
+    entry->node = NULL;
+    entry->offset = 0;
+    entry->open_flags = 0;
+    entry->fd_flags = 0;
+}
+
 int64_t sys_close(uint64_t fd, uint64_t a2,
                            uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a2; (void)a3; (void)a4; (void)a5;
@@ -215,98 +267,10 @@ int64_t sys_close(uint64_t fd, uint64_t a2,
         return -1;
 
     fd_entry_t *entry = &proc->fd_table[fd];
-
-    /* Pipe close */
-    if (entry->pipe != NULL) {
-        uint64_t pflags;
-        pipe_lock_acquire(&pflags);
-        pipe_t *pp = (pipe_t *)entry->pipe;
-        if (entry->pipe_write) {
-            if (pp->write_refs > 0)
-                pp->write_refs--;
-            if (pp->write_refs == 0)
-                pp->closed_write = 1;
-        } else {
-            if (pp->read_refs > 0)
-                pp->read_refs--;
-            if (pp->read_refs == 0)
-                pp->closed_read = 1;
-        }
-        /* Free pipe if both ends fully closed */
-        if (pp->closed_read && pp->closed_write)
-            pp->used = 0;
-        pipe_unlock_release(pflags);
-        entry->pipe = NULL;
-        entry->pipe_write = 0;
-        return 0;
-    }
-
-    /* PTY close */
-    if (entry->pty != NULL) {
-        int pty_idx = pty_index((pty_t *)entry->pty);
-        if (pty_idx >= 0) {
-            if (entry->pty_is_master)
-                pty_close_master(pty_idx);
-            else
-                pty_close_slave(pty_idx);
-        }
-        entry->pty = NULL;
-        entry->pty_is_master = 0;
-        return 0;
-    }
-
-    /* Unix socket close */
-    if (entry->unix_sock != NULL) {
-        unix_sock_close((unix_sock_t *)entry->unix_sock);
-        entry->unix_sock = NULL;
-        return 0;
-    }
-
-    /* Eventfd close */
-    if (entry->eventfd != NULL) {
-        for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
-            if (eventfd_get(ei) == (eventfd_t *)entry->eventfd) {
-                eventfd_close(ei);
-                break;
-            }
-        }
-        entry->eventfd = NULL;
-        return 0;
-    }
-
-    /* epoll close */
-    if (entry->epoll != NULL) {
-        int ep_idx = epoll_index((epoll_instance_t *)entry->epoll);
-        if (ep_idx >= 0)
-            epoll_close(ep_idx);
-        entry->epoll = NULL;
-        return 0;
-    }
-
-    /* uring close */
-    if (entry->uring != NULL) {
-        int ur_idx = uring_index((uring_instance_t *)entry->uring);
-        if (ur_idx >= 0)
-            uring_close(ur_idx);
-        entry->uring = NULL;
-        return 0;
-    }
-
-    /* TCP fd close — just release the fd, don't close the TCP conn */
-    if (entry->tcp_conn_idx >= 0) {
-        entry->tcp_conn_idx = -1;
-        entry->open_flags = 0;
-        entry->fd_flags = 0;
-        return 0;
-    }
-
-    if (entry->node == NULL)
+    if (fd_is_free(entry))
         return -1;
 
-    entry->node = NULL;
-    entry->offset = 0;
-    entry->open_flags = 0;
-    entry->fd_flags = 0;
+    fd_close(entry);
     return 0;
 }
 
@@ -406,12 +370,7 @@ int64_t sys_fwrite(uint64_t fd, uint64_t buf_ptr, uint64_t len,
     /* Eventfd write */
     if (entry->eventfd != NULL) {
         if (len < 8) return -1;
-        int efd_idx = -1;
-        for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
-            if (eventfd_get(ei) == (eventfd_t *)entry->eventfd) {
-                efd_idx = ei; break;
-            }
-        }
+        int efd_idx = eventfd_index((const eventfd_t *)entry->eventfd);
         if (efd_idx < 0) return -1;
         return eventfd_write(efd_idx, *(const uint64_t *)buf_ptr);
     }

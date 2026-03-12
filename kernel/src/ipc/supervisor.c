@@ -9,6 +9,7 @@
 #include "serial.h"
 #include "mm/kheap.h"
 #include "sync/spinlock.h"
+#include "idt/idt.h"
 
 static supervisor_t supervisors[MAX_SUPERVISORS];
 
@@ -32,6 +33,8 @@ int supervisor_create(uint64_t owner_pid, const char *name) {
             supervisors[i].owner_pid = owner_pid;
             supervisors[i].policy = SUPER_ONE_FOR_ONE;
             supervisors[i].child_count = 0;
+            supervisors[i].restart_window_start = 0;
+            supervisors[i].restart_count = 0;
             for (int j = 0; j < SUPER_NAME_MAX - 1 && name[j]; j++)
                 supervisors[i].name[j] = name[j];
             supervisors[i].name[SUPER_NAME_MAX - 1] = '\0';
@@ -189,6 +192,22 @@ void supervisor_on_exit(uint64_t pid, int exit_status) {
 
             pr_warn("Child pid %lu crashed (status %d), policy=%d\n",
                     pid, exit_status, sv->policy);
+
+            /* Rate limit: prevent restart storms */
+            {
+                uint64_t now = pit_get_ticks();
+                if (now - sv->restart_window_start > SUPER_RESTART_WINDOW) {
+                    sv->restart_count = 0;
+                    sv->restart_window_start = now;
+                }
+                sv->restart_count++;
+                if (sv->restart_count > SUPER_MAX_RESTARTS) {
+                    pr_err("Restart storm: supervisor '%s' (%u restarts in window), halting restarts\n",
+                           sv->name, sv->restart_count);
+                    spin_unlock_irqrestore(&supervisor_lock, flags);
+                    return;
+                }
+            }
 
             if (sv->policy == SUPER_ONE_FOR_ONE) {
                 spin_unlock_irqrestore(&supervisor_lock, flags);

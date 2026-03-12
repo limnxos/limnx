@@ -28,66 +28,8 @@ int64_t sys_exit(uint64_t status, uint64_t a2,
     if (t->process) {
         t->process->exit_status = (int64_t)status;
         /* Close all open file descriptors */
-        for (int i = 0; i < MAX_FDS; i++) {
-            fd_entry_t *entry = &t->process->fd_table[i];
-            if (entry->pipe != NULL) {
-                uint64_t pflags;
-                pipe_lock_acquire(&pflags);
-                pipe_t *pp = (pipe_t *)entry->pipe;
-                if (entry->pipe_write) {
-                    if (pp->write_refs > 0) pp->write_refs--;
-                    if (pp->write_refs == 0) pp->closed_write = 1;
-                } else {
-                    if (pp->read_refs > 0) pp->read_refs--;
-                    if (pp->read_refs == 0) pp->closed_read = 1;
-                }
-                if (pp->closed_read && pp->closed_write) pp->used = 0;
-                pipe_unlock_release(pflags);
-                entry->pipe = NULL;
-                entry->pipe_write = 0;
-            }
-            if (entry->pty != NULL) {
-                int pty_idx = pty_index((pty_t *)entry->pty);
-                if (pty_idx >= 0) {
-                    if (entry->pty_is_master)
-                        pty_close_master(pty_idx);
-                    else
-                        pty_close_slave(pty_idx);
-                }
-                entry->pty = NULL;
-                entry->pty_is_master = 0;
-            }
-            if (entry->unix_sock != NULL) {
-                unix_sock_close((unix_sock_t *)entry->unix_sock);
-                entry->unix_sock = NULL;
-            }
-            if (entry->eventfd != NULL) {
-                /* Find index for close */
-                for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
-                    if (eventfd_get(ei) == (eventfd_t *)entry->eventfd) {
-                        eventfd_close(ei);
-                        break;
-                    }
-                }
-                entry->eventfd = NULL;
-            }
-            if (entry->epoll != NULL) {
-                int ep_idx = epoll_index((epoll_instance_t *)entry->epoll);
-                if (ep_idx >= 0)
-                    epoll_close(ep_idx);
-                entry->epoll = NULL;
-            }
-            if (entry->uring != NULL) {
-                int ur_idx = uring_index((uring_instance_t *)entry->uring);
-                if (ur_idx >= 0)
-                    uring_close(ur_idx);
-                entry->uring = NULL;
-            }
-            entry->node = NULL;
-            entry->offset = 0;
-            entry->open_flags = 0;
-            entry->fd_flags = 0;
-        }
+        for (int i = 0; i < MAX_FDS; i++)
+            fd_close(&t->process->fd_table[i]);
         /* Close any owned TCP connections */
         for (int i = 0; i < 8; i++) {
             if (t->process->tcp_conns[i]) {
@@ -117,14 +59,28 @@ int64_t sys_exit(uint64_t status, uint64_t a2,
                 if (t->process->mmap_table[i].used &&
                     t->process->mmap_table[i].shm_id >= 0) {
                     int32_t sid = t->process->mmap_table[i].shm_id;
-                    if (sid < MAX_SHM_REGIONS && shm_table[sid].ref_count > 0)
+                    if (sid < MAX_SHM_REGIONS && shm_table[sid].ref_count > 0) {
                         shm_table[sid].ref_count--;
+                        /* Free SHM pages when last reference drops */
+                        if (shm_table[sid].ref_count == 0) {
+                            for (uint32_t pi = 0; pi < shm_table[sid].num_pages; pi++) {
+                                if (shm_table[sid].phys_pages[pi]) {
+                                    pmm_free_page(shm_table[sid].phys_pages[pi]);
+                                    shm_table[sid].phys_pages[pi] = 0;
+                                }
+                            }
+                            shm_table[sid].key = -1;
+                            shm_table[sid].num_pages = 0;
+                        }
+                    }
                     t->process->mmap_table[i].used = 0;
                     t->process->mmap_table[i].shm_id = -1;
                 }
             }
             shm_unlock_release(sflags);
         }
+        /* Re-parent orphaned children to init (pid 1) */
+        process_reparent_children(t->process->pid, 1);
         /* Free user-space pages (respects COW refcounts) */
         if (t->process->cr3) {
             /* Switch to kernel PML4 before freeing */
@@ -328,11 +284,9 @@ int64_t sys_exec(uint64_t path_ptr, uint64_t argv_ptr,
         }
         /* Increment eventfd ref counts */
         if (proc->fd_table[i].eventfd != NULL) {
-            for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
-                if (eventfd_get(ei) == (eventfd_t *)proc->fd_table[i].eventfd) {
-                    eventfd_ref(ei);
-                    break;
-                }
+            {
+                int ei = eventfd_index((const eventfd_t *)proc->fd_table[i].eventfd);
+                if (ei >= 0) eventfd_ref(ei);
             }
         }
         /* Increment epoll ref counts */
@@ -417,11 +371,9 @@ int64_t sys_fork(uint64_t a1, uint64_t a2,
         if (proc->fd_table[i].unix_sock != NULL)
             ((unix_sock_t *)proc->fd_table[i].unix_sock)->refs++;
         if (proc->fd_table[i].eventfd != NULL) {
-            for (int ei = 0; ei < MAX_EVENTFDS; ei++) {
-                if (eventfd_get(ei) == (eventfd_t *)proc->fd_table[i].eventfd) {
-                    eventfd_ref(ei);
-                    break;
-                }
+            {
+                int ei = eventfd_index((const eventfd_t *)proc->fd_table[i].eventfd);
+                if (ei >= 0) eventfd_ref(ei);
             }
         }
         if (proc->fd_table[i].epoll != NULL) {

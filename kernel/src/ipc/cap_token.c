@@ -38,6 +38,8 @@ int cap_token_create(uint64_t owner_pid, uint32_t owner_caps,
             tokens[i].owner_pid = owner_pid;
             tokens[i].target_pid = target_pid;
             tokens[i].perms = perms;
+            tokens[i].parent_id = 0;
+            tokens[i].depth = 0;
 
             /* Copy resource path */
             int j = 0;
@@ -58,6 +60,29 @@ int cap_token_create(uint64_t owner_pid, uint32_t owner_caps,
     return -ENOMEM;
 }
 
+/* Revoke a token and all its delegated children (cascading revoke).
+ * Must be called with token_lock held. */
+static void revoke_cascade_locked(uint32_t token_id) {
+    /* First, revoke the token itself */
+    for (int i = 0; i < MAX_TOKENS; i++) {
+        if (tokens[i].used && tokens[i].id == token_id) {
+            tokens[i].used = 0;
+            break;
+        }
+    }
+    /* Then revoke all children (iterative scan, bounded by MAX_TOKENS) */
+    for (int pass = 0; pass < MAX_TOKENS; pass++) {
+        int found = 0;
+        for (int i = 0; i < MAX_TOKENS; i++) {
+            if (tokens[i].used && tokens[i].parent_id == token_id) {
+                revoke_cascade_locked(tokens[i].id);
+                found = 1;
+            }
+        }
+        if (!found) break;
+    }
+}
+
 int cap_token_revoke(uint32_t token_id, uint64_t caller_pid) {
     uint64_t flags;
     spin_lock_irqsave(&token_lock, &flags);
@@ -68,7 +93,7 @@ int cap_token_revoke(uint32_t token_id, uint64_t caller_pid) {
                 spin_unlock_irqrestore(&token_lock, flags);
                 return -EPERM;
             }
-            tokens[i].used = 0;
+            revoke_cascade_locked(token_id);
             spin_unlock_irqrestore(&token_lock, flags);
             return 0;
         }
@@ -169,16 +194,37 @@ int cap_token_delegate(uint32_t parent_id, uint64_t caller_pid,
         }
     }
 
-    /* Copy parent resource before releasing lock for nested create */
+    /* Enforce delegation depth limit */
+    if (parent->depth >= TOKEN_MAX_DEPTH) {
+        spin_unlock_irqrestore(&token_lock, flags);
+        return -EPERM;
+    }
+
+    /* Copy parent info before creating sub-token */
     char parent_resource[TOKEN_PATH_MAX];
     for (int i = 0; i < TOKEN_PATH_MAX; i++)
         parent_resource[i] = parent->resource[i];
+    uint32_t parent_tok_id = parent->id;
+    uint8_t new_depth = parent->depth + 1;
 
     spin_unlock_irqrestore(&token_lock, flags);
 
     /* Create the sub-token owned by caller */
-    return cap_token_create(caller_pid, perms, perms, target_pid,
-                             resource && resource[0] ? resource : parent_resource);
+    int new_id = cap_token_create(caller_pid, perms, perms, target_pid,
+                                   resource && resource[0] ? resource : parent_resource);
+    if (new_id > 0) {
+        /* Set parent linkage on the newly created token */
+        spin_lock_irqsave(&token_lock, &flags);
+        for (int i = 0; i < MAX_TOKENS; i++) {
+            if (tokens[i].used && tokens[i].id == (uint32_t)new_id) {
+                tokens[i].parent_id = parent_tok_id;
+                tokens[i].depth = new_depth;
+                break;
+            }
+        }
+        spin_unlock_irqrestore(&token_lock, flags);
+    }
+    return new_id;
 }
 
 void cap_token_cleanup_pid(uint64_t pid) {

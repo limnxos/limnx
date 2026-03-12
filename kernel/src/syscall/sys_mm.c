@@ -100,8 +100,19 @@ int64_t sys_munmap(uint64_t virt_addr, uint64_t a2,
                 int32_t sid = proc->mmap_table[i].shm_id;
                 uint64_t sflags;
                 shm_lock_acquire(&sflags);
-                if (sid < MAX_SHM_REGIONS && shm_table[sid].ref_count > 0)
+                if (sid < MAX_SHM_REGIONS && shm_table[sid].ref_count > 0) {
                     shm_table[sid].ref_count--;
+                    if (shm_table[sid].ref_count == 0) {
+                        for (uint32_t pi = 0; pi < shm_table[sid].num_pages; pi++) {
+                            if (shm_table[sid].phys_pages[pi]) {
+                                pmm_free_page(shm_table[sid].phys_pages[pi]);
+                                shm_table[sid].phys_pages[pi] = 0;
+                            }
+                        }
+                        shm_table[sid].key = -1;
+                        shm_table[sid].num_pages = 0;
+                    }
+                }
                 shm_unlock_release(sflags);
             } else {
                 /* Private mapping: clear PTEs, flush TLB, free physical pages */
@@ -346,8 +357,19 @@ int64_t sys_shmdt(uint64_t virt_addr, uint64_t a2,
             {
                 uint64_t sflags;
                 shm_lock_acquire(&sflags);
-                if (sid < MAX_SHM_REGIONS && shm_table[sid].ref_count > 0)
+                if (sid < MAX_SHM_REGIONS && shm_table[sid].ref_count > 0) {
                     shm_table[sid].ref_count--;
+                    if (shm_table[sid].ref_count == 0) {
+                        for (uint32_t pi = 0; pi < shm_table[sid].num_pages; pi++) {
+                            if (shm_table[sid].phys_pages[pi]) {
+                                pmm_free_page(shm_table[sid].phys_pages[pi]);
+                                shm_table[sid].phys_pages[pi] = 0;
+                            }
+                        }
+                        shm_table[sid].key = -1;
+                        shm_table[sid].num_pages = 0;
+                    }
+                }
                 shm_unlock_release(sflags);
             }
             /* Unmap pages from page table and drop PTE refcount */

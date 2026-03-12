@@ -6,12 +6,16 @@
 #define MAX_TOKENS     32
 #define TOKEN_PATH_MAX 64
 
+#define TOKEN_MAX_DEPTH  4   /* max delegation chain depth */
+
 typedef struct cap_token {
     uint32_t id;                        /* unique token ID (1-based) */
     uint64_t owner_pid;                 /* creator — only owner can revoke */
     uint64_t target_pid;                /* who can use it (0 = bearer/any) */
     uint32_t perms;                     /* capability bits this token grants */
     char     resource[TOKEN_PATH_MAX];  /* resource path prefix (empty = any) */
+    uint32_t parent_id;                 /* 0 = root token, else parent's id */
+    uint8_t  depth;                     /* delegation depth (0 = root) */
     uint8_t  used;
 } cap_token_t;
 

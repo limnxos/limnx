@@ -110,6 +110,51 @@ static inline void arch_prepare_usermode_return(void) {
     }
 }
 
+/* --- Usermode entry --- */
+
+/* Enter ring 3 via SYSRETQ. Never returns.
+ * entry = user RIP, rsp = user RSP, rdi = arg0, rsi = arg1 */
+static inline __attribute__((noreturn))
+void arch_enter_usermode(uint64_t entry, uint64_t rsp,
+                          uint64_t rdi, uint64_t rsi) {
+    __asm__ volatile (
+        "mov %0, %%rcx\n"
+        "mov %1, %%rsp\n"
+        "mov %2, %%rdi\n"
+        "mov %3, %%rsi\n"
+        "mov $0x202, %%r11\n"
+        "sysretq"
+        :
+        : "r"(entry), "r"(rsp), "r"(rdi), "r"(rsi)
+        : "rcx", "r11", "rdi", "rsi", "memory"
+    );
+    __builtin_unreachable();
+}
+
+/* Enter ring 3 for fork child via SYSRETQ. Never returns.
+ * Restores all callee-saved regs from fork_context, returns 0 in rax. */
+static inline __attribute__((noreturn))
+void arch_enter_forked_child(const void *fork_ctx_ptr) {
+    __asm__ volatile (
+        "mov %0, %%rax\n"
+        "mov 24(%%rax), %%rbp\n"
+        "mov 32(%%rax), %%rbx\n"
+        "mov 40(%%rax), %%r12\n"
+        "mov 48(%%rax), %%r13\n"
+        "mov 56(%%rax), %%r14\n"
+        "mov 64(%%rax), %%r15\n"
+        "mov 0(%%rax), %%rcx\n"
+        "mov 16(%%rax), %%r11\n"
+        "mov 8(%%rax), %%rsp\n"
+        "xor %%rax, %%rax\n"
+        "sysretq"
+        :
+        : "r"(fork_ctx_ptr)
+        : "memory"
+    );
+    __builtin_unreachable();
+}
+
 /* --- Memory barrier --- */
 
 static inline void arch_memory_barrier(void) {

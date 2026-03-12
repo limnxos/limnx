@@ -40,6 +40,7 @@ int validate_user_ptr(uint64_t ptr, uint64_t len);
 int copy_string_from_user(const char *user_src, char *kern_dst, uint64_t max_len);
 void resolve_user_path(process_t *proc, const char *path, char *out);
 int fd_is_free(const fd_entry_t *e);
+void fd_close(fd_entry_t *entry);
 int check_file_perm(const process_t *proc, const vfs_node_t *node, uint8_t access);
 int count_open_fds(process_t *proc);
 int16_t poll_check_fd(process_t *proc, int fd, int16_t events);

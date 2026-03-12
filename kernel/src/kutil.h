@@ -78,4 +78,11 @@ static inline void mem_zero(void *dst, uint64_t n) {
     mem_set(dst, 0, n);
 }
 
+/**
+ * page_copy - Copy one 4096-byte page.
+ */
+static inline void page_copy(void *dst, const void *src) {
+    mem_copy(dst, src, 4096);
+}
+
 #endif

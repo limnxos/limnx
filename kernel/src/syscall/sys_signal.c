@@ -15,6 +15,11 @@ int64_t sys_sigaction(uint64_t signum, uint64_t handler,
     if (!proc || signum >= MAX_SIGNALS) return -1;
     if (signum == SIGKILL || signum == SIGSTOP) return -1;  /* can't catch */
 
+    /* Validate handler address: must be SIG_DFL, SIG_IGN, or a valid user address.
+     * A kernel-space handler would let SYSRET jump to ring 0 code from ring 3. */
+    if (handler > SIG_IGN && handler >= USER_ADDR_MAX)
+        return -EFAULT;
+
     proc->sig_handlers[signum].sa_handler = handler;
     proc->sig_handlers[signum].sa_flags = (uint32_t)flags;
     return 0;
@@ -28,7 +33,9 @@ int64_t sys_sigreturn(uint64_t a1, uint64_t a2,
     process_t *proc = t->process;
     if (!proc) return -1;
 
-    uint64_t frame_addr = proc->signal_frame_addr;
+    if (proc->signal_depth <= 0) return -1;
+
+    uint64_t frame_addr = proc->signal_frame_stack[--proc->signal_depth];
     if (frame_addr == 0) return -1;
 
     uint64_t *frame = (uint64_t *)frame_addr;
@@ -36,8 +43,6 @@ int64_t sys_sigreturn(uint64_t a1, uint64_t a2,
     uint64_t orig_rip    = frame[1];
     uint64_t orig_rflags = frame[2];
     uint64_t orig_rax    = frame[3];
-
-    proc->signal_frame_addr = 0;
 
     /* SA_RESTART: re-invoke the interrupted syscall after signal handler */
     if (proc->restart_pending) {

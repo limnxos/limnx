@@ -135,17 +135,19 @@ int64_t sys_setrlimit(uint64_t resource, uint64_t ptr,
 }
 
 int64_t sys_seccomp(uint64_t mask, uint64_t strict,
-                             uint64_t a3, uint64_t a4, uint64_t a5) {
-    (void)a3; (void)a4; (void)a5;
+                             uint64_t mask_hi, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
     thread_t *t = thread_get_current();
     if (!t || !t->process) return -1;
     process_t *proc = t->process;
 
-    if (proc->seccomp_mask != 0) {
+    if (proc->seccomp_mask != 0 || proc->seccomp_mask_hi != 0) {
         /* Already set — can only restrict further (AND) */
         proc->seccomp_mask &= mask;
+        proc->seccomp_mask_hi &= mask_hi;
     } else {
         proc->seccomp_mask = mask;
+        proc->seccomp_mask_hi = mask_hi;
     }
     if (strict)
         proc->seccomp_strict = 1;
