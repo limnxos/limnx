@@ -17,11 +17,12 @@ echo ""
 qemu-system-x86_64 \
     -M q35 \
     -cdrom limnx.iso \
-    -m 2G \
+    -m 4G \
+    -smp 2 \
     -serial stdio \
     -display none \
     -no-reboot \
     -device virtio-net-pci,netdev=net0 \
-    -netdev user,id=net0,hostfwd=udp::5555-10.0.2.15:1234 \
+    -netdev user,id=net0,hostfwd=udp::5555-10.0.2.15:1234,hostfwd=tcp::8080-10.0.2.15:80 \
     -drive file=build/disk.img,format=raw,if=none,id=disk0 \
     -device virtio-blk-pci,drive=disk0

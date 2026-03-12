@@ -32,6 +32,16 @@ SRCS     := kernel/src/main.c kernel/src/serial.c \
             kernel/src/sched/tss.c kernel/src/sched/thread.c \
             kernel/src/sched/sched.c \
             kernel/src/syscall/syscall.c \
+            kernel/src/syscall/sys_fs.c \
+            kernel/src/syscall/sys_proc.c \
+            kernel/src/syscall/sys_mm.c \
+            kernel/src/syscall/sys_fd.c \
+            kernel/src/syscall/sys_net.c \
+            kernel/src/syscall/sys_signal.c \
+            kernel/src/syscall/sys_ipc.c \
+            kernel/src/syscall/sys_security.c \
+            kernel/src/syscall/sys_infer.c \
+            kernel/src/syscall/sys_misc.c \
             kernel/src/proc/process.c kernel/src/proc/elf.c \
             kernel/src/fs/vfs.c kernel/src/fs/tar.c \
             kernel/src/pci/pci.c \
