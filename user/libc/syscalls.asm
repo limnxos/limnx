@@ -949,3 +949,17 @@ sys_topic_recv:
     mov rax, 128        ; SYS_TOPIC_RECV
     syscall
     ret
+
+; --- sys_infer_swap(name, new_sock_path) ---
+global sys_infer_swap
+sys_infer_swap:
+    mov rax, 129        ; SYS_INFER_SWAP
+    syscall
+    ret
+
+; --- sys_environ(buf, buf_size) ---
+global sys_environ
+sys_environ:
+    mov rax, 130        ; SYS_ENVIRON
+    syscall
+    ret

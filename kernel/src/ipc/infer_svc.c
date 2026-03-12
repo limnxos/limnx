@@ -28,6 +28,11 @@ static uint32_t rr_counter = 0;
 
 
 int infer_register(const char *name, const char *sock_path, uint64_t pid) {
+    /* Resolve caller's namespace */
+    uint32_t ns_id = 0;
+    process_t *caller = process_lookup(pid);
+    if (caller) ns_id = caller->ns_id;
+
     uint64_t flags;
     spin_lock_irqsave(&infer_lock, &flags);
 
@@ -36,6 +41,7 @@ int infer_register(const char *name, const char *sock_path, uint64_t pid) {
         if (infer_table[i].used && infer_table[i].provider_pid == pid) {
             str_copy(infer_table[i].name, name, INFER_NAME_MAX);
             str_copy(infer_table[i].sock_path, sock_path, INFER_SOCK_PATH_MAX);
+            infer_table[i].ns_id = ns_id;
             infer_table[i].load = 0;
             infer_table[i].healthy = 0;
             infer_table[i].last_heartbeat = 0;
@@ -52,6 +58,7 @@ int infer_register(const char *name, const char *sock_path, uint64_t pid) {
             str_copy(infer_table[i].name, name, INFER_NAME_MAX);
             str_copy(infer_table[i].sock_path, sock_path, INFER_SOCK_PATH_MAX);
             infer_table[i].provider_pid = pid;
+            infer_table[i].ns_id = ns_id;
             infer_table[i].load = 0;
             infer_table[i].healthy = 0;
             infer_table[i].last_heartbeat = 0;
@@ -93,6 +100,7 @@ void infer_unregister_pid(uint64_t pid) {
             infer_table[i].name[0] = '\0';
             infer_table[i].sock_path[0] = '\0';
             infer_table[i].provider_pid = 0;
+            infer_table[i].ns_id = 0;
             infer_table[i].load = 0;
             infer_table[i].healthy = 0;
             infer_table[i].last_heartbeat = 0;
@@ -242,6 +250,113 @@ int infer_set_policy(uint8_t policy) {
 
 uint8_t infer_get_policy(void) {
     return route_policy;
+}
+
+int infer_swap(const char *name, const char *new_sock_path, uint64_t pid) {
+    uint64_t flags;
+    spin_lock_irqsave(&infer_lock, &flags);
+
+    for (int i = 0; i < MAX_INFER_SERVICES; i++) {
+        if (!infer_table[i].used) continue;
+        if (!str_eq(infer_table[i].name, name)) continue;
+        if (infer_table[i].provider_pid != pid) continue;
+
+        /* Atomic path replacement */
+        str_copy(infer_table[i].sock_path, new_sock_path, INFER_SOCK_PATH_MAX);
+        infer_table[i].load = 0;
+        infer_table[i].healthy = 0;
+        infer_table[i].last_heartbeat = 0;
+
+        spin_unlock_irqrestore(&infer_lock, flags);
+        pr_info("Swapped '%s' (pid %lu) → '%s'\n", name, pid, new_sock_path);
+        return 0;
+    }
+
+    spin_unlock_irqrestore(&infer_lock, flags);
+    return -ENOENT;
+}
+
+int infer_route_ns(const char *name, uint32_t ns_id) {
+    uint64_t flags;
+    spin_lock_irqsave(&infer_lock, &flags);
+
+    /* Collect healthy candidates matching name and namespace */
+    int candidates[MAX_INFER_SERVICES];
+    int count = 0;
+
+    for (int i = 0; i < MAX_INFER_SERVICES; i++) {
+        if (!infer_table[i].used) continue;
+        if (!str_eq(infer_table[i].name, name)) continue;
+        if (!infer_table[i].healthy) continue;
+
+        /* Namespace filter: ns_id=0 means search all */
+        if (ns_id != 0 && infer_table[i].ns_id != ns_id) continue;
+
+        /* Verify provider process is still alive */
+        process_t *p = process_lookup(infer_table[i].provider_pid);
+        if (!p || p->exited) {
+            infer_table[i].used = 0;
+            infer_table[i].healthy = 0;
+            continue;
+        }
+
+        candidates[count++] = i;
+    }
+
+    if (count == 0) {
+        spin_unlock_irqrestore(&infer_lock, flags);
+        return -ENOENT;
+    }
+
+    /* Use same routing policy as infer_route */
+    int chosen = -1;
+
+    switch (route_policy) {
+    case INFER_ROUTE_ROUND_ROBIN:
+        chosen = candidates[rr_counter % count];
+        rr_counter++;
+        break;
+
+    case INFER_ROUTE_WEIGHTED: {
+        uint32_t max_load = 0;
+        for (int j = 0; j < count; j++) {
+            if (infer_table[candidates[j]].load > max_load)
+                max_load = infer_table[candidates[j]].load;
+        }
+        uint32_t total_weight = 0;
+        for (int j = 0; j < count; j++)
+            total_weight += (max_load - infer_table[candidates[j]].load + 1);
+
+        uint32_t pick = rr_counter % (total_weight ? total_weight : 1);
+        rr_counter++;
+
+        uint32_t cumulative = 0;
+        for (int j = 0; j < count; j++) {
+            cumulative += (max_load - infer_table[candidates[j]].load + 1);
+            if (pick < cumulative) { chosen = candidates[j]; break; }
+        }
+        if (chosen < 0) chosen = candidates[count - 1];
+        break;
+    }
+
+    case INFER_ROUTE_LEAST_LOADED:
+    default: {
+        uint32_t best_load = 0xFFFFFFFF;
+        for (int j = 0; j < count; j++) {
+            if (infer_table[candidates[j]].load < best_load) {
+                best_load = infer_table[candidates[j]].load;
+                chosen = candidates[j];
+            }
+        }
+        break;
+    }
+    }
+
+    if (chosen >= 0)
+        infer_table[chosen].total_requests++;
+
+    spin_unlock_irqrestore(&infer_lock, flags);
+    return chosen;
 }
 
 /* --- Inference result cache --- */
@@ -581,6 +696,11 @@ int infer_async_submit(const char *name, const void *req, uint32_t req_len,
             infer_async[i].eventfd_idx = eventfd_idx;
             infer_async[i].error_code = 0;
             infer_async[i].submit_tick = (uint32_t)pit_get_ticks();
+            infer_async[i].ns_id = 0;
+            {
+                process_t *op = process_lookup(owner_pid);
+                if (op) infer_async[i].ns_id = op->ns_id;
+            }
             infer_async[i].state = INFER_ASYNC_PENDING;
 
             spin_unlock_irqrestore(&infer_lock, flags);
@@ -678,14 +798,15 @@ int infer_async_process_one(void) {
     uint8_t req_copy[INFER_ASYNC_REQ_MAX];
     uint32_t req_len = e->req_len;
     int32_t efd = e->eventfd_idx;
+    uint32_t async_ns_id = e->ns_id;
     str_copy(name, e->name, INFER_NAME_MAX);
     if (req_len > 0)
         mem_copy(req_copy, e->request, req_len);
 
     spin_unlock_irqrestore(&infer_lock, flags);
 
-    /* Try to route */
-    int svc_idx = infer_route(name);
+    /* Try to route (namespace-aware) */
+    int svc_idx = infer_route_ns(name, async_ns_id);
     if (svc_idx < 0) {
         /* No provider — check timeout */
         uint32_t now = (uint32_t)pit_get_ticks();

@@ -20,6 +20,7 @@ typedef struct infer_service {
     uint32_t load;              /* current request load (set by daemon) */
     uint32_t last_heartbeat;    /* tick count of last health report */
     uint32_t total_requests;    /* total requests routed to this service */
+    uint32_t ns_id;             /* namespace ID (0 = global) */
     uint8_t  healthy;           /* 1 = healthy, 0 = unhealthy/unknown */
     uint8_t  used;
 } infer_service_t;
@@ -42,6 +43,14 @@ int  infer_health(uint64_t pid, uint32_t load);
 /* Route: find the best instance of a named service using current policy.
  * Returns index or -1 if none available. */
 int  infer_route(const char *name);
+
+/* Route within a namespace: find best instance scoped to ns_id.
+ * ns_id=0 searches global (all namespaces). Returns index or -1. */
+int  infer_route_ns(const char *name, uint32_t ns_id);
+
+/* Swap: atomically replace socket path for a service owned by pid.
+ * Resets health/load. Returns 0 or -errno. */
+int  infer_swap(const char *name, const char *new_sock_path, uint64_t pid);
 
 /* Set the routing policy (INFER_ROUTE_*) */
 int  infer_set_policy(uint8_t policy);
@@ -155,6 +164,7 @@ typedef struct infer_async_entry {
     int32_t  eventfd_idx;     /* -1 = no notification */
     int32_t  error_code;      /* errno when state == ERROR */
     uint32_t submit_tick;
+    uint32_t ns_id;           /* namespace scope for routing (0 = global) */
     volatile uint8_t state;   /* INFER_ASYNC_* */
 } infer_async_entry_t;
 

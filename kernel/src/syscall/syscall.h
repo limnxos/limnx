@@ -134,7 +134,9 @@
 #define SYS_TOPIC_SUB      126
 #define SYS_TOPIC_PUB      127
 #define SYS_TOPIC_RECV     128
-#define SYS_NR             129
+#define SYS_INFER_SWAP     129
+#define SYS_ENVIRON        130
+#define SYS_NR             131
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)
@@ -148,7 +150,8 @@
 #define CAP_INFER     (1 << 8)
 #define CAP_XNS_TASK  (1 << 9)
 #define CAP_XNS_PUBSUB (1 << 10)
-#define CAP_ALL       0x7FF
+#define CAP_XNS_INFER  (1 << 11)
+#define CAP_ALL       0xFFF
 
 /* Resource limit IDs */
 #define RLIMIT_MEM   0

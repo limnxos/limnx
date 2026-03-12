@@ -291,6 +291,30 @@ int64_t sys_setenv(uint64_t key_ptr, uint64_t val_ptr,
     return 0;
 }
 
+int64_t sys_environ(uint64_t buf_ptr, uint64_t buf_size,
+                             uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -ESRCH;
+
+    /* If buf_size == 0, just return the needed size */
+    if (buf_size == 0) return (int64_t)proc->env_buf_len;
+
+    if (validate_user_ptr(buf_ptr, buf_size) != 0)
+        return -EFAULT;
+
+    int copy = proc->env_buf_len;
+    if (copy > (int)buf_size) copy = (int)buf_size;
+
+    char *dst = (char *)buf_ptr;
+    for (int i = 0; i < copy; i++)
+        dst[i] = proc->env_buf[i];
+
+    return (int64_t)copy;
+}
+
 int64_t sys_poll(uint64_t fds_ptr, uint64_t nfds, uint64_t timeout_ms,
                           uint64_t a4, uint64_t a5) {
     (void)a4; (void)a5;

@@ -170,6 +170,7 @@ int64_t sys_infer_cache_ctrl(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_infer_submit(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_infer_poll(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_infer_result(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_infer_swap(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
 /* Misc */
 int64_t sys_write(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
@@ -183,6 +184,7 @@ int64_t sys_poll(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_select(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_arch_prctl(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_swap_stat(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_environ(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_uring_setup(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_uring_enter(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_task_create(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);

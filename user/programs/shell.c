@@ -1190,13 +1190,15 @@ static int run_builtin(command_t *cmd, int *should_exit) {
             }
         }
     } else if (strcmp(name, "env") == 0) {
-        /* Print known env vars — try common ones */
-        char val[128];
-        const char *vars[] = {"LIMNX_VERSION", "HOME", "PATH", "USER",
-                              "SHELL", "TERM", NULL};
-        for (int i = 0; vars[i]; i++) {
-            if (sys_getenv(vars[i], val, sizeof(val)) >= 0)
-                printf("%s=%s\n", vars[i], val);
+        char envbuf[1024];
+        long len = sys_environ(envbuf, sizeof(envbuf));
+        if (len > 0) {
+            int pos = 0;
+            while (pos < len) {
+                printf("%s\n", &envbuf[pos]);
+                while (pos < len && envbuf[pos] != '\0') pos++;
+                pos++;  /* skip NUL */
+            }
         }
     } else if (strcmp(name, "kill") == 0) {
         if (argc < 2) {

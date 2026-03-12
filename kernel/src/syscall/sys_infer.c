@@ -5,6 +5,7 @@
 #include "ipc/unix_sock.h"
 #include "ipc/cap_token.h"
 #include "ipc/eventfd.h"
+#include "ipc/agent_ns.h"
 
 int64_t sys_infer_register(uint64_t name_ptr, uint64_t path_ptr,
                                     uint64_t a3, uint64_t a4, uint64_t a5) {
@@ -254,4 +255,26 @@ int64_t sys_infer_result(uint64_t request_id, uint64_t resp_buf,
 
     return infer_async_result((int)request_id, proc->pid,
                                (void *)resp_buf, (uint32_t)resp_len);
+}
+
+int64_t sys_infer_swap(uint64_t name_ptr, uint64_t path_ptr,
+                                uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    char name[INFER_NAME_MAX], path[INFER_SOCK_PATH_MAX];
+    if (copy_string_from_user((const char *)name_ptr, name, INFER_NAME_MAX) != 0)
+        return -EFAULT;
+    if (copy_string_from_user((const char *)path_ptr, path, INFER_SOCK_PATH_MAX) != 0)
+        return -EFAULT;
+
+    /* Must be owner of the service or have CAP_INFER */
+    if (!(proc->capabilities & CAP_INFER) &&
+        !cap_token_check(proc->pid, CAP_INFER, name))
+        return -EACCES;
+
+    return infer_swap(name, path, proc->pid);
 }
