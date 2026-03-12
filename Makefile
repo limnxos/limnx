@@ -315,11 +315,15 @@ ARM64_KERNEL := build/arm64/kernel
 
 ARM64_C_SRCS := kernel/src/arch/arm64/main.c \
                 kernel/src/arch/arm64/serial.c \
-                kernel/src/arch/arm64/boot.c \
+                kernel/src/arch/arm64/arch_init.c \
                 kernel/src/arch/arm64/interrupt.c \
                 kernel/src/arch/arm64/timer.c \
-                kernel/src/arch/arm64/smp.c
-ARM64_ASM_SRCS := kernel/src/arch/arm64/boot.S
+                kernel/src/arch/arm64/smp.c \
+                kernel/src/arch/arm64/gic.c \
+                kernel/src/arch/arm64/syscall_entry.c
+ARM64_ASM_SRCS := kernel/src/arch/arm64/boot.S \
+                  kernel/src/arch/arm64/vectors.S \
+                  kernel/src/arch/arm64/switch.S
 
 ARM64_C_OBJS := $(patsubst kernel/src/%.c,build/arm64/%.o,$(ARM64_C_SRCS))
 ARM64_ASM_OBJS := $(patsubst kernel/src/%.S,build/arm64/%.o,$(ARM64_ASM_SRCS))

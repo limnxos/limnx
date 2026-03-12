@@ -6,6 +6,19 @@
 
 #include "arch/serial.h"
 #include "arch/cpu.h"
+#include "arch/boot.h"
+#include "arch/interrupt.h"
+#include "arch/smp_hal.h"
+#include "arch/timer.h"
+#include "arch/syscall_arch.h"
+
+/*
+ * Weak stubs for kernel symbols referenced by arch asm/C code.
+ * These are provided by the full kernel build; the ARM64-only build
+ * uses these stubs to link successfully.
+ */
+void __attribute__((weak)) sched_unlock_after_switch(void) {}
+void __attribute__((weak)) thread_entry_wrapper(void *entry) { (void)entry; }
 
 void kmain(void) {
     serial_init();
@@ -15,14 +28,15 @@ void kmain(void) {
     serial_puts("  Target: QEMU virt (Cortex-A57)\n");
     serial_puts("========================================\n\n");
 
-    serial_puts("[init] PL011 UART initialized\n");
-
-    /* Enable FPU/NEON */
-    arch_fpu_init();
-    serial_puts("[fpu]  FPU/NEON enabled (CPACR_EL1.FPEN=11)\n");
+    /* HAL init sequence (mirrors x86_64 boot) */
+    arch_early_init();
+    arch_interrupt_init();
+    arch_smp_init();
+    arch_syscall_init();
+    arch_timer_enable_sched();
 
     serial_puts("\n[init] ARM64 boot complete — halting\n");
-    serial_puts("[init] (full subsystem init is future work)\n");
+    serial_puts("[init] (PMM, VMM, scheduler, VFS are future work)\n");
 
     /* Halt */
     arch_irq_disable();

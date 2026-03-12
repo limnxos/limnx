@@ -58,12 +58,16 @@ kernel/
         percpu.h       ARM64 per-CPU struct (TPIDR_EL1 accessor)
         pte.h          ARM64 VMSAv8-A descriptor bits
         boot.S         ARM64 entry point (QEMU virt)
-        boot.c         ARM64 arch_early_init/arch_late_init stubs
+        arch_init.c    ARM64 arch_early_init/arch_late_init
         serial.c       PL011 UART driver
-        interrupt.c    GIC interrupt stubs
-        timer.c        Generic timer stubs
-        smp.c          Single-core SMP stub
-        main.c         ARM64 minimal kmain
+        gic.c/.h       GICv2 interrupt controller driver
+        interrupt.c    GIC-based IRQ registration + VBAR_EL1 setup
+        timer.c        ARM64 generic timer (CNTPCT_EL0/CNTP_*_EL0)
+        vectors.S      Exception vector table (VBAR_EL1, 16 entries)
+        switch.S       Context switch (callee-saved X19-X30 + NEON)
+        syscall_entry.c SVC dispatch, data/instruction abort handlers
+        smp.c          SMP init (PSCI stub, SGI IPI, TLBI broadcast)
+        main.c         ARM64 kmain (HAL init sequence)
         linker.ld      ARM64 kernel layout (0x40080000)
     mm/
       pmm.c/.h         Physical Memory Manager (bitmap allocator)
