@@ -189,7 +189,7 @@ user/
     agenttest.c        Agent test
     agenttest2.c       Agent intelligence test (chain planning, RAG loss)
     infertest.c        Inference test
-    s25test.c–s78test.c  Stage regression tests (49 files)
+    s25test.c–s96test.c  Stage regression tests (50 files)
 
 initrd/                Files bundled into initrd.tar (includes test.gguf, test_gqa.gguf)
 docs/                  Architecture and stage documentation
@@ -332,6 +332,15 @@ tools/                 Host-side utilities (netstor_server.py, gen_gguf.py)
 | 128 | SYS_TOPIC_RECV | topic_id, buf_ptr, max_len, pub_pid_ptr |
 | 129 | SYS_INFER_SWAP | name_ptr, new_sock_path_ptr |
 | 130 | SYS_ENVIRON | buf_ptr, buf_size |
+| 131 | SYS_SUPER_LIST | buf_ptr, max_count |
+| 132 | SYS_SUPER_STOP | super_id |
+| 133 | SYS_CHOWN | path, uid, gid |
+| 134 | SYS_FCHOWN | fd, uid, gid |
+| 135 | SYS_UMASK | mask |
+| 136 | SYS_GETEUID | - |
+| 137 | SYS_GETEGID | - |
+| 138 | SYS_GETGROUPS | buf_ptr, max_count |
+| 139 | SYS_SETGROUPS | groups_ptr, count |
 
 ## Development Workflow
 

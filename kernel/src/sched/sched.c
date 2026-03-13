@@ -188,9 +188,10 @@ static int local_remove(percpu_t *pc, thread_t *t) {
 /* --- Common schedule body --- */
 
 static void do_switch(thread_t *old, thread_t *next, uint64_t flags) {
-    /* Update TSS RSP0 and kernel stack for this thread */
+    /* Update kernel stack for this thread */
     if (next->stack_base && next->stack_size) {
         uint64_t stack_top = next->stack_base + next->stack_size;
+#if defined(__x86_64__)
         if (smp_active) {
             percpu_t *pc = percpu_get();
             pc->tss.rsp0 = stack_top;
@@ -198,6 +199,9 @@ static void do_switch(thread_t *old, thread_t *next, uint64_t flags) {
         } else {
             arch_set_kernel_stack(stack_top);
         }
+#else
+        arch_set_kernel_stack(stack_top);
+#endif
     }
 
     /* Switch address space if the new thread belongs to a different process.

@@ -30,9 +30,27 @@ int64_t sys_open(uint64_t path_ptr, uint64_t flags,
 
     /* O_CREAT: create file if it doesn't exist */
     if (node_idx < 0 && (flags & O_CREAT)) {
+        /* Check write permission on parent directory */
+        char parent_path[MAX_PATH], base_name[MAX_PATH];
+        vfs_path_split(path, parent_path, base_name);
+        int parent_idx = vfs_resolve_path(parent_path);
+        if (parent_idx >= 0) {
+            vfs_node_t *parent_node = vfs_get_node(parent_idx);
+            if (parent_node && check_file_perm(proc, parent_node, O_WRONLY) != 0)
+                return -EACCES;
+        }
+
         node_idx = vfs_create(path);
         if (node_idx < 0)
             return -1;
+
+        /* Set ownership to creator and apply umask */
+        vfs_node_t *new_node = vfs_get_node(node_idx);
+        if (new_node) {
+            new_node->uid = proc->euid;
+            new_node->gid = proc->egid;
+            new_node->mode = 0666 & ~proc->umask;
+        }
     }
 
     if (node_idx < 0)
@@ -422,6 +440,18 @@ int64_t sys_create(uint64_t path_ptr, uint64_t a2,
         !cap_token_check(proc->pid, CAP_FS_WRITE, path))
         return -EACCES;
 
+    /* Check write permission on parent directory */
+    {
+        char parent_path[MAX_PATH], base_name[MAX_PATH];
+        vfs_path_split(path, parent_path, base_name);
+        int parent_idx = vfs_resolve_path(parent_path);
+        if (parent_idx >= 0) {
+            vfs_node_t *parent_node = vfs_get_node(parent_idx);
+            if (parent_node && check_file_perm(proc, parent_node, O_WRONLY) != 0)
+                return -EACCES;
+        }
+    }
+
     /* fd limit check */
     if (proc->rlimit_nfds > 0 &&
         (uint32_t)count_open_fds(proc) >= proc->rlimit_nfds)
@@ -430,6 +460,16 @@ int64_t sys_create(uint64_t path_ptr, uint64_t a2,
     int node_idx = vfs_create(path);
     if (node_idx < 0)
         return -1;
+
+    /* Set ownership and apply umask */
+    {
+        vfs_node_t *new_node = vfs_get_node(node_idx);
+        if (new_node) {
+            new_node->uid = proc->euid;
+            new_node->gid = proc->egid;
+            new_node->mode = 0666 & ~proc->umask;
+        }
+    }
 
     for (int fd = 0; fd < MAX_FDS; fd++) {
         if (fd_is_free(&proc->fd_table[fd])) {
@@ -469,6 +509,31 @@ int64_t sys_unlink(uint64_t path_ptr, uint64_t a2,
     if (!(proc->capabilities & CAP_FS_WRITE) &&
         !cap_token_check(proc->pid, CAP_FS_WRITE, path))
         return -EACCES;
+
+    /* Check write permission on parent directory + sticky bit */
+    {
+        char parent_path[MAX_PATH], base_name[MAX_PATH];
+        vfs_path_split(path, parent_path, base_name);
+        int parent_idx = vfs_resolve_path(parent_path);
+        if (parent_idx >= 0) {
+            vfs_node_t *parent_node = vfs_get_node(parent_idx);
+            if (parent_node) {
+                if (check_file_perm(proc, parent_node, O_WRONLY) != 0)
+                    return -EACCES;
+                /* Sticky bit: only root, file owner, or dir owner can delete */
+                if (parent_node->mode & VFS_MODE_STICKY) {
+                    int file_idx = vfs_resolve_path(path);
+                    if (file_idx >= 0) {
+                        vfs_node_t *file_node = vfs_get_node(file_idx);
+                        if (file_node && proc->euid != 0 &&
+                            proc->euid != file_node->uid &&
+                            proc->euid != parent_node->uid)
+                            return -EACCES;
+                    }
+                }
+            }
+        }
+    }
 
     return vfs_delete(path);
 }
@@ -520,7 +585,28 @@ int64_t sys_mkdir(uint64_t path_ptr, uint64_t a2,
         !cap_token_check(proc->pid, CAP_FS_WRITE, path))
         return -EACCES;
 
+    /* Check write permission on parent directory */
+    {
+        char parent_path[MAX_PATH], base_name[MAX_PATH];
+        vfs_path_split(path, parent_path, base_name);
+        int parent_idx = vfs_resolve_path(parent_path);
+        if (parent_idx >= 0) {
+            vfs_node_t *parent_node = vfs_get_node(parent_idx);
+            if (parent_node && check_file_perm(proc, parent_node, O_WRONLY) != 0)
+                return -EACCES;
+        }
+    }
+
     int rc = vfs_mkdir(path);
+    if (rc >= 0) {
+        /* Set ownership and apply umask */
+        vfs_node_t *new_node = vfs_get_node(rc);
+        if (new_node) {
+            new_node->uid = proc->euid;
+            new_node->gid = proc->egid;
+            new_node->mode = 0777 & ~proc->umask;
+        }
+    }
     return (rc >= 0) ? 0 : -1;
 }
 
@@ -725,11 +811,11 @@ int64_t sys_chmod(uint64_t path_ptr, uint64_t mode,
     resolve_user_path(proc, raw_path, path);
 
     /* Permission check: only root or file owner can chmod */
-    if (proc->uid != 0) {
+    if (proc->euid != 0) {
         int idx = vfs_resolve_path(path);
         if (idx < 0) return -1;
         vfs_node_t *node = vfs_get_node(idx);
-        if (node && node->uid != proc->uid)
+        if (node && node->uid != proc->euid)
             return -EPERM;
     }
 

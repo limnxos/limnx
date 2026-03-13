@@ -628,7 +628,7 @@ int vfs_chmod(const char *path, uint16_t mode) {
     /* Backward compat: if mode fits in 3 bits, expand to all triplets */
     if (mode <= 7)
         mode = (mode << 6) | (mode << 3) | mode;
-    nodes[idx].mode = mode & 0x1FF;  /* 9-bit rwx triplets */
+    nodes[idx].mode = mode & 0xFFF;  /* 12-bit: setuid/setgid/sticky + rwx */
     /* Sync VFS_FLAG_WRITABLE with owner write bit */
     if (mode & 0x080)  /* owner write = bit 7 */
         nodes[idx].flags |= VFS_FLAG_WRITABLE;
@@ -638,8 +638,31 @@ int vfs_chmod(const char *path, uint16_t mode) {
     if (nodes[idx].disk_inode >= 0) {
         limnfs_inode_t inode;
         limnfs_read_inode((uint32_t)nodes[idx].disk_inode, &inode);
-        inode.mode = mode & 0x1FF;
+        inode.mode = mode & 0xFFF;
         limnfs_write_inode((uint32_t)nodes[idx].disk_inode, &inode);
+    }
+    return 0;
+}
+
+int vfs_chown(int node_idx, uint16_t uid, uint16_t gid) {
+    if (node_idx < 0 || node_idx >= node_count)
+        return -EBADF;
+    if (nodes[node_idx].name[0] == '\0')
+        return -ENOENT;
+
+    nodes[node_idx].uid = uid;
+    nodes[node_idx].gid = gid;
+    /* POSIX: clear setuid/setgid bits on chown */
+    nodes[node_idx].mode &= ~(VFS_MODE_SETUID | VFS_MODE_SETGID);
+
+    /* Persist to disk if LimnFS-backed */
+    if (nodes[node_idx].disk_inode >= 0) {
+        limnfs_inode_t inode;
+        limnfs_read_inode((uint32_t)nodes[node_idx].disk_inode, &inode);
+        inode.uid = uid;
+        inode.gid = gid;
+        inode.mode &= ~(VFS_MODE_SETUID | VFS_MODE_SETGID);
+        limnfs_write_inode((uint32_t)nodes[node_idx].disk_inode, &inode);
     }
     return 0;
 }

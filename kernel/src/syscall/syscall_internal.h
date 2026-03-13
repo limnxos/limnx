@@ -159,6 +159,13 @@ int64_t sys_token_delegate(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_ns_create(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_ns_join(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_ns_setquota(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_chown(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_fchown(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_umask(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_geteuid(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_getegid(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_getgroups(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_setgroups(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
 /* Infer */
 int64_t sys_infer_register(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);

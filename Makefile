@@ -124,7 +124,8 @@ USER_C_TESTS := build/user/tests/mathtest.elf build/user/tests/agenttest.elf \
                 build/user/tests/s72test.elf build/user/tests/s73test.elf \
                 build/user/tests/s74test.elf build/user/tests/s75test.elf \
                 build/user/tests/s76test.elf build/user/tests/s77test.elf \
-                build/user/tests/s78test.elf
+                build/user/tests/s78test.elf \
+                build/user/tests/s96test.elf
 
 USER_C_ELFS := $(USER_C_PROGRAMS) $(USER_C_TESTS)
 
@@ -301,9 +302,10 @@ ARM64_OBJCOPY := aarch64-linux-gnu-objcopy
 endif
 
 ARM64_CFLAGS := -ffreestanding -nostdinc -isystem $(shell $(ARM64_CC) -print-file-name=include 2>/dev/null || echo /dev/null) \
-                -fno-stack-protector -fno-pic \
+                -fno-stack-protector -fno-pic -mno-outline-atomics \
+                -mgeneral-regs-only \
                 -Wall -Wextra -O2 -g -MMD -MP \
-                -Ikernel/src
+                -Ikernel/src -Ikernel/deps
 ARM64_LDFLAGS := -nostdlib -static -T kernel/src/arch/arm64/linker.ld
 
 ARM64_KERNEL := build/arm64/kernel
@@ -315,7 +317,33 @@ ARM64_C_SRCS := kernel/src/arch/arm64/main.c \
                 kernel/src/arch/arm64/timer.c \
                 kernel/src/arch/arm64/smp.c \
                 kernel/src/arch/arm64/gic.c \
-                kernel/src/arch/arm64/syscall_entry.c
+                kernel/src/arch/arm64/syscall_entry.c \
+                kernel/src/arch/arm64/stubs.c \
+                kernel/src/mm/pmm.c kernel/src/mm/vmm.c \
+                kernel/src/mm/kheap.c \
+                kernel/src/sched/thread.c kernel/src/sched/sched.c \
+                kernel/src/sync/mutex.c kernel/src/sync/futex.c \
+                kernel/src/proc/process.c kernel/src/proc/elf.c \
+                kernel/src/fs/vfs.c kernel/src/fs/tar.c \
+                kernel/src/pty/pty.c \
+                kernel/src/syscall/syscall.c \
+                kernel/src/syscall/sys_fs.c \
+                kernel/src/syscall/sys_proc.c \
+                kernel/src/syscall/sys_mm.c \
+                kernel/src/syscall/sys_fd.c \
+                kernel/src/syscall/sys_net.c \
+                kernel/src/syscall/sys_signal.c \
+                kernel/src/syscall/sys_ipc.c \
+                kernel/src/syscall/sys_security.c \
+                kernel/src/syscall/sys_infer.c \
+                kernel/src/syscall/sys_misc.c \
+                kernel/src/ipc/unix_sock.c kernel/src/ipc/eventfd.c \
+                kernel/src/ipc/agent_reg.c kernel/src/ipc/epoll.c \
+                kernel/src/ipc/infer_svc.c kernel/src/ipc/uring.c \
+                kernel/src/ipc/cap_token.c kernel/src/ipc/agent_ns.c \
+                kernel/src/ipc/taskgraph.c kernel/src/ipc/supervisor.c \
+                kernel/src/ipc/pipe.c kernel/src/ipc/shm.c \
+                kernel/src/ipc/pubsub.c
 ARM64_ASM_SRCS := kernel/src/arch/arm64/boot.S \
                   kernel/src/arch/arm64/vectors.S \
                   kernel/src/arch/arm64/switch.S

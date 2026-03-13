@@ -15,6 +15,12 @@ _start:
     and     x0, x0, #0xFF
     cbnz    x0, .Lhalt
 
+    /* Clear alignment check bit in SCTLR_EL1 so unaligned NEON accesses work */
+    mrs     x0, sctlr_el1
+    bic     x0, x0, #(1 << 1)       /* Clear A (alignment check) bit */
+    msr     sctlr_el1, x0
+    isb
+
     /* Set up the stack (grows down from _stack_top) */
     adrp    x0, _stack_top
     add     x0, x0, :lo12:_stack_top

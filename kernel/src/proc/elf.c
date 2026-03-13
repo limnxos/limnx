@@ -35,10 +35,17 @@ int elf_load(const uint8_t *data, uint64_t size, elf_load_result_t *result) {
         pr_err("not ET_EXEC\n");
         return -EINVAL;
     }
+#if defined(__x86_64__)
     if (ehdr->e_machine != EM_X86_64) {
         pr_err("not x86-64\n");
         return -EINVAL;
     }
+#elif defined(__aarch64__)
+    if (ehdr->e_machine != EM_AARCH64) {
+        pr_err("not aarch64\n");
+        return -EINVAL;
+    }
+#endif
 
     /* Validate program header table */
     if (ehdr->e_phoff == 0 || ehdr->e_phnum == 0) {

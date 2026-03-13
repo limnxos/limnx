@@ -145,6 +145,13 @@
 #define SYS_ENVIRON       130
 #define SYS_SUPER_LIST    131
 #define SYS_SUPER_STOP    132
+#define SYS_CHOWN         133
+#define SYS_FCHOWN        134
+#define SYS_UMASK         135
+#define SYS_GETEUID       136
+#define SYS_GETEGID       137
+#define SYS_GETGROUPS     138
+#define SYS_SETGROUPS     139
 
 /* --- Syscall wrappers --- */
 
@@ -691,4 +698,32 @@ long sys_topic_recv(unsigned long topic_id, void *buf, unsigned long max_len, un
 
 long sys_environ(void *buf, unsigned long buf_size) {
     return __syscall2(SYS_ENVIRON, (long)buf, (long)buf_size);
+}
+
+long sys_chown(const char *path, long uid, long gid) {
+    return __syscall3(SYS_CHOWN, (long)path, uid, gid);
+}
+
+long sys_fchown(long fd, long uid, long gid) {
+    return __syscall3(SYS_FCHOWN, fd, uid, gid);
+}
+
+long sys_umask(long mask) {
+    return __syscall1(SYS_UMASK, mask);
+}
+
+long sys_geteuid(void) {
+    return __syscall0(SYS_GETEUID);
+}
+
+long sys_getegid(void) {
+    return __syscall0(SYS_GETEGID);
+}
+
+long sys_getgroups(long max_count, void *buf) {
+    return __syscall2(SYS_GETGROUPS, (long)buf, max_count);
+}
+
+long sys_setgroups(long count, const void *buf) {
+    return __syscall2(SYS_SETGROUPS, (long)buf, count);
 }

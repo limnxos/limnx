@@ -66,17 +66,36 @@ typedef struct mmap_entry {
 } mmap_entry_t;
 
 /* Saved user-mode registers for fork child return */
+#if defined(__x86_64__)
 typedef struct fork_context {
     uint64_t rip, rsp, rflags;
     uint64_t rbp, rbx, r12, r13, r14, r15;
 } fork_context_t;
+#elif defined(__aarch64__)
+typedef struct fork_context {
+    uint64_t elr;       /* exception link register (return PC) */
+    uint64_t sp;        /* user stack pointer */
+    uint64_t spsr;      /* saved program status register */
+    uint64_t x19, x20, x21, x22, x23, x24;
+    uint64_t x25, x26, x27, x28;
+    uint64_t x29;       /* frame pointer */
+} fork_context_t;
+#endif
 
 typedef struct process {
     uint64_t      pid;
     uint64_t      parent_pid;
     uint64_t      pgid;            /* process group ID */
-    uint16_t      uid;             /* user ID, 0 = root */
-    uint16_t      gid;             /* group ID, 0 = root */
+    uint16_t      uid;             /* real user ID, 0 = root */
+    uint16_t      gid;             /* real group ID, 0 = root */
+    uint16_t      euid;            /* effective user ID */
+    uint16_t      egid;            /* effective group ID */
+    uint16_t      suid;            /* saved set-user-ID */
+    uint16_t      sgid;            /* saved set-group-ID */
+    uint16_t      umask;           /* file creation mask (default 0022) */
+    uint8_t       ngroups;         /* number of supplementary groups */
+#define MAX_SUPPL_GROUPS 16
+    uint16_t      groups[MAX_SUPPL_GROUPS]; /* supplementary group IDs */
     uint32_t      capabilities;    /* capability bitmask */
     uint64_t      rlimit_mem_pages;  /* max mmap pages, 0=unlimited */
     uint64_t      rlimit_cpu_ticks;  /* max CPU ticks, 0=unlimited */

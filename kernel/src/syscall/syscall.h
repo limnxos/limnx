@@ -138,7 +138,14 @@
 #define SYS_ENVIRON        130
 #define SYS_SUPER_LIST     131
 #define SYS_SUPER_STOP     132
-#define SYS_NR             133
+#define SYS_CHOWN          133
+#define SYS_FCHOWN         134
+#define SYS_UMASK          135
+#define SYS_GETEUID        136
+#define SYS_GETEGID        137
+#define SYS_GETGROUPS      138
+#define SYS_SETGROUPS      139
+#define SYS_NR             140
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)
@@ -153,7 +160,8 @@
 #define CAP_XNS_TASK  (1 << 9)
 #define CAP_XNS_PUBSUB (1 << 10)
 #define CAP_XNS_INFER  (1 << 11)
-#define CAP_ALL       0xFFF
+#define CAP_CHOWN      (1 << 12)
+#define CAP_ALL       0x1FFF
 
 /* Resource limit IDs */
 #define RLIMIT_MEM   0

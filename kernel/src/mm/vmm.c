@@ -42,14 +42,25 @@ static uint64_t *get_or_create_table(uint64_t *table, uint64_t index, int create
     uint64_t *new_table = (uint64_t *)PHYS_TO_VIRT(new_page);
     zero_page(new_table);
 
-    /* Install entry: present + writable (intermediate entries need both) */
-    table[index] = new_page | PTE_PRESENT | PTE_WRITABLE;
+    /* Install entry: present + table + writable (intermediate entries need all) */
+    table[index] = new_page | PTE_PRESENT | PTE_TABLE | PTE_WRITABLE;
 
     return new_table;
 }
 
 void vmm_init(void) {
+#if defined(__aarch64__)
+    /* ARM64 boots with MMU off — running in physical addressing mode.
+     * Allocate a kernel L0 page table for use by process address spaces.
+     * The kernel itself continues in identity-mapped (hhdm_offset=0) mode. */
+    uint64_t l0_page = pmm_alloc_page();
+    if (l0_page == 0)
+        panic("vmm_init: cannot allocate L0 table");
+    zero_page(PHYS_TO_VIRT(l0_page));
+    pml4_phys = l0_page;
+#else
     pml4_phys = arch_get_address_space() & PTE_ADDR_MASK;
+#endif
     pr_info("PML4 at phys %lx\n", pml4_phys);
     pr_info("Virtual memory manager initialized\n");
 }
@@ -66,8 +77,8 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     uint64_t *pt = get_or_create_table(pd, PD_INDEX(virt), 1);
     if (!pt) return -1;
 
-    /* Set leaf PTE */
-    pt[PT_INDEX(virt)] = (phys & PTE_ADDR_MASK) | flags | PTE_PRESENT;
+    /* Set leaf PTE (PTE_TABLE for ARM64 L3 page desc, PTE_ACCESSED for ARM64 AF) */
+    pt[PT_INDEX(virt)] = (phys & PTE_ADDR_MASK) | flags | PTE_PRESENT | PTE_TABLE | PTE_ACCESSED;
 
     arch_flush_tlb_page(virt);
     return 0;
@@ -191,8 +202,8 @@ int vmm_map_page_in(uint64_t target_pml4_phys, uint64_t virt, uint64_t phys, uin
     }
     uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
 
-    /* Set leaf PTE */
-    pt[PT_INDEX(virt)] = (phys & PTE_ADDR_MASK) | flags | PTE_PRESENT;
+    /* Set leaf PTE (PTE_TABLE for ARM64 L3 page desc, PTE_ACCESSED for ARM64 AF) */
+    pt[PT_INDEX(virt)] = (phys & PTE_ADDR_MASK) | flags | PTE_PRESENT | PTE_TABLE | PTE_ACCESSED;
 
     return 0;
 }

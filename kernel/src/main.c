@@ -914,7 +914,7 @@ void kmain(void) {
             }
             /* Set LIMNX_VERSION env on shell */
             {
-                const char *env_entry = "LIMNX_VERSION=0.95";
+                const char *env_entry = "LIMNX_VERSION=0.96";
                 int elen = 0;
                 while (env_entry[elen]) elen++;
                 for (int i = 0; i <= elen; i++)

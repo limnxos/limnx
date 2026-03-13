@@ -13,10 +13,15 @@
 /* Node flags */
 #define VFS_FLAG_WRITABLE    (1 << 0)
 
-/* Permission bits (simplified UNIX-like) */
+/* Permission bits (UNIX-like) */
 #define VFS_PERM_READ   0x04
 #define VFS_PERM_WRITE  0x02
 #define VFS_PERM_EXEC   0x01
+
+/* Special mode bits (upper nibble of 12-bit mode) */
+#define VFS_MODE_SETUID 0x800   /* set-user-ID on exec */
+#define VFS_MODE_SETGID 0x400   /* set-group-ID on exec */
+#define VFS_MODE_STICKY 0x200   /* sticky bit (restricted delete) */
 
 /* Maximum file size for writable files: 1 GB */
 #define VFS_MAX_FILE_SIZE  (1024ULL * 1024 * 1024)
@@ -115,6 +120,9 @@ int  vfs_rename(const char *old_path, const char *new_path);
 
 /* Chmod — update mode bits and sync VFS_FLAG_WRITABLE */
 int  vfs_chmod(const char *path, uint16_t mode);
+
+/* Chown — update file owner/group */
+int  vfs_chown(int node_idx, uint16_t uid, uint16_t gid);
 
 /* LimnFS mount — load disk tree into VFS */
 int  vfs_mount_limnfs(void);

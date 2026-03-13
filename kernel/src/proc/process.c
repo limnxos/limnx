@@ -187,15 +187,29 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
     {
         process_t *parent = process_lookup(proc->parent_pid);
         proc->pgid = parent ? parent->pgid : proc->pid;
-        /* Inherit uid/gid/caps from parent, or root defaults */
+        /* Inherit uid/gid/euid/egid/caps from parent, or root defaults */
         if (parent) {
             proc->uid = parent->uid;
             proc->gid = parent->gid;
+            proc->euid = parent->euid;
+            proc->egid = parent->egid;
+            proc->suid = parent->suid;
+            proc->sgid = parent->sgid;
+            proc->umask = parent->umask;
             proc->capabilities = parent->capabilities;
+            proc->ngroups = parent->ngroups;
+            for (int g = 0; g < parent->ngroups && g < MAX_SUPPL_GROUPS; g++)
+                proc->groups[g] = parent->groups[g];
         } else {
             proc->uid = 0;
             proc->gid = 0;
+            proc->euid = 0;
+            proc->egid = 0;
+            proc->suid = 0;
+            proc->sgid = 0;
+            proc->umask = 022;
             proc->capabilities = CAP_ALL;
+            proc->ngroups = 0;
         }
     }
 
@@ -375,15 +389,29 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
     {
         process_t *parent = process_lookup(proc->parent_pid);
         proc->pgid = parent ? parent->pgid : proc->pid;
-        /* Inherit uid/gid/caps from parent, or root defaults */
+        /* Inherit uid/gid/euid/egid/caps from parent, or root defaults */
         if (parent) {
             proc->uid = parent->uid;
             proc->gid = parent->gid;
+            proc->euid = parent->euid;
+            proc->egid = parent->egid;
+            proc->suid = parent->suid;
+            proc->sgid = parent->sgid;
+            proc->umask = parent->umask;
             proc->capabilities = parent->capabilities;
+            proc->ngroups = parent->ngroups;
+            for (int g = 0; g < parent->ngroups && g < MAX_SUPPL_GROUPS; g++)
+                proc->groups[g] = parent->groups[g];
         } else {
             proc->uid = 0;
             proc->gid = 0;
+            proc->euid = 0;
+            proc->egid = 0;
+            proc->suid = 0;
+            proc->sgid = 0;
+            proc->umask = 022;
             proc->capabilities = CAP_ALL;
+            proc->ngroups = 0;
         }
     }
 
@@ -540,6 +568,14 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     child->pgid = parent->pgid;
     child->uid = parent->uid;
     child->gid = parent->gid;
+    child->euid = parent->euid;
+    child->egid = parent->egid;
+    child->suid = parent->suid;
+    child->sgid = parent->sgid;
+    child->umask = parent->umask;
+    child->ngroups = parent->ngroups;
+    for (int g = 0; g < parent->ngroups && g < MAX_SUPPL_GROUPS; g++)
+        child->groups[g] = parent->groups[g];
     child->capabilities = parent->capabilities;
     child->rlimit_mem_pages = parent->rlimit_mem_pages;
     child->rlimit_cpu_ticks = parent->rlimit_cpu_ticks;

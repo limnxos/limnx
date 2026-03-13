@@ -164,6 +164,11 @@ int64_t sys_exec(uint64_t path_ptr, uint64_t argv_ptr,
     if (exec_node && !(exec_node->mode & VFS_PERM_EXEC))
         return -1;
 
+    /* Capture setuid/setgid bits before we lose exec_node access */
+    uint16_t exec_mode = exec_node ? exec_node->mode : 0;
+    uint16_t exec_uid = exec_node ? exec_node->uid : 0;
+    uint16_t exec_gid = exec_node ? exec_node->gid : 0;
+
     /* Get file size */
     vfs_stat_t st;
     if (vfs_stat(path, &st) != 0)
@@ -238,6 +243,16 @@ int64_t sys_exec(uint64_t path_ptr, uint64_t argv_ptr,
     child->argv_buf_len = buf_pos;
     for (int i = 0; i < buf_pos; i++)
         child->argv_buf[i] = argv_buf[i];
+
+    /* Apply setuid/setgid bits from executable */
+    if (exec_mode & VFS_MODE_SETUID) {
+        child->euid = exec_uid;
+        child->suid = exec_uid;
+    }
+    if (exec_mode & VFS_MODE_SETGID) {
+        child->egid = exec_gid;
+        child->sgid = exec_gid;
+    }
 
     /* Inherit parent's environment */
     child->env_count = proc->env_count;
@@ -342,6 +357,11 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
     vfs_node_t *exec_node = vfs_get_node(node_idx);
     if (exec_node && !(exec_node->mode & VFS_PERM_EXEC))
         return -EACCES;
+
+    /* Capture setuid/setgid bits before we lose exec_node access */
+    uint16_t exec_mode = exec_node ? exec_node->mode : 0;
+    uint16_t exec_uid = exec_node ? exec_node->uid : 0;
+    uint16_t exec_gid = exec_node ? exec_node->gid : 0;
 
     vfs_stat_t st;
     if (vfs_stat(path, &st) != 0 || st.size == 0)
@@ -510,6 +530,16 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
     proc->signal_depth = 0;
     proc->restart_pending = 0;
 
+    /* Apply setuid/setgid bits from executable */
+    if (exec_mode & VFS_MODE_SETUID) {
+        proc->euid = exec_uid;
+        proc->suid = exec_uid;
+    }
+    if (exec_mode & VFS_MODE_SETGID) {
+        proc->egid = exec_gid;
+        proc->sgid = exec_gid;
+    }
+
     /* Reset security state */
     proc->seccomp_mask = 0;
     proc->seccomp_mask_hi = 0;
@@ -571,30 +601,45 @@ int64_t sys_fork(uint64_t a1, uint64_t a2,
     if (!agent_ns_quota_check(proc->ns_id, NS_QUOTA_PROCS, 1))
         return -ENOMEM;
 
-    /* Read parent's saved user context from kernel stack.
-     * Layout (from syscall_entry.asm, high to low):
+    /* Read parent's saved user context from kernel stack. */
+    uint64_t *kstack_top = (uint64_t *)(t->stack_base + t->stack_size);
+    fork_context_t ctx;
+#if defined(__x86_64__)
+    /* Layout (from syscall_entry.asm, high to low):
      *   kstack_top[-1] = user RSP
      *   kstack_top[-2] = user RIP (RCX)
      *   kstack_top[-3] = user RFLAGS (R11)
-     *   kstack_top[-4] = RBP
-     *   kstack_top[-5] = RBX
-     *   kstack_top[-6] = R12
-     *   kstack_top[-7] = R13
-     *   kstack_top[-8] = R14
-     *   kstack_top[-9] = R15
-     */
-    uint64_t *kstack_top = (uint64_t *)(t->stack_base + t->stack_size);
-    fork_context_t ctx = {
-        .rip    = kstack_top[-2],
-        .rsp    = kstack_top[-1],
-        .rflags = kstack_top[-3],
-        .rbp    = kstack_top[-4],
-        .rbx    = kstack_top[-5],
-        .r12    = kstack_top[-6],
-        .r13    = kstack_top[-7],
-        .r14    = kstack_top[-8],
-        .r15    = kstack_top[-9],
-    };
+     *   kstack_top[-4] = RBP .. kstack_top[-9] = R15 */
+    ctx.rip    = kstack_top[-2];
+    ctx.rsp    = kstack_top[-1];
+    ctx.rflags = kstack_top[-3];
+    ctx.rbp    = kstack_top[-4];
+    ctx.rbx    = kstack_top[-5];
+    ctx.r12    = kstack_top[-6];
+    ctx.r13    = kstack_top[-7];
+    ctx.r14    = kstack_top[-8];
+    ctx.r15    = kstack_top[-9];
+#elif defined(__aarch64__)
+    /* Layout (from ARM64 syscall entry, high to low):
+     *   kstack_top[-1] = user SP (SP_EL0)
+     *   kstack_top[-2] = user PC (ELR_EL1)
+     *   kstack_top[-3] = user PSTATE (SPSR_EL1)
+     *   kstack_top[-4..] = callee-saved x19-x29 */
+    ctx.elr  = kstack_top[-2];
+    ctx.sp   = kstack_top[-1];
+    ctx.spsr = kstack_top[-3];
+    ctx.x19  = kstack_top[-4];
+    ctx.x20  = kstack_top[-5];
+    ctx.x21  = kstack_top[-6];
+    ctx.x22  = kstack_top[-7];
+    ctx.x23  = kstack_top[-8];
+    ctx.x24  = kstack_top[-9];
+    ctx.x25  = kstack_top[-10];
+    ctx.x26  = kstack_top[-11];
+    ctx.x27  = kstack_top[-12];
+    ctx.x28  = kstack_top[-13];
+    ctx.x29  = kstack_top[-14];
+#endif
 
     process_t *child = process_fork(proc, &ctx);
     if (!child) return -1;

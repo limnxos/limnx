@@ -101,12 +101,21 @@ int fd_is_free(const fd_entry_t *e) {
 
 /* --- Permission helper --- */
 
+/* Check if process belongs to a group (primary or supplementary) */
+static int process_in_group(const process_t *proc, uint16_t gid) {
+    if (proc->egid == gid) return 1;
+    for (int i = 0; i < proc->ngroups && i < MAX_SUPPL_GROUPS; i++) {
+        if (proc->groups[i] == gid) return 1;
+    }
+    return 0;
+}
+
 int check_file_perm(const process_t *proc, const vfs_node_t *node, uint8_t access) {
-    if (proc->uid == 0) return 0;  /* root bypasses */
+    if (proc->euid == 0) return 0;  /* root bypasses */
     uint16_t perm_bits;
-    if (proc->uid == node->uid)
+    if (proc->euid == node->uid)
         perm_bits = (node->mode >> 6) & 7;
-    else if (proc->gid == node->gid)
+    else if (process_in_group(proc, node->gid))
         perm_bits = (node->mode >> 3) & 7;
     else
         perm_bits = node->mode & 7;
@@ -263,6 +272,13 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_ENVIRON]          = sys_environ,
     [SYS_SUPER_LIST]       = sys_super_list,
     [SYS_SUPER_STOP]       = sys_super_stop,
+    [SYS_CHOWN]            = sys_chown,
+    [SYS_FCHOWN]           = sys_fchown,
+    [SYS_UMASK]            = sys_umask,
+    [SYS_GETEUID]          = sys_geteuid,
+    [SYS_GETEGID]          = sys_getegid,
+    [SYS_GETGROUPS]        = sys_getgroups,
+    [SYS_SETGROUPS]        = sys_setgroups,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).
@@ -443,12 +459,14 @@ void syscall_set_kernel_stack(uint64_t rsp) {
 void syscall_init(void) {
     /* Set up BSP per-CPU data early so SWAPGS works from the first SYSCALL.
      * arch_syscall_init() will re-initialize this more fully later. */
-    percpu_array[0].self = (uint64_t)&percpu_array[0];
     percpu_array[0].cpu_id = 0;
     percpu_array[0].signal_deliver_pending = 0;
     percpu_array[0].signal_deliver_rdi = 0;
     percpu_array[0].signal_handler_rip = 0;
     percpu_array[0].signal_frame_rsp = 0;
+#if defined(__x86_64__)
+    percpu_array[0].self = (uint64_t)&percpu_array[0];
+#endif
 
     /* Delegate arch-specific setup (MSR programming, GS.base, etc.) */
     arch_syscall_init();

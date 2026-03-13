@@ -106,6 +106,13 @@ long sys_unix_connect(const char *path);
 long sys_agent_register(const char *name);
 long sys_agent_lookup(const char *name, long *pid_out);
 long sys_eventfd(long flags);
+long sys_chown(const char *path, long uid, long gid);
+long sys_fchown(long fd, long uid, long gid);
+long sys_umask(long mask);
+long sys_geteuid(void);
+long sys_getegid(void);
+long sys_getgroups(long max_count, void *buf);
+long sys_setgroups(long count, const void *buf);
 
 /* termios structures (matching kernel termios.h) */
 typedef struct {
@@ -214,7 +221,11 @@ static inline long __set_errno(long ret) {
 #define CAP_FS_WRITE  (1 << 6)
 #define CAP_FS_READ   (1 << 7)
 #define CAP_INFER     (1 << 8)
-#define CAP_ALL       0x1FF
+#define CAP_XNS_TASK  (1 << 9)
+#define CAP_XNS_PUBSUB (1 << 10)
+#define CAP_XNS_INFER  (1 << 11)
+#define CAP_CHOWN      (1 << 12)
+#define CAP_ALL       0x1FFF
 
 /* Resource limit IDs */
 #define RLIMIT_MEM   0

@@ -10,6 +10,7 @@
 
 /* Hardware PTE flags */
 #define PTE_PRESENT      (1ULL << 0)
+#define PTE_TABLE        (0ULL)          /* x86_64: no table/block distinction */
 #define PTE_WRITABLE     (1ULL << 1)
 #define PTE_USER         (1ULL << 2)
 #define PTE_WRITETHROUGH (1ULL << 3)

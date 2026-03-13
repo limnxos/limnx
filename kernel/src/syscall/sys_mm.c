@@ -735,7 +735,7 @@ kill:
         uint64_t guard_start = stack_bottom - PAGE_SIZE;
         if (fault_addr >= guard_start && fault_addr < stack_bottom) {
             serial_printf("[fault] Stack overflow detected (pid %lu, addr=%lx, rip=%lx)\n",
-                proc->pid, fault_addr, frame->rip);
+                proc->pid, fault_addr, FRAME_PC(frame));
         } else {
             int in_guard_gap = 0;
             for (int i = 0; i < MMAP_MAX_ENTRIES; i++) {
@@ -745,14 +745,14 @@ kill:
                 uint64_t gap_end = region_end + PAGE_SIZE;
                 if (fault_addr >= region_end && fault_addr < gap_end) {
                     serial_printf("[fault] Guard page hit (pid %lu, addr=%lx past mmap %lx+%u, rip=%lx)\n",
-                        proc->pid, fault_addr, me->virt_addr, me->num_pages, frame->rip);
+                        proc->pid, fault_addr, me->virt_addr, me->num_pages, FRAME_PC(frame));
                     in_guard_gap = 1;
                     break;
                 }
             }
             if (!in_guard_gap)
                 serial_printf("[fault] Process %lu killed: fault at %lx (err=%lx, rip=%lx)\n",
-                    proc->pid, fault_addr, err_code, frame->rip);
+                    proc->pid, fault_addr, err_code, FRAME_PC(frame));
         }
     }
     process_terminate(t, -11);

@@ -16,7 +16,8 @@
 #define ET_EXEC 2
 
 /* e_machine */
-#define EM_X86_64 0x3E
+#define EM_X86_64   0x3E
+#define EM_AARCH64  0xB7
 
 /* p_type */
 #define PT_LOAD 1

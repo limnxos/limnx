@@ -14,6 +14,9 @@
 /* Descriptor valid bit */
 #define PTE_PRESENT      (1ULL << 0)
 
+/* Table descriptor type bit (bit 1 = 1 for table, 0 for block) */
+#define PTE_TABLE        (1ULL << 1)
+
 /* Access permissions:
  * AP[2:1] in bits [7:6]
  * AP[2]=0 → RW, AP[2]=1 → RO

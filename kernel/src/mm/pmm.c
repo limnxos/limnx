@@ -4,7 +4,9 @@
 #include "mm/pmm.h"
 #include "sync/spinlock.h"
 #include "arch/serial.h"
+#if defined(__x86_64__)
 #include "limine.h"
+#endif
 
 /*
  * Lock ordering: pmm_lock is at level 2.
@@ -29,9 +31,11 @@ static uint16_t *refcounts;
 /* Allocation hint: start scanning from here for faster contiguous alloc */
 static uint64_t alloc_hint = 1;
 
+#if defined(__x86_64__)
 /* Limine requests (referenced from main.c via extern) */
 extern volatile struct limine_memmap_request memmap_request;
 extern volatile struct limine_hhdm_request   hhdm_request;
+#endif
 
 static inline void bitmap_set(uint64_t page) {
     bitmap[page / 8] |= (1 << (page % 8));
@@ -46,6 +50,57 @@ static inline int bitmap_test(uint64_t page) {
 }
 
 void pmm_init(void) {
+#if defined(__aarch64__)
+    /* ARM64 QEMU virt: RAM at 0x40000000, identity-mapped (hhdm_offset=0).
+     * Kernel loaded at 0x40080000. Reserve first 4MB for kernel+stack.
+     * Usable RAM: 0x40400000 to 0x40000000+RAM_SIZE. */
+    hhdm_offset = 0;
+
+    #define ARM64_RAM_BASE  0x40000000ULL
+    #define ARM64_RAM_SIZE  (256ULL * 1024 * 1024)  /* 256 MB (-m 256M) */
+    #define ARM64_KERN_END  0x40400000ULL            /* first 4MB reserved */
+
+    uint64_t highest_addr = ARM64_RAM_BASE + ARM64_RAM_SIZE;
+    total_pages = highest_addr / PAGE_SIZE;
+    bitmap_size = (total_pages + 7) / 8;
+
+    /* Place bitmap at KERN_END */
+    bitmap = (uint8_t *)ARM64_KERN_END;
+
+    /* Mark all pages as used */
+    for (uint64_t i = 0; i < bitmap_size; i++)
+        bitmap[i] = 0xFF;
+    free_pages = 0;
+
+    /* Mark usable region as free: from after bitmap+refcounts to RAM end */
+    uint64_t bm_phys = (uint64_t)bitmap;
+    uint64_t bm_end = (bm_phys + bitmap_size + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+
+    /* Refcount array right after bitmap */
+    uint64_t refcount_bytes = total_pages * sizeof(uint16_t);
+    uint64_t refcount_phys = bm_end;
+    refcounts = (uint16_t *)refcount_phys;
+    uint64_t rc_end = (refcount_phys + refcount_bytes + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+
+    /* Zero all refcounts */
+    for (uint64_t i = 0; i < total_pages; i++)
+        refcounts[i] = 0;
+
+    /* Free pages from after refcounts to RAM end */
+    uint64_t free_start = rc_end / PAGE_SIZE;
+    uint64_t free_end = highest_addr / PAGE_SIZE;
+    for (uint64_t p = free_start; p < free_end; p++) {
+        bitmap_clear(p);
+        free_pages++;
+    }
+
+    /* Set refcount=1 for all used pages */
+    for (uint64_t i = 1; i < total_pages; i++) {
+        if (bitmap_test(i))
+            refcounts[i] = 1;
+    }
+
+#else /* x86_64 */
     if (!hhdm_request.response || !memmap_request.response) {
         panic("missing HHDM or memmap response");
     }
@@ -151,6 +206,7 @@ void pmm_init(void) {
         if (bitmap_test(i))
             refcounts[i] = 1;
     }
+#endif /* __x86_64__ */
 
     pr_info("Total pages: %lu (%lu MB)\n",
         total_pages, (total_pages * PAGE_SIZE) / (1024 * 1024));

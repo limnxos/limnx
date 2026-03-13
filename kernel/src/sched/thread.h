@@ -15,11 +15,25 @@ enum thread_state {
 };
 
 /* Callee-saved registers + return address, saved/restored by context_switch */
+#if defined(__x86_64__)
 typedef struct cpu_context {
     uint64_t r15, r14, r13, r12;
     uint64_t rbx, rbp;
     uint64_t rip;
 } __attribute__((packed)) cpu_context_t;
+#elif defined(__aarch64__)
+/* ARM64: context_switch saves/restores callee-saved regs via SP.
+ * cpu_context_t* is actually just the saved SP value (not a struct pointer).
+ * We define the struct for type compatibility but it's never accessed by field. */
+typedef struct cpu_context {
+    uint64_t x29, x30;     /* FP, LR */
+    uint64_t x27, x28;
+    uint64_t x25, x26;
+    uint64_t x23, x24;
+    uint64_t x21, x22;
+    uint64_t x19, x20;
+} cpu_context_t;
+#endif
 
 /* Forward declaration */
 struct process;
