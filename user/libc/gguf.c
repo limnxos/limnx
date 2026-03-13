@@ -328,7 +328,7 @@ int gguf_load(const char *path, transformer_t *tf, tf_config_t *cfg,
     /* Parse tensor info */
     gguf_tensor_info_t *tensors = (gguf_tensor_info_t *)0;
     uint64_t tensors_bytes = n_tensors * sizeof(gguf_tensor_info_t);
-    uint32_t tensors_pages = (uint32_t)((tensors_bytes + 4095) / 4096);
+    uint32_t tensors_pages = (uint32_t)((tensors_bytes + PAGE_SIZE - 1) / PAGE_SIZE);
     long tensors_addr = sys_mmap(tensors_pages);
     if (tensors_addr <= 0) goto fail;
     tensors = (gguf_tensor_info_t *)tensors_addr;
@@ -384,7 +384,7 @@ int gguf_load(const char *path, transformer_t *tf, tf_config_t *cfg,
     tmp = (uint64_t)cfg->dim * cfg->dim;
     if (tmp > max_weight_size) max_weight_size = tmp;
     /* Need 2x for dequant buffer + transpose buffer */
-    uint32_t temp_pages = (uint32_t)((max_weight_size * 4 * 2 + 4095) / 4096);
+    uint32_t temp_pages = (uint32_t)((max_weight_size * 4 * 2 + PAGE_SIZE - 1) / PAGE_SIZE);
     long temp_addr = sys_mmap(temp_pages);
     if (temp_addr <= 0) {
         transformer_destroy(tf);

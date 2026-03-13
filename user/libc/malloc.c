@@ -2,7 +2,7 @@
 
 #define ALIGNMENT    16
 #define HEADER_SIZE  32  /* sizeof(block_header_t) */
-#define MIN_EXPAND   (4 * 4096)  /* minimum 16KB per mmap expansion */
+#define MIN_EXPAND   (4 * PAGE_SIZE)  /* minimum 16KB per mmap expansion */
 
 typedef struct block_header {
     uint64_t size;               /* total block size including header */
@@ -26,13 +26,13 @@ static block_header_t *heap_expand(uint64_t min_size) {
     if (alloc_size < MIN_EXPAND)
         alloc_size = MIN_EXPAND;
 
-    uint64_t pages = (alloc_size + 4095) / 4096;
+    uint64_t pages = (alloc_size + PAGE_SIZE - 1) / PAGE_SIZE;
     long addr = sys_mmap(pages);
     if (addr <= 0)
         return NULL;
 
     block_header_t *block = (block_header_t *)addr;
-    block->size = pages * 4096;
+    block->size = pages * PAGE_SIZE;
     block->is_free = 1;
     block->next = NULL;
     block->prev = NULL;

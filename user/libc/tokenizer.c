@@ -71,7 +71,7 @@ int bpe_init(bpe_tokenizer_t *bpe, uint32_t vocab_size, uint32_t n_merges) {
     uint64_t pool_bytes = (uint64_t)vocab_size * 32;
     uint64_t total = ptrs_bytes + lens_bytes + merge_bytes + pool_bytes;
 
-    bpe->mmap_pages = (uint32_t)((total + 4095) / 4096);
+    bpe->mmap_pages = (uint32_t)((total + PAGE_SIZE - 1) / PAGE_SIZE);
     long addr = sys_mmap(bpe->mmap_pages);
     if (addr <= 0) return -1;
     bpe->mmap_addr = (uint64_t)addr;

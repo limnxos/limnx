@@ -6,7 +6,7 @@
 #include "ipc/agent_ns.h"
 #include "arch/serial.h"
 #include "arch/timer.h"
-#include "arch/x86_64/idt.h"
+#include "arch/frame.h"
 
 #include "arch/paging.h"
 

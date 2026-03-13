@@ -2,7 +2,7 @@
 #include "klog.h"
 
 #include "pci/pci.h"
-#include "arch/x86_64/io.h"
+#include "arch/io.h"
 #include "arch/serial.h"
 
 static pci_device_t devices[PCI_MAX_DEVICES];

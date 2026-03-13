@@ -2,7 +2,7 @@
 #include "klog.h"
 
 #include "sched/sched.h"
-#include "arch/x86_64/tss.h"
+#include "arch/syscall_arch.h"
 #include "proc/process.h"
 #include "mm/kheap.h"
 #include "mm/vmm.h"
@@ -196,8 +196,7 @@ static void do_switch(thread_t *old, thread_t *next, uint64_t flags) {
             pc->tss.rsp0 = stack_top;
             pc->kernel_rsp = stack_top;
         } else {
-            tss_set_rsp0(stack_top);
-            syscall_set_kernel_stack(stack_top);
+            arch_set_kernel_stack(stack_top);
         }
     }
 

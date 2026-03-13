@@ -4,8 +4,8 @@
 #include "net/virtio_net.h"   /* for VIRTIO_VENDOR_ID and virtqueue structs */
 #include "pci/pci.h"
 #include "arch/interrupt.h"
-#include "arch/x86_64/idt.h"
-#include "arch/x86_64/io.h"
+#include "arch/frame.h"
+#include "arch/io.h"
 #include "mm/pmm.h"
 #include "arch/cpu.h"
 #include "sched/sched.h"

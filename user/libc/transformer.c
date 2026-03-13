@@ -98,7 +98,7 @@ int transformer_init(transformer_t *tf, const tf_config_t *cfg,
         weight_count += nl * head_dim * 2;          /* wq_norm + wk_norm */
 
     uint64_t weight_bytes = weight_count * sizeof(float);
-    tf->weights_mmap_pages = (weight_bytes + 4095) / 4096;
+    tf->weights_mmap_pages = (weight_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
 
     long addr = sys_mmap(tf->weights_mmap_pages);
     if (addr <= 0) return -1;
@@ -110,7 +110,7 @@ int transformer_init(transformer_t *tf, const tf_config_t *cfg,
     if (cfg->swiglu) n_arrays++;    /* w3 */
     if (cfg->qk_norm) n_arrays += 2; /* wq_norm, wk_norm */
     uint64_t ptrs_size = n_arrays * nl * sizeof(float *);
-    tf->ptrs_mmap_pages = (ptrs_size + 4095) / 4096;
+    tf->ptrs_mmap_pages = (ptrs_size + PAGE_SIZE - 1) / PAGE_SIZE;
 
     addr = sys_mmap(tf->ptrs_mmap_pages);
     if (addr <= 0) {
@@ -211,7 +211,7 @@ int transformer_init(transformer_t *tf, const tf_config_t *cfg,
     /* --- KV cache buffer --- */
     uint64_t kv_count = 2 * nl * cfg->max_seq_len * kv_dim;
     uint64_t kv_bytes = kv_count * sizeof(float);
-    tf->kv_mmap_pages = (kv_bytes + 4095) / 4096;
+    tf->kv_mmap_pages = (kv_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
 
     addr = sys_mmap(tf->kv_mmap_pages);
     if (addr <= 0) {
@@ -231,7 +231,7 @@ int transformer_init(transformer_t *tf, const tf_config_t *cfg,
     if (cfg->swiglu)
         scratch_count += hdim;  /* hb2 */
     uint64_t scratch_bytes = scratch_count * sizeof(float);
-    tf->scratch_mmap_pages = (scratch_bytes + 4095) / 4096;
+    tf->scratch_mmap_pages = (scratch_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
 
     addr = sys_mmap(tf->scratch_mmap_pages);
     if (addr <= 0) {

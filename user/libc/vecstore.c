@@ -27,7 +27,7 @@ int vecstore_init(vecstore_t *vs, uint32_t dim) {
     vs->dim = dim;
     vs->capacity = VECSTORE_MAX_ENTRIES;
     vs->count = 0;
-    vs->mmap_pages = (vs->capacity * dim * sizeof(float) + 4095) / 4096;
+    vs->mmap_pages = (vs->capacity * dim * sizeof(float) + PAGE_SIZE - 1) / PAGE_SIZE;
 
     long addr = sys_mmap(vs->mmap_pages);
     if (addr <= 0) {

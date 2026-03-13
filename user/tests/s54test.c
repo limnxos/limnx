@@ -16,7 +16,11 @@ static void check(int ok, const char *name) {
 static void __attribute__((noinline)) trigger_stack_overflow(void) {
     /* Move RSP way below the stack bottom to trigger guard page fault */
     volatile char *p;
+#if defined(__x86_64__)
     __asm__ volatile ("mov %%rsp, %0" : "=r"(p));
+#elif defined(__aarch64__)
+    __asm__ volatile ("mov %0, sp" : "=r"(p));
+#endif
     /* Write 128KB below current RSP — well past the 64KB stack */
     p -= 128 * 1024;
     *p = 42;  /* should fault on the guard page or unmapped region */

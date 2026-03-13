@@ -31,15 +31,7 @@
 #include "arch/serial.h"
 #include "arch/cpu.h"
 #include "arch/paging.h"
-
-/* MSR addresses (x86_64-specific, used by syscall_init) */
-#define MSR_EFER   0xC0000080
-#define MSR_STAR   0xC0000081
-#define MSR_LSTAR  0xC0000082
-#define MSR_SFMASK 0xC0000084
-
-/* Assembly entry point */
-extern void syscall_entry(void);
+#include "arch/syscall_arch.h"
 
 /* --- Shared helpers (non-static, declared in syscall_internal.h) --- */
 
@@ -368,9 +360,9 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
 
             /* User handler: set up signal frame */
             uint64_t *kstack_top = (uint64_t *)(t->stack_base + t->stack_size);
-            uint64_t orig_rip = kstack_top[-2];
-            uint64_t orig_rsp = kstack_top[-1];
-            uint64_t orig_rflags = kstack_top[-3];
+            uint64_t orig_rip = kstack_top[KSTACK_USER_RIP_OFF];
+            uint64_t orig_rsp = kstack_top[KSTACK_USER_RSP_OFF];
+            uint64_t orig_rflags = kstack_top[KSTACK_USER_FLAGS_OFF];
 
             /* Build signal frame on user stack */
             uint64_t frame_rsp = orig_rsp - 32;
@@ -445,40 +437,12 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
 }
 
 void syscall_set_kernel_stack(uint64_t rsp) {
-    /* Update per-CPU kernel_rsp (read by syscall_entry.asm via gs:0).
-     * Read MSR_GS_BASE to get percpu pointer if available,
-     * otherwise fall back to BSP (early boot before syscall_init). */
-    uint64_t gs_base = arch_rdmsr(0xC0000101);
-    if (gs_base) {
-        ((percpu_t *)gs_base)->kernel_rsp = rsp;
-    } else {
-        percpu_array[0].kernel_rsp = rsp;
-    }
+    arch_set_kernel_stack(rsp);
 }
 
 void syscall_init(void) {
-    /* Enable SYSCALL/SYSRET in EFER */
-    uint64_t efer = arch_rdmsr(MSR_EFER);
-    arch_wrmsr(MSR_EFER, efer | 1);  /* bit 0 = SCE (Syscall Enable) */
-
-    /*
-     * STAR MSR:
-     *   [47:32] = kernel CS base for SYSCALL (0x08)
-     *             SYSCALL loads CS=0x08, SS=0x10
-     *   [63:48] = user CS base for SYSRET (0x10)
-     *             SYSRET loads CS=0x10+16=0x20 (|3=0x23), SS=0x10+8=0x18 (|3=0x1B)
-     */
-    uint64_t star = (0x0010ULL << 48) | (0x0008ULL << 32);
-    arch_wrmsr(MSR_STAR, star);
-
-    /* LSTAR = syscall entry point */
-    arch_wrmsr(MSR_LSTAR, (uint64_t)syscall_entry);
-
-    /* SFMASK = bits to clear in RFLAGS on SYSCALL (clear IF to disable interrupts) */
-    arch_wrmsr(MSR_SFMASK, 0x200);
-
     /* Set up BSP per-CPU data early so SWAPGS works from the first SYSCALL.
-     * smp_init() will re-initialize this more fully later. */
+     * arch_syscall_init() will re-initialize this more fully later. */
     percpu_array[0].self = (uint64_t)&percpu_array[0];
     percpu_array[0].cpu_id = 0;
     percpu_array[0].signal_deliver_pending = 0;
@@ -486,12 +450,8 @@ void syscall_init(void) {
     percpu_array[0].signal_handler_rip = 0;
     percpu_array[0].signal_frame_rsp = 0;
 
-    /* Set GS.base directly for kernel mode — percpu_get() reads gs:16.
-     * KERNEL_GS_BASE starts as 0; process_enter_usermode will set it
-     * to percpu before SYSRETQ (so SWAPGS in syscall_entry works). */
-#define MSR_GS_BASE        0xC0000101
-    arch_wrmsr(MSR_GS_BASE, (uint64_t)&percpu_array[0]);
+    /* Delegate arch-specific setup (MSR programming, GS.base, etc.) */
+    arch_syscall_init();
 
-    pr_info("STAR=%lx LSTAR=%lx\n", star, (uint64_t)syscall_entry);
-    pr_info("SYSCALL/SYSRET initialized (SWAPGS ready)\n");
+    pr_info("SYSCALL initialized\n");
 }

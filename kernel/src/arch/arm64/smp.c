@@ -59,3 +59,8 @@ void arch_syscall_init(void) {
      * No MSR setup needed (unlike x86_64 STAR/LSTAR/SFMASK). */
     serial_puts("[svc]  ARM64 syscall init (via VBAR_EL1 vector table)\n");
 }
+
+void arch_set_kernel_stack(uint64_t stack_top) {
+    (void)stack_top;
+    /* ARM64: SP_EL1 is set automatically by exception entry */
+}

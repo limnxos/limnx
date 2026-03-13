@@ -339,7 +339,25 @@ void arch_tlb_shootdown(void) {
     }
 }
 
-/* SYSCALL init wrapper */
+/* SYSCALL init wrapper — called from syscall_init() on BSP */
+#define MSR_GS_BASE 0xC0000101
 void arch_syscall_init(void) {
     setup_syscall_msrs();
+    /* Set GS.base for kernel mode — percpu_get() reads gs:16.
+     * KERNEL_GS_BASE starts as 0; process_enter_usermode will set it
+     * to percpu before SYSRETQ (so SWAPGS in syscall_entry works). */
+    arch_wrmsr(MSR_GS_BASE, (uint64_t)&percpu_array[0]);
+}
+
+void arch_set_kernel_stack(uint64_t stack_top) {
+    tss_set_rsp0(stack_top);
+    /* Update per-CPU kernel_rsp (read by syscall_entry.asm via gs:0).
+     * Read MSR_GS_BASE to get percpu pointer — during early boot before
+     * syscall_init sets GS.base, fall back to BSP percpu directly. */
+    uint64_t gs_base = arch_rdmsr(MSR_GS_BASE);
+    if (gs_base) {
+        ((percpu_t *)gs_base)->kernel_rsp = stack_top;
+    } else {
+        percpu_array[0].kernel_rsp = stack_top;
+    }
 }

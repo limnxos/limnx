@@ -72,15 +72,14 @@ USER_ASM_ELFS := build/user/asm/hello.elf build/user/asm/cat.elf \
                  build/user/asm/udpecho.elf build/user/asm/writetest.elf
 
 # User-space C libc objects
-LIBC_ASM_SRCS := user/libc/start.asm user/libc/syscalls.asm
-LIBC_C_SRCS   := user/libc/string.c user/libc/stdio.c user/libc/math.c user/libc/tensor.c \
+LIBC_C_SRCS   := user/libc/start.c user/libc/syscalls.c \
+                 user/libc/string.c user/libc/stdio.c user/libc/math.c user/libc/tensor.c \
                  user/libc/vecstore.c user/libc/agent.c user/libc/transformer.c \
                  user/libc/tokenizer.c user/libc/gguf.c user/libc/dequant.c \
                  user/libc/http.c user/libc/tooldispatch.c user/libc/malloc.c \
                  user/libc/fio.c
-LIBC_ASM_OBJS := $(patsubst user/libc/%.asm,build/user/libc/%.o,$(LIBC_ASM_SRCS))
 LIBC_C_OBJS   := $(patsubst user/libc/%.c,build/user/libc/%.o,$(LIBC_C_SRCS))
-LIBC_OBJS     := $(LIBC_ASM_OBJS) $(LIBC_C_OBJS)
+LIBC_OBJS     := $(LIBC_C_OBJS)
 
 # User-space C ELF programs (linked with libc)
 # Programs, agents, daemons
@@ -181,10 +180,6 @@ $(USER_ASM_ELFS): build/user/%.elf: build/user/%.o user/linker.ld
 
 # --- User libc objects ---
 
-build/user/libc/%.o: user/libc/%.asm
-	@mkdir -p $(dir $@)
-	$(NASM) -f elf64 $< -o $@
-
 build/user/libc/%.o: user/libc/%.c user/libc/libc.h
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_CFLAGS) -c $< -o $@
@@ -197,8 +192,8 @@ build/user/%.o: user/%.c
 	@mkdir -p $(dir $@)
 	$(CC) $(USER_CFLAGS) -c $< -o $@
 
-build/user/%.elf: build/user/%.o $(LIBC_OBJS) user/libc/linker.ld
-	$(LD) -nostdlib -static -T user/libc/linker.ld $(LIBC_OBJS) $< -o $@
+build/user/%.elf: build/user/%.o $(LIBC_OBJS) user/arch/x86_64/linker.ld
+	$(LD) -nostdlib -static -T user/arch/x86_64/linker.ld $(LIBC_OBJS) $< -o $@
 
 # --- Disk image for virtio-blk ---
 

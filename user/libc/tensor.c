@@ -20,7 +20,7 @@ tensor_t tensor_create(uint32_t rows, uint32_t cols) {
     t.rows = rows;
     t.cols = cols;
     t.size = rows * cols;
-    t.mmap_pages = (t.size * sizeof(float) + 4095) / 4096;
+    t.mmap_pages = (t.size * sizeof(float) + PAGE_SIZE - 1) / PAGE_SIZE;
 
     long addr = sys_mmap(t.mmap_pages);
     if (addr <= 0) {
