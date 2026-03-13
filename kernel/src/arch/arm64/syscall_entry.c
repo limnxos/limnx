@@ -67,22 +67,41 @@ void arm64_sync_handler(arm64_frame_t *frame, uint64_t esr) {
         }
         break;
     }
-    case ESR_EC_DABT_EL0:
-    case ESR_EC_DABT_EL1: {
-        /* Data abort — page fault equivalent */
+    case ESR_EC_DABT_EL0: {
+        /* Data abort from user mode — kill the faulting process */
         uint64_t far;
         __asm__ volatile ("mrs %0, far_el1" : "=r"(far));
-        serial_printf("[fault] Data abort at PC=0x%lx FAR=0x%lx ESR=0x%lx\n",
+        serial_printf("[fault] User data abort at PC=0x%lx FAR=0x%lx ESR=0x%lx\n",
                       frame->elr_el1, far, esr);
-        /* TODO: call page fault handler */
+        /* Force process exit by redirecting to SYS_EXIT(139) */
+        frame->x[8] = 2;   /* SYS_EXIT */
+        frame->x[0] = 139; /* SIGSEGV-like exit code */
+        frame->x[0] = syscall_dispatch(2, 139, 0, 0, 0, 0);
         break;
     }
-    case ESR_EC_IABT_EL0:
+    case ESR_EC_DABT_EL1: {
+        /* Data abort from kernel mode — fatal */
+        uint64_t far;
+        __asm__ volatile ("mrs %0, far_el1" : "=r"(far));
+        serial_printf("[PANIC] Kernel data abort at PC=0x%lx FAR=0x%lx ESR=0x%lx\n",
+                      frame->elr_el1, far, esr);
+        for (;;) __asm__ volatile ("wfi");
+        break;
+    }
+    case ESR_EC_IABT_EL0: {
+        uint64_t far;
+        __asm__ volatile ("mrs %0, far_el1" : "=r"(far));
+        serial_printf("[fault] User instruction abort at PC=0x%lx FAR=0x%lx\n",
+                      frame->elr_el1, far);
+        frame->x[0] = syscall_dispatch(2, 139, 0, 0, 0, 0);
+        break;
+    }
     case ESR_EC_IABT_EL1: {
         uint64_t far;
         __asm__ volatile ("mrs %0, far_el1" : "=r"(far));
-        serial_printf("[fault] Instruction abort at PC=0x%lx FAR=0x%lx\n",
+        serial_printf("[PANIC] Kernel instruction abort at PC=0x%lx FAR=0x%lx\n",
                       frame->elr_el1, far);
+        for (;;) __asm__ volatile ("wfi");
         break;
     }
     default:

@@ -877,6 +877,7 @@ void kmain(void) {
         process_t *sd_proc = load_elf_from_vfs("/serviced.elf");
         if (sd_proc) {
             sd_proc->capabilities = 0xFFF;  /* full caps for service management */
+            sd_proc->daemon = 1;
             pr_info("serviced.elf spawned (pid %lu)\n", sd_proc->pid);
             sched_add(sd_proc->main_thread);
         } else {

@@ -394,7 +394,67 @@ uint64_t vmm_clone_cow(uint64_t parent_cr3,
 
     uint64_t *parent_pml4 = (uint64_t *)PHYS_TO_VIRT(parent_cr3);
 
-    /* Walk user-half only (entries 0-255) */
+#if defined(__aarch64__)
+    /*
+     * ARM64: kernel and user share L0[0]. Walk the deep-copied L1→L2→L3
+     * tables, skipping block descriptors and kernel-shared L3 tables.
+     */
+    uint64_t *kern_l0 = (uint64_t *)PHYS_TO_VIRT(pml4_phys);
+
+    if (parent_pml4[0] & PTE_PRESENT) {
+        uint64_t *parent_l1 = (uint64_t *)PHYS_TO_VIRT(parent_pml4[0] & PTE_ADDR_MASK);
+
+        uint64_t *kern_l1 = NULL;
+        if (kern_l0[0] & PTE_PRESENT)
+            kern_l1 = (uint64_t *)PHYS_TO_VIRT(kern_l0[0] & PTE_ADDR_MASK);
+
+        for (int i1 = 0; i1 < 512; i1++) {
+            if (!(parent_l1[i1] & PTE_PRESENT)) continue;
+            if (!(parent_l1[i1] & PTE_TABLE)) continue;
+
+            uint64_t *parent_l2 = (uint64_t *)PHYS_TO_VIRT(parent_l1[i1] & PTE_ADDR_MASK);
+
+            uint64_t *kern_l2 = NULL;
+            if (kern_l1 && (kern_l1[i1] & PTE_PRESENT) && (kern_l1[i1] & PTE_TABLE))
+                kern_l2 = (uint64_t *)PHYS_TO_VIRT(kern_l1[i1] & PTE_ADDR_MASK);
+
+            for (int i2 = 0; i2 < 512; i2++) {
+                if (!(parent_l2[i2] & PTE_PRESENT)) continue;
+                if (!(parent_l2[i2] & PTE_TABLE)) continue;
+                if (kern_l2 && parent_l2[i2] == kern_l2[i2]) continue;
+
+                uint64_t *parent_pt = (uint64_t *)PHYS_TO_VIRT(parent_l2[i2] & PTE_ADDR_MASK);
+
+                for (int i3 = 0; i3 < 512; i3++) {
+                    uint64_t pte = parent_pt[i3];
+                    if (!(pte & PTE_PRESENT)) continue;
+
+                    uint64_t phys = pte & PTE_ADDR_MASK;
+                    uint64_t flags = pte & ~PTE_ADDR_MASK;
+
+                    uint64_t virt = ((uint64_t)i1 << 30) |
+                                    ((uint64_t)i2 << 21) | ((uint64_t)i3 << 12);
+
+                    if (is_shm_page(virt, mmap_table, mmap_count)) {
+                        vmm_map_page_in(child_cr3, virt, phys,
+                                        flags & ~PTE_PRESENT);
+                        pmm_ref_inc(phys);
+                    } else {
+                        uint64_t cow_flags = (flags & ~PTE_WRITABLE) | PTE_COW;
+                        if (flags & PTE_WRITABLE)
+                            cow_flags |= PTE_WAS_WRITABLE;
+                        parent_pt[i3] = phys | cow_flags;
+
+                        vmm_map_page_in(child_cr3, virt, phys,
+                                        cow_flags & ~PTE_PRESENT);
+                        pmm_ref_inc(phys);
+                    }
+                }
+            }
+        }
+    }
+#else
+    /* x86_64: Walk user-half only (entries 0-255) */
     for (int i4 = 0; i4 < 256; i4++) {
         if (!(parent_pml4[i4] & PTE_PRESENT)) continue;
         uint64_t *parent_pdpt = (uint64_t *)PHYS_TO_VIRT(parent_pml4[i4] & PTE_ADDR_MASK);
@@ -441,6 +501,7 @@ uint64_t vmm_clone_cow(uint64_t parent_cr3,
             }
         }
     }
+#endif
 
     /* Flush parent's TLB since we changed parent PTEs to COW */
     arch_switch_address_space(parent_cr3);
@@ -458,6 +519,72 @@ uint64_t vmm_clone_cow(uint64_t parent_cr3,
 void vmm_free_user_pages(uint64_t cr3) {
     uint64_t *top_pml4 = (uint64_t *)PHYS_TO_VIRT(cr3);
 
+#if defined(__aarch64__)
+    /*
+     * ARM64: kernel and user pages share L0[0]. The process has deep-copied
+     * L1 and L2 tables from the kernel. We must:
+     *  - Skip L2 block descriptors (device MMIO — no PTE_TABLE bit)
+     *  - Skip L2 table entries that point to kernel-shared L3 tables
+     *  - Only walk/free L3 tables created by vmm_map_page_in for user pages
+     *  - Free the deep-copied L1 and L2 pages
+     */
+    uint64_t *kern_l0 = (uint64_t *)PHYS_TO_VIRT(pml4_phys);
+
+    if (top_pml4[0] & PTE_PRESENT) {
+        uint64_t l1_phys = top_pml4[0] & PTE_ADDR_MASK;
+        uint64_t *l1 = (uint64_t *)PHYS_TO_VIRT(l1_phys);
+
+        /* Get kernel L1 for comparison */
+        uint64_t *kern_l1 = NULL;
+        if (kern_l0[0] & PTE_PRESENT)
+            kern_l1 = (uint64_t *)PHYS_TO_VIRT(kern_l0[0] & PTE_ADDR_MASK);
+
+        for (int i1 = 0; i1 < 512; i1++) {
+            if (!(l1[i1] & PTE_PRESENT)) continue;
+            if (!(l1[i1] & PTE_TABLE)) continue;  /* skip L1 block descriptors */
+
+            uint64_t l2_phys = l1[i1] & PTE_ADDR_MASK;
+            uint64_t *l2 = (uint64_t *)PHYS_TO_VIRT(l2_phys);
+
+            /* Get corresponding kernel L2 table for comparison */
+            uint64_t *kern_l2 = NULL;
+            if (kern_l1 && (kern_l1[i1] & PTE_PRESENT) && (kern_l1[i1] & PTE_TABLE))
+                kern_l2 = (uint64_t *)PHYS_TO_VIRT(kern_l1[i1] & PTE_ADDR_MASK);
+
+            for (int i2 = 0; i2 < 512; i2++) {
+                if (!(l2[i2] & PTE_PRESENT)) continue;
+                if (!(l2[i2] & PTE_TABLE)) continue;  /* skip block descriptors */
+
+                /* If this L2 entry matches the kernel's, it's a shared L3 — skip */
+                if (kern_l2 && l2[i2] == kern_l2[i2]) continue;
+
+                uint64_t pt_phys = l2[i2] & PTE_ADDR_MASK;
+                uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pt_phys);
+
+                for (int i3 = 0; i3 < 512; i3++) {
+                    if (pt[i3] & PTE_PRESENT) {
+                        pmm_free_page(pt[i3] & PTE_ADDR_MASK);
+                        pt[i3] = 0;
+                    } else if (swap_is_entry(pt[i3])) {
+                        swap_free_slot(swap_get_slot(pt[i3]));
+                        pt[i3] = 0;
+                    }
+                }
+                pmm_free_page(pt_phys);
+            }
+
+            /* Free the deep-copied L2 page */
+            pmm_free_page(l2_phys);
+        }
+
+        /* Free the deep-copied L1 page */
+        pmm_free_page(l1_phys);
+    }
+
+    /* Free the L0 page itself */
+    pmm_free_page(cr3);
+#else
+    /* x86_64: user half is entries 0-255 */
     for (int i4 = 0; i4 < 256; i4++) {
         if (!(top_pml4[i4] & PTE_PRESENT)) continue;
         uint64_t pdpt_phys = top_pml4[i4] & PTE_ADDR_MASK;
@@ -499,6 +626,7 @@ void vmm_free_user_pages(uint64_t cr3) {
 
     /* Free the PML4 page itself */
     pmm_free_page(cr3);
+#endif
 }
 
 /*
