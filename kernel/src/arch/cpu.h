@@ -17,6 +17,10 @@
  *   arch_set_tls_base(base)  — set thread-local storage base register
  *   arch_get_tls_base()      — get thread-local storage base register
  *   arch_memory_barrier()    — compiler + memory barrier
+ *   arch_breakpoint()        — trigger debug breakpoint exception
+ *   arch_prepare_usermode_return() — prepare CPU state for return to usermode
+ *   arch_enter_usermode(entry, rsp, rdi, rsi) — enter ring 3 (noreturn)
+ *   arch_enter_forked_child(fork_ctx) — enter forked child process (noreturn)
  */
 
 #if defined(__x86_64__)

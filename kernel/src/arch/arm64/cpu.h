@@ -114,6 +114,20 @@ static inline uint64_t arch_get_percpu_base(void) {
     return base;
 }
 
+/* --- Debug --- */
+
+static inline void arch_breakpoint(void) {
+    __asm__ volatile ("brk #0");
+}
+
+/* --- Usermode preparation --- */
+
+static inline void arch_prepare_usermode_return(void) {
+    /* ARM64 does not use SWAPGS — EL0/EL1 have separate stack pointers
+     * and TPIDR_EL1 is not accessible from EL0, so no swap needed.
+     * This is a no-op on ARM64. */
+}
+
 /* --- Usermode entry (ARM64 stubs — future work) --- */
 
 static inline __attribute__((noreturn))

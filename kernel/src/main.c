@@ -515,10 +515,10 @@ void kmain(void) {
     arch_early_init();
     pmm_init();
 
-    /* IDT smoke test: trigger breakpoint (int3) — should print and resume */
-    serial_puts("\n[test] Triggering int3 (breakpoint)...\n");
-    __asm__ volatile ("int3");
-    serial_puts("[test] Resumed after int3 — IDT working!\n");
+    /* IDT smoke test: trigger breakpoint — should print and resume */
+    serial_puts("\n[test] Triggering breakpoint...\n");
+    arch_breakpoint();
+    serial_puts("[test] Resumed after breakpoint — exception handling working!\n");
 
     /* PIT tick check */
     uint64_t ticks = arch_timer_get_ticks();

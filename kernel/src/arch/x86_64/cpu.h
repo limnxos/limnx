@@ -99,6 +99,10 @@ static inline uint64_t arch_get_gs_base(void) {
     return arch_rdmsr(MSR_GS_BASE);
 }
 
+static inline void arch_breakpoint(void) {
+    __asm__ volatile ("int3");
+}
+
 static inline void arch_prepare_usermode_return(void) {
     /* For SYSRETQ: move percpu pointer from GS.base → KERNEL_GS_BASE,
      * clear GS.base so user sees GS=0. The next SWAPGS in syscall_entry

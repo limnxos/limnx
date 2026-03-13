@@ -33,9 +33,11 @@ kernel/
       smp_hal.h        HAL dispatch — SMP init, IPI, TLB shootdown
       percpu.h         HAL dispatch — per-CPU data struct (arch-specific)
       context.h        HAL dispatch — context_switch, thread_trampoline (asm)
-      syscall_arch.h   HAL dispatch — arch_syscall_init
+      syscall_arch.h   HAL dispatch — arch_syscall_init, arch_set_kernel_stack, signal frame offsets
       boot.h           HAL dispatch — arch_early_init, arch_late_init
       pte.h            HAL dispatch — page table entry bit definitions
+      io.h             HAL dispatch — port I/O (x86_64 real, ARM64 no-op stubs)
+      frame.h          HAL dispatch — interrupt_frame_t (arch-specific struct)
       x86_64/
         cpu.h          x86_64 inline: hlt, pause, cli/sti, fxsave, MSR, GS base
         paging.h       x86_64 inline: CR3, invlpg, CR2
@@ -133,6 +135,15 @@ kernel/
 user/
   syscall.inc          Syscall numbers for NASM programs
   linker.ld            Linker script for ASM user programs
+  arch/                Architecture-specific user-space (musl-inspired)
+    x86_64/
+      syscall_arch.h   Inline asm __syscall0–__syscall6 (SYSCALL instruction)
+      crt_arch.h       _start entry point via inline asm
+      linker.ld        Linker script for C user programs
+    arm64/
+      syscall_arch.h   Inline asm __syscall0–__syscall6 (SVC #0)
+      crt_arch.h       _start entry point via inline asm
+      linker.ld        ARM64 linker script for C user programs
   asm/                 Assembly programs
     hello.asm          Hello world (SYS_WRITE + SYS_EXIT)
     cat.asm            File cat (SYS_OPEN + SYS_READ + SYS_WRITE)
@@ -140,8 +151,8 @@ user/
     writetest.asm      File create/write/read test
   libc/                Minimal C runtime for user-space C programs
     libc.h             Unified header (types, syscalls, string, stdio, math)
-    start.asm          _start entry → main() → SYS_EXIT
-    syscalls.asm       C-callable syscall wrappers
+    start.c            Portable entry point (includes arch crt_arch.h, calls main)
+    syscalls.c         Portable C syscall wrappers (uses arch __syscallN macros)
     string.c           memcpy, memset, strlen, strcmp, strncmp, strcpy, strstr
     stdio.c            puts, printf (via SYS_WRITE)
     math.c             fabsf, sqrtf, expf, logf, tanhf, sinf, cosf, sigmoidf
@@ -150,7 +161,6 @@ user/
     dequant.c          GGML dequantization (Q4_0, Q8_0, Q2_K–Q6_K, F16 → F32)
     http.c             HTTP/1.0 parser, formatter, server loop
     tooldispatch.c     Sandboxed tool execution via fork+caps+pipe
-    linker.ld          Linker script for C user programs
   programs/            Programs, agents, daemons
     shell.c            Interactive system shell
     agent.c            AI agent
