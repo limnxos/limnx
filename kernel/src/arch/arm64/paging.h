@@ -6,6 +6,9 @@
 static inline void arch_switch_address_space(uint64_t phys) {
     /* Write to TTBR0_EL1 (user-space page tables) */
     __asm__ volatile ("msr ttbr0_el1, %0" : : "r"(phys));
+    /* Invalidate entire TLB for EL0/EL1 — required after TTBR switch */
+    __asm__ volatile ("tlbi vmalle1is");
+    __asm__ volatile ("dsb sy");
     __asm__ volatile ("isb");
 }
 

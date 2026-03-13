@@ -211,7 +211,7 @@ $(INITRD): $(USER_ELFS) $(wildcard initrd/*)
 	@mkdir -p build/initrd_staging
 	cp initrd/* build/initrd_staging/ 2>/dev/null || true
 	cp $(USER_ELFS) build/initrd_staging/
-	tar cf $@ -C build/initrd_staging .
+	COPYFILE_DISABLE=1 tar cf $@ --format ustar --no-mac-metadata -C build/initrd_staging .
 	rm -rf build/initrd_staging
 
 $(KERNEL): $(ALL_OBJS)
@@ -346,27 +346,72 @@ ARM64_C_SRCS := kernel/src/arch/arm64/main.c \
                 kernel/src/ipc/pubsub.c
 ARM64_ASM_SRCS := kernel/src/arch/arm64/boot.S \
                   kernel/src/arch/arm64/vectors.S \
-                  kernel/src/arch/arm64/switch.S
+                  kernel/src/arch/arm64/switch.S \
+                  kernel/src/arch/arm64/usermode.S
 
 ARM64_C_OBJS := $(patsubst kernel/src/%.c,build/arm64/%.o,$(ARM64_C_SRCS))
 ARM64_ASM_OBJS := $(patsubst kernel/src/%.S,build/arm64/%.o,$(ARM64_ASM_SRCS))
 ARM64_OBJS := $(ARM64_C_OBJS) $(ARM64_ASM_OBJS)
 
+# ARM64 user-space flags (NEON enabled for float math, no -mgeneral-regs-only)
+ARM64_USER_CFLAGS := -ffreestanding -nostdinc -isystem $(shell $(ARM64_CC) -print-file-name=include 2>/dev/null || echo /dev/null) \
+                     -fno-stack-protector -fno-pic -mno-outline-atomics \
+                     -Wall -Wextra -O2 -g -MMD -MP -Iuser
+
+# ARM64 user libc objects
+ARM64_LIBC_C_OBJS := $(patsubst user/libc/%.c,build/arm64/user/libc/%.o,$(LIBC_C_SRCS))
+
+# ARM64 user programs — shell only for now (minimal set for boot)
+ARM64_USER_C_PROGRAMS := build/arm64/user/programs/shell.elf
+ARM64_USER_C_ELFS := $(ARM64_USER_C_PROGRAMS)
+
+# ARM64 initrd
+ARM64_INITRD := build/arm64/initrd.tar
+
 .PHONY: arm64 arm64-run arm64-clean
 
-# ARM64 C compilation
+# ARM64 kernel C compilation
 build/arm64/%.o: kernel/src/%.c
 	@mkdir -p $(dir $@)
 	$(ARM64_CC) $(ARM64_CFLAGS) -c $< -o $@
 
-# ARM64 assembly
+# ARM64 kernel assembly
 build/arm64/%.o: kernel/src/%.S
 	@mkdir -p $(dir $@)
 	$(ARM64_CC) $(ARM64_CFLAGS) -c $< -o $@
 
-# ARM64 kernel ELF
-$(ARM64_KERNEL): $(ARM64_OBJS)
-	$(ARM64_LD) $(ARM64_LDFLAGS) $(ARM64_OBJS) -o $@
+# ARM64 user libc compilation
+build/arm64/user/libc/%.o: user/libc/%.c
+	@mkdir -p $(dir $@)
+	$(ARM64_CC) $(ARM64_USER_CFLAGS) -c $< -o $@
+
+# ARM64 user program compilation
+build/arm64/user/programs/%.o: user/programs/%.c
+	@mkdir -p $(dir $@)
+	$(ARM64_CC) $(ARM64_USER_CFLAGS) -c $< -o $@
+
+build/arm64/user/tests/%.o: user/tests/%.c
+	@mkdir -p $(dir $@)
+	$(ARM64_CC) $(ARM64_USER_CFLAGS) -c $< -o $@
+
+# ARM64 user program linking
+build/arm64/user/%.elf: build/arm64/user/%.o $(ARM64_LIBC_C_OBJS) user/arch/arm64/linker.ld
+	$(ARM64_LD) -nostdlib -static -T user/arch/arm64/linker.ld $(ARM64_LIBC_C_OBJS) $< -o $@
+
+# ARM64 initrd
+$(ARM64_INITRD): $(ARM64_USER_C_ELFS)
+	@mkdir -p build/arm64/initrd_staging
+	cp $(ARM64_USER_C_ELFS) build/arm64/initrd_staging/
+	COPYFILE_DISABLE=1 tar cf $@ --format ustar --no-mac-metadata -C build/arm64/initrd_staging .
+	rm -rf build/arm64/initrd_staging
+
+# Convert initrd.tar to a linkable object with _initrd_start/_initrd_end symbols
+build/arm64/initrd.o: $(ARM64_INITRD)
+	cd build/arm64 && $(ARM64_LD) -r -b binary -o initrd.o initrd.tar
+
+# ARM64 kernel ELF (with embedded initrd linked in)
+$(ARM64_KERNEL): $(ARM64_OBJS) build/arm64/initrd.o
+	$(ARM64_LD) $(ARM64_LDFLAGS) $(ARM64_OBJS) build/arm64/initrd.o -o $@
 
 arm64: $(ARM64_KERNEL)
 	@echo "ARM64 kernel built: $(ARM64_KERNEL)"

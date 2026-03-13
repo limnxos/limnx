@@ -13,6 +13,14 @@
 /* PML4 physical address, read from CR3 */
 static uint64_t pml4_phys;
 
+/* ARM64 leaf PTEs need extra bits: page descriptor (TABLE), AF, shareability.
+ * x86_64 needs TABLE (no-op = 0) and ACCESSED (bit 5, different from ARM64). */
+#if defined(__aarch64__)
+#define LEAF_PTE_ARCH_BITS  (PTE_TABLE | PTE_ACCESSED | PTE_SH_ISH)
+#else
+#define LEAF_PTE_ARCH_BITS  (PTE_TABLE | PTE_ACCESSED)
+#endif
+
 /* Zero a page-table page (512 entries of 8 bytes) */
 static void zero_page(void *page) {
     uint64_t *p = (uint64_t *)page;
@@ -27,6 +35,12 @@ static void zero_page(void *page) {
  */
 static uint64_t *get_or_create_table(uint64_t *table, uint64_t index, int create) {
     if (table[index] & PTE_PRESENT) {
+#if defined(__aarch64__)
+        /* On ARM64, check for block descriptor (bit 1 = 0).
+         * Block descriptors at L1/L2 can't be traversed as tables. */
+        if (!(table[index] & PTE_TABLE))
+            return NULL;  /* block descriptor — can't descend */
+#endif
         uint64_t next_phys = table[index] & PTE_ADDR_MASK;
         return (uint64_t *)PHYS_TO_VIRT(next_phys);
     }
@@ -50,14 +64,86 @@ static uint64_t *get_or_create_table(uint64_t *table, uint64_t index, int create
 
 void vmm_init(void) {
 #if defined(__aarch64__)
-    /* ARM64 boots with MMU off — running in physical addressing mode.
-     * Allocate a kernel L0 page table for use by process address spaces.
-     * The kernel itself continues in identity-mapped (hhdm_offset=0) mode. */
-    uint64_t l0_page = pmm_alloc_page();
-    if (l0_page == 0)
-        panic("vmm_init: cannot allocate L0 table");
-    zero_page(PHYS_TO_VIRT(l0_page));
-    pml4_phys = l0_page;
+    /* ARM64: boot.S set up 1GB block descriptors for identity mapping.
+     * These are incompatible with vmm_map_page_in (which needs full L0→L3
+     * table hierarchy for 4KB page granularity).
+     *
+     * Rebuild the kernel page tables with proper 4-level hierarchy:
+     *   L0[0] → L1 table
+     *   L1[0] → L2 table (device MMIO range 0x00000000-0x3FFFFFFF)
+     *   L1[1] → L2 table (RAM range 0x40000000-0x7FFFFFFF)
+     *   L2 entries → L3 tables → 4KB page descriptors
+     *
+     * We use PMM to allocate the new tables, then switch TTBR0. */
+    {
+        #include "arch/arm64/pte.h"
+
+        #define ARM64_RAM_BASE  0x40000000ULL
+        #define ARM64_RAM_SIZE  (256ULL * 1024 * 1024)  /* 256MB */
+        #define ARM64_KERN_END  (ARM64_RAM_BASE + ARM64_RAM_SIZE)
+        /* Device MMIO ranges we need to map */
+        #define ARM64_UART_BASE 0x09000000ULL
+        #define ARM64_GIC_BASE  0x08000000ULL
+
+        /* Allocate L0 table */
+        uint64_t l0_phys = pmm_alloc_page();
+        uint64_t *l0 = (uint64_t *)PHYS_TO_VIRT(l0_phys);
+        zero_page(l0);
+
+        /* Allocate L1 table for L0[0] (covers 0x0-0x7FFFFFFFFF) */
+        uint64_t l1_phys = pmm_alloc_page();
+        uint64_t *l1 = (uint64_t *)PHYS_TO_VIRT(l1_phys);
+        zero_page(l1);
+        l0[0] = l1_phys | PTE_PRESENT | PTE_TABLE;
+
+        /* L1[0]: device range 0x00000000-0x3FFFFFFF — allocate L2 table */
+        uint64_t l2_dev_phys = pmm_alloc_page();
+        uint64_t *l2_dev = (uint64_t *)PHYS_TO_VIRT(l2_dev_phys);
+        zero_page(l2_dev);
+        l1[0] = l2_dev_phys | PTE_PRESENT | PTE_TABLE;
+
+        /* Map device MMIO as 2MB blocks in L2 (block desc: bit 0=1, bit 1=0)
+         * GIC:  0x08000000 → L2 index 64
+         * UART: 0x09000000 → L2 index 72 */
+        #define L2_BLOCK_DEV(addr) \
+            ((addr) | PTE_PRESENT | PTE_ATTRINDX_DEVICE | PTE_ACCESSED | PTE_SH_ISH)
+        l2_dev[ARM64_GIC_BASE >> 21] = L2_BLOCK_DEV(ARM64_GIC_BASE);
+        l2_dev[(ARM64_GIC_BASE + 0x200000) >> 21] = L2_BLOCK_DEV(ARM64_GIC_BASE + 0x200000);
+        l2_dev[ARM64_UART_BASE >> 21] = L2_BLOCK_DEV(ARM64_UART_BASE);
+
+        /* L1[1]: RAM range 0x40000000-0x7FFFFFFF — allocate L2 table */
+        uint64_t l2_ram_phys = pmm_alloc_page();
+        uint64_t *l2_ram = (uint64_t *)PHYS_TO_VIRT(l2_ram_phys);
+        zero_page(l2_ram);
+        l1[1] = l2_ram_phys | PTE_PRESENT | PTE_TABLE;
+
+        /* Map RAM using full L3 page tables (4KB pages) so vmm_map_page
+         * and vmm_map_page_in can create/modify individual page entries.
+         * 256MB = 128 × 2MB regions, each needing one L3 table (512 × 4KB). */
+        uint64_t num_2mb_regions = ARM64_RAM_SIZE / (2ULL * 1024 * 1024);
+        for (uint64_t i = 0; i < num_2mb_regions; i++) {
+            uint64_t l3_phys = pmm_alloc_page();
+            if (l3_phys == 0) {
+                pr_err("out of memory for L3 table %lu\n", i);
+                break;
+            }
+            uint64_t *l3 = (uint64_t *)PHYS_TO_VIRT(l3_phys);
+            /* Fill all 512 L3 entries as identity-mapped 4KB pages */
+            for (int j = 0; j < 512; j++) {
+                uint64_t pa = ARM64_RAM_BASE + i * (2ULL * 1024 * 1024) + j * 4096;
+                l3[j] = pa | PTE_PRESENT | PTE_TABLE  /* L3 page desc: bits [1:0]=0b11 */
+                       | PTE_ATTRINDX_NORMAL | PTE_ACCESSED | PTE_SH_ISH;
+            }
+            l2_ram[i] = l3_phys | PTE_PRESENT | PTE_TABLE;  /* L2 table desc */
+        }
+
+        /* Switch to new page tables */
+        pml4_phys = l0_phys;
+        __asm__ volatile ("msr ttbr0_el1, %0" : : "r"(l0_phys));
+        __asm__ volatile ("tlbi vmalle1is");
+        __asm__ volatile ("dsb sy");
+        __asm__ volatile ("isb");
+    }
 #else
     pml4_phys = arch_get_address_space() & PTE_ADDR_MASK;
 #endif
@@ -78,7 +164,7 @@ int vmm_map_page(uint64_t virt, uint64_t phys, uint64_t flags) {
     if (!pt) return -1;
 
     /* Set leaf PTE (PTE_TABLE for ARM64 L3 page desc, PTE_ACCESSED for ARM64 AF) */
-    pt[PT_INDEX(virt)] = (phys & PTE_ADDR_MASK) | flags | PTE_PRESENT | PTE_TABLE | PTE_ACCESSED;
+    pt[PT_INDEX(virt)] = (phys & PTE_ADDR_MASK) | flags | PTE_PRESENT | LEAF_PTE_ARCH_BITS;
 
     arch_flush_tlb_page(virt);
     return 0;
@@ -136,13 +222,60 @@ uint64_t vmm_create_address_space(void) {
     uint64_t *new_pml4 = (uint64_t *)PHYS_TO_VIRT(new_pml4_phys);
     uint64_t *kern_pml4 = (uint64_t *)PHYS_TO_VIRT(pml4_phys);
 
-    /* Zero user half (entries 0–255) */
-    for (int i = 0; i < 256; i++)
+#if defined(__aarch64__)
+    /* ARM64: kernel runs identity-mapped in the low half (0x40080000).
+     * Each process needs its own L1/L2 tables so vmm_map_page_in can
+     * create L3 page tables for user pages without corrupting shared tables.
+     *
+     * We deep-copy the kernel's L1 and L2 tables. L2 entries are 2MB block
+     * descriptors that don't need further splitting for kernel mappings.
+     * vmm_map_page_in creates L3 tables in empty L2 slots for user pages. */
+    for (int i = 1; i < 512; i++)
         new_pml4[i] = 0;
 
-    /* Copy kernel half (entries 256–511) */
+    /* Deep-copy L0[0] → L1 → L2 tables */
+    if (kern_pml4[0] & PTE_PRESENT) {
+        uint64_t *kern_l1 = (uint64_t *)PHYS_TO_VIRT(kern_pml4[0] & PTE_ADDR_MASK);
+
+        uint64_t new_l1_phys = pmm_alloc_page();
+        if (new_l1_phys == 0) { pmm_free_page(new_pml4_phys); return 0; }
+        uint64_t *new_l1 = (uint64_t *)PHYS_TO_VIRT(new_l1_phys);
+
+        for (int i = 0; i < 512; i++) {
+            if (!(kern_l1[i] & PTE_PRESENT)) {
+                new_l1[i] = 0;
+                continue;
+            }
+            /* Check if L1 entry is a table descriptor (bit 1 set) */
+            if (kern_l1[i] & PTE_TABLE) {
+                /* Deep-copy L2 table */
+                uint64_t *kern_l2 = (uint64_t *)PHYS_TO_VIRT(kern_l1[i] & PTE_ADDR_MASK);
+                uint64_t new_l2_phys = pmm_alloc_page();
+                if (new_l2_phys == 0) {
+                    pmm_free_page(new_l1_phys);
+                    pmm_free_page(new_pml4_phys);
+                    return 0;
+                }
+                uint64_t *new_l2 = (uint64_t *)PHYS_TO_VIRT(new_l2_phys);
+                for (int j = 0; j < 512; j++)
+                    new_l2[j] = kern_l2[j];  /* Copy 2MB block descs as-is */
+                new_l1[i] = new_l2_phys | (kern_l1[i] & ~PTE_ADDR_MASK);
+            } else {
+                /* Block descriptor — copy as-is (shouldn't happen with new vmm_init) */
+                new_l1[i] = kern_l1[i];
+            }
+        }
+        new_pml4[0] = new_l1_phys | (kern_pml4[0] & ~PTE_ADDR_MASK);
+    } else {
+        new_pml4[0] = 0;
+    }
+#else
+    /* x86_64: user half (entries 0-255), kernel half (entries 256-511) */
+    for (int i = 0; i < 256; i++)
+        new_pml4[i] = 0;
     for (int i = 256; i < 512; i++)
         new_pml4[i] = kern_pml4[i];
+#endif
 
     return new_pml4_phys;
 }
@@ -154,8 +287,9 @@ uint64_t vmm_create_address_space(void) {
 int vmm_map_page_in(uint64_t target_pml4_phys, uint64_t virt, uint64_t phys, uint64_t flags) {
     uint64_t *pml4 = (uint64_t *)PHYS_TO_VIRT(target_pml4_phys);
 
-    /* For user-space mappings, intermediate entries also need PTE_USER */
-    uint64_t intermediate_flags = PTE_PRESENT | PTE_WRITABLE;
+    /* For user-space mappings, intermediate entries also need PTE_USER.
+     * ARM64 intermediate (table) descriptors need PTE_TABLE bit set. */
+    uint64_t intermediate_flags = PTE_PRESENT | PTE_TABLE | PTE_WRITABLE;
     if (flags & PTE_USER)
         intermediate_flags |= PTE_USER;
 
@@ -203,7 +337,7 @@ int vmm_map_page_in(uint64_t target_pml4_phys, uint64_t virt, uint64_t phys, uin
     uint64_t *pt = (uint64_t *)PHYS_TO_VIRT(pd[pd_idx] & PTE_ADDR_MASK);
 
     /* Set leaf PTE (PTE_TABLE for ARM64 L3 page desc, PTE_ACCESSED for ARM64 AF) */
-    pt[PT_INDEX(virt)] = (phys & PTE_ADDR_MASK) | flags | PTE_PRESENT | PTE_TABLE | PTE_ACCESSED;
+    pt[PT_INDEX(virt)] = (phys & PTE_ADDR_MASK) | flags | PTE_PRESENT | LEAF_PTE_ARCH_BITS;
 
     return 0;
 }

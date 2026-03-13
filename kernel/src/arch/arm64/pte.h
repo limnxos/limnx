@@ -26,9 +26,17 @@
 #define PTE_USER         (1ULL << 6)   /* AP[1]=1, EL0 access */
 #define PTE_READONLY     (1ULL << 7)   /* AP[2]=1, read-only */
 
-/* Memory attributes (AttrIndx in bits [4:2]) */
-#define PTE_WRITETHROUGH (1ULL << 3)   /* AttrIndx hint */
-#define PTE_NOCACHE      (1ULL << 4)   /* AttrIndx for device memory */
+/* Memory attributes (AttrIndx in bits [4:2]):
+ * Maps to MAIR_EL1 indices set in boot.S:
+ *   Index 0 = Normal WB (0xFF)
+ *   Index 1 = Device-nGnRnE (0x00) */
+#define PTE_ATTRINDX_NORMAL  (0ULL << 2)  /* AttrIndx=0: Normal memory */
+#define PTE_ATTRINDX_DEVICE  (1ULL << 2)  /* AttrIndx=1: Device memory */
+#define PTE_WRITETHROUGH (1ULL << 3)   /* AttrIndx hint (compat) */
+#define PTE_NOCACHE      (1ULL << 4)   /* AttrIndx for device memory (compat) */
+
+/* Shareability (bits [9:8]) */
+#define PTE_SH_ISH       (3ULL << 8)  /* Inner Shareable */
 
 /* Access flag (bit 10) */
 #define PTE_ACCESSED     (1ULL << 10)

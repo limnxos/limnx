@@ -14,6 +14,7 @@
  */
 
 #include "arch/serial.h"
+#include "arch/percpu.h"
 #include <stdint.h>
 
 /* ESR_EL1 exception class field */
@@ -55,6 +56,15 @@ void arm64_sync_handler(arm64_frame_t *frame, uint64_t esr) {
             (long)frame->x[2], (long)frame->x[3],
             (long)frame->x[4]);
         frame->x[0] = (uint64_t)ret;
+
+        /* Check for pending signal delivery (mirrors x86_64 syscall_entry.asm) */
+        percpu_t *pc = percpu_get();
+        if (pc->signal_deliver_pending) {
+            pc->signal_deliver_pending = 0;
+            frame->x[0] = pc->signal_deliver_rdi;   /* signal number in x0 */
+            frame->elr_el1 = pc->signal_handler_rip; /* redirect PC to handler */
+            frame->sp_el0 = pc->signal_frame_rsp;    /* redirect SP to signal frame */
+        }
         break;
     }
     case ESR_EC_DABT_EL0:
@@ -82,11 +92,34 @@ void arm64_sync_handler(arm64_frame_t *frame, uint64_t esr) {
     }
 }
 
+/* Forward declarations */
+extern uint32_t gic_ack(void);
+extern void gic_eoi(uint32_t irq);
+extern void sched_tick(void);
+
+#define GIC_TIMER_NS_EL1 30
+
 /*
  * IRQ handler — dispatches GIC interrupts
  */
 void arm64_irq_handler(arm64_frame_t *frame) {
     (void)frame;
-    /* TODO: gic_ack() → dispatch → gic_eoi() */
-    serial_puts("[irq]  ARM64 IRQ received (stub)\n");
+    uint32_t irq = gic_ack();
+
+    if (irq == GIC_TIMER_NS_EL1) {
+        /* Timer interrupt — trigger preemptive scheduling */
+        /* Re-arm timer (10ms) */
+        extern void arch_timer_enable_sched(void);
+        uint64_t freq;
+        __asm__ volatile ("mrs %0, cntfrq_el0" : "=r"(freq));
+        uint64_t tval = freq / 100;  /* 10ms */
+        __asm__ volatile ("msr cntp_tval_el0, %0" : : "r"(tval));
+
+        gic_eoi(irq);
+        sched_tick();
+    } else if (irq < 1020) {
+        /* Other interrupt */
+        gic_eoi(irq);
+    }
+    /* irq >= 1020: spurious, no EOI needed */
 }

@@ -8,7 +8,9 @@ __asm__(
     "_start:\n"
     "    mov x29, #0\n"             /* clear frame pointer */
     "    mov x30, #0\n"             /* clear link register */
-    "    and sp, sp, #-16\n"        /* 16-byte align stack */
+    "    mov x2, sp\n"              /* can't AND sp directly */
+    "    and x2, x2, #-16\n"        /* 16-byte align */
+    "    mov sp, x2\n"
     "    bl __libc_start\n"         /* __libc_start(argc=x0, argv=x1) */
     "    mov x8, #2\n"             /* SYS_EXIT = 2 */
     "    svc #0\n"

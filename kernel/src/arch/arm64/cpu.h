@@ -128,23 +128,52 @@ static inline void arch_prepare_usermode_return(void) {
      * This is a no-op on ARM64. */
 }
 
-/* --- Usermode entry (ARM64 stubs — future work) --- */
+/* --- Usermode entry --- */
+
+/* Defined in usermode.S */
+extern void arch_enter_usermode_asm(uint64_t entry, uint64_t sp,
+                                     uint64_t argc, uint64_t argv)
+    __attribute__((noreturn));
+extern void arch_enter_forked_child_asm(const void *fork_ctx_ptr)
+    __attribute__((noreturn));
 
 static inline __attribute__((noreturn))
 void arch_enter_usermode(uint64_t entry, uint64_t rsp,
                           uint64_t rdi, uint64_t rsi) {
-    (void)entry; (void)rsp; (void)rdi; (void)rsi;
-    /* TODO: set ELR_EL1=entry, SP_EL0=rsp, SPSR_EL1, then ERET */
-    for (;;) arch_halt();
+    arch_enter_usermode_asm(entry, rsp, rdi, rsi);
     __builtin_unreachable();
 }
 
 static inline __attribute__((noreturn))
 void arch_enter_forked_child(const void *fork_ctx_ptr) {
-    (void)fork_ctx_ptr;
-    /* TODO: restore regs from fork context, then ERET */
-    for (;;) arch_halt();
+    arch_enter_forked_child_asm(fork_ctx_ptr);
     __builtin_unreachable();
+}
+
+/* --- Cache maintenance --- */
+
+/* Ensure data written to a page is visible to the instruction fetch unit.
+ * ARM64 has non-coherent I/D caches: must clean D-cache and invalidate
+ * I-cache before executing from recently-written pages. */
+static inline void arch_sync_icache_range(uint64_t start, uint64_t size) {
+    uint64_t end = start + size;
+    uint64_t line;
+    /* Clean data cache to Point of Unification */
+    for (line = start & ~63ULL; line < end; line += 64)
+        __asm__ volatile ("dc cvau, %0" : : "r"(line));
+    __asm__ volatile ("dsb ish");
+    /* Invalidate instruction cache to Point of Unification */
+    for (line = start & ~63ULL; line < end; line += 64)
+        __asm__ volatile ("ic ivau, %0" : : "r"(line));
+    __asm__ volatile ("dsb ish");
+    __asm__ volatile ("isb");
+}
+
+/* Flush entire I-cache (simpler, used before entering new user process) */
+static inline void arch_flush_icache_all(void) {
+    __asm__ volatile ("ic iallu");
+    __asm__ volatile ("dsb ish");
+    __asm__ volatile ("isb");
 }
 
 /* --- Memory barrier --- */
