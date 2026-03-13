@@ -343,9 +343,15 @@ ARM64_C_SRCS := kernel/src/arch/arm64/main.c \
                 kernel/src/ipc/cap_token.c kernel/src/ipc/agent_ns.c \
                 kernel/src/ipc/taskgraph.c kernel/src/ipc/supervisor.c \
                 kernel/src/ipc/pipe.c kernel/src/ipc/shm.c \
-                kernel/src/ipc/pubsub.c
+                kernel/src/ipc/pubsub.c \
+                kernel/src/blk/virtio_blk_mmio.c \
+                kernel/src/blk/bcache.c kernel/src/blk/limnfs.c \
+                kernel/src/net/virtio_net_mmio.c kernel/src/net/net.c \
+                kernel/src/net/tcp.c kernel/src/net/netstor.c \
+                kernel/src/mm/swap.c
 ARM64_ASM_SRCS := kernel/src/arch/arm64/boot.S \
                   kernel/src/arch/arm64/vectors.S \
+                  kernel/src/arch/arm64/ap_boot.S \
                   kernel/src/arch/arm64/switch.S \
                   kernel/src/arch/arm64/usermode.S
 
@@ -361,8 +367,9 @@ ARM64_USER_CFLAGS := -ffreestanding -nostdinc -isystem $(shell $(ARM64_CC) -prin
 # ARM64 user libc objects
 ARM64_LIBC_C_OBJS := $(patsubst user/libc/%.c,build/arm64/user/libc/%.o,$(LIBC_C_SRCS))
 
-# ARM64 user programs — shell only for now (minimal set for boot)
-ARM64_USER_C_PROGRAMS := build/arm64/user/programs/shell.elf
+# ARM64 user programs
+ARM64_USER_C_PROGRAMS := build/arm64/user/programs/shell.elf \
+                          build/arm64/user/programs/serviced.elf
 ARM64_USER_C_ELFS := $(ARM64_USER_C_PROGRAMS)
 
 # ARM64 initrd
@@ -416,14 +423,24 @@ $(ARM64_KERNEL): $(ARM64_OBJS) build/arm64/initrd.o
 arm64: $(ARM64_KERNEL)
 	@echo "ARM64 kernel built: $(ARM64_KERNEL)"
 
-# Run ARM64 kernel in QEMU
+# Create ARM64 virtio-blk disk image (64MB)
+arm64-disk:
+	qemu-img create -f raw build/arm64/disk.img 64M
+
+# Run ARM64 kernel in QEMU (SMP 2, virtio-mmio blk+net)
 arm64-run: $(ARM64_KERNEL)
+	@test -f build/arm64/disk.img || qemu-img create -f raw build/arm64/disk.img 64M
 	qemu-system-aarch64 \
 		-M virt \
 		-cpu cortex-a57 \
+		-smp 2 \
 		-m 256M \
 		-nographic \
 		-kernel $(ARM64_KERNEL) \
+		-drive file=build/arm64/disk.img,if=none,format=raw,id=disk0 \
+		-device virtio-blk-device,drive=disk0 \
+		-netdev user,id=net0,hostfwd=udp::9000-:9000 \
+		-device virtio-net-device,netdev=net0 \
 		-no-reboot
 
 arm64-clean:

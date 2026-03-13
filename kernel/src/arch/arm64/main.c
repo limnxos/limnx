@@ -16,6 +16,7 @@
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "mm/kheap.h"
+#include "mm/swap.h"
 #include "sched/sched.h"
 #include "sched/thread.h"
 #include "syscall/syscall.h"
@@ -24,6 +25,15 @@
 #include "pty/pty.h"
 #include "sync/futex.h"
 #include "proc/process.h"
+#include "net/virtio_net.h"
+#include "net/net.h"
+#include "net/tcp.h"
+#include "blk/virtio_blk.h"
+#include "blk/bcache.h"
+#include "blk/limnfs.h"
+#include "ipc/supervisor.h"
+#include "ipc/shm.h"
+#include "ipc/infer_svc.h"
 
 /* Linker symbols for embedded initrd (from ld -b binary) */
 extern char _binary_initrd_tar_start[];
@@ -159,19 +169,110 @@ void kmain(void) {
         }
     }
 
-    /* === Stage 7: IPC + PTY === */
-    serial_puts("\n--- IPC init ---\n");
-    pty_init();
-    futex_init();
+    /* === Stage 7: Drivers === */
+    serial_puts("\n--- Driver init ---\n");
 
-    /* === Stage 8: SMP === */
+    /* Virtio-net (MMIO transport) */
+    int net_ok = 0;
+    if (virtio_net_init() == 0) {
+        net_init();
+        net_ok = 1;
+    } else {
+        serial_puts("[net]  Skipping network stack (no virtio-net)\n");
+    }
+
+    /* Virtio-blk (MMIO transport) */
+    int blk_ok = 0;
+    if (virtio_blk_init() == 0) {
+        blk_ok = 1;
+    } else {
+        serial_puts("[blk]  Skipping virtio-blk (no device)\n");
+    }
+
+    /* LimnFS init */
+    if (blk_ok) {
+        bcache_init();
+        swap_init();
+
+        /* Check if disk already has LimnFS */
+        uint8_t sb_buf[4096];
+        bcache_read(0, sb_buf);
+        uint32_t magic = *(uint32_t *)sb_buf;
+
+        uint32_t disk_blocks = 14336;  /* 56MB / 4KB = 14336 (last 8MB for swap) */
+        if (magic != LIMNFS_MAGIC) {
+            /* First boot: format */
+            if (limnfs_format(disk_blocks) != 0)
+                serial_puts("[test] FAIL: limnfs_format failed\n");
+        } else {
+            /* Existing filesystem: mount */
+            if (limnfs_mount() != 0)
+                serial_puts("[test] FAIL: limnfs_mount failed\n");
+        }
+
+        /* Sync initrd files to disk */
+        if (limnfs_mounted()) {
+            serial_puts("\n[limnfs] Syncing initrd to disk...\n");
+            int synced = 0, skipped = 0;
+
+            for (int i = 1; i < vfs_get_node_count(); i++) {
+                vfs_node_t *n = vfs_get_node(i);
+                if (!n || n->parent != 0) continue;
+
+                if (n->type == VFS_FILE) {
+                    int existing = limnfs_dir_lookup(0, n->name);
+                    if (existing >= 0) {
+                        n->disk_inode = (int32_t)existing;
+                        skipped++;
+                    } else {
+                        int disk_ino = limnfs_create_file(0, n->name);
+                        if (disk_ino >= 0 && n->size > 0 && n->data) {
+                            limnfs_write_data((uint32_t)disk_ino, 0,
+                                              n->data, n->size);
+                        }
+                        if (disk_ino >= 0) {
+                            limnfs_inode_t inode;
+                            if (limnfs_read_inode((uint32_t)disk_ino, &inode) == 0) {
+                                inode.mode = n->mode;
+                                limnfs_write_inode((uint32_t)disk_ino, &inode);
+                            }
+                            n->disk_inode = (int32_t)disk_ino;
+                            synced++;
+                        }
+                    }
+                }
+            }
+
+            serial_printf("[limnfs] Sync complete: %d copied, %d already exist\n",
+                          synced, skipped);
+
+            vfs_mount_limnfs();
+        }
+    }
+
+    /* === Stage 8: Subsystem init === */
+    serial_puts("\n--- Subsystem init ---\n");
+    pty_init();
+    if (net_ok) tcp_init();
+    futex_init();
+    supervisor_init();
+    shm_init();
+
+    /* === Stage 9: SMP === */
     arch_smp_init();
 
     serial_puts("\n========================================\n");
     serial_puts("  ARM64 boot complete — all subsystems\n");
     serial_puts("========================================\n");
 
-    /* === Stage 9: Create console PTY and reader thread === */
+    /* Start bcache flusher kernel thread */
+    if (blk_ok)
+        bcache_start_flusher();
+
+    /* Start async inference worker kernel thread */
+    infer_async_start_worker();
+
+    /* Create console PTY and reader thread */
     int con_pty = pty_create_console();
     if (con_pty >= 0) {
         pr_info("Console PTY %d created\n", con_pty);
@@ -186,7 +287,36 @@ void kmain(void) {
         }
     }
 
-    /* === Stage 10: Load and run shell === */
+    /* Create /etc/services config for serviced */
+    {
+        vfs_mkdir("/etc");
+        int svc_node = vfs_create("/etc/services");
+        if (svc_node >= 0) {
+            const char *default_cfg =
+                "# Service config: name|path|policy|after\n"
+                "# policy: one-for-one, one-for-all\n"
+                "# after: dependency name, or none\n";
+            int len = 0;
+            while (default_cfg[len]) len++;
+            vfs_write(svc_node, 0, (const uint8_t *)default_cfg, len);
+            pr_info("Created /etc/services\n");
+        }
+    }
+
+    /* Load and run serviced.elf — persistent service daemon */
+    pr_info("\nLoading serviced.elf...\n");
+    {
+        process_t *sd_proc = load_elf_from_vfs("/serviced.elf");
+        if (sd_proc) {
+            sd_proc->capabilities = 0xFFF;  /* full caps for service management */
+            pr_info("serviced.elf spawned (pid %lu)\n", sd_proc->pid);
+            sched_add(sd_proc->main_thread);
+        } else {
+            pr_warn("serviced.elf not found\n");
+        }
+    }
+
+    /* Load and run shell.elf with console PTY as stdin/stdout/stderr */
     pr_info("\nLoading shell.elf...\n");
     {
         process_t *sh_proc = load_elf_from_vfs("/shell.elf");
@@ -216,7 +346,7 @@ void kmain(void) {
             }
             /* Set LIMNX_VERSION env */
             {
-                const char *env_entry = "LIMNX_VERSION=0.98";
+                const char *env_entry = "LIMNX_VERSION=0.99";
                 int elen = 0;
                 while (env_entry[elen]) elen++;
                 for (int i = 0; i <= elen; i++)

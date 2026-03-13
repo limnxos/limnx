@@ -43,6 +43,7 @@
 #define GIC_TIMER_VIRT      27  /* Virtual timer */
 
 void     gic_init(void);
+void     gic_cpu_interface_init(void);   /* per-CPU init for AP cores */
 void     gic_eoi(uint32_t irq);
 uint32_t gic_ack(void);
 void     gic_enable_irq(uint32_t irq);

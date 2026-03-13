@@ -100,6 +100,21 @@ void gic_set_priority(uint32_t irq, uint8_t priority) {
     gicd_write(GICD_IPRIORITYR + reg * 4, val);
 }
 
+void gic_cpu_interface_init(void) {
+    /*
+     * Per-CPU GIC CPU interface initialization.
+     * Called by each AP during SMP bringup.
+     * The GIC CPU interface is banked per-CPU at the same MMIO address,
+     * so each core's writes go to its own CPU interface.
+     */
+
+    /* Set priority mask to accept all interrupts */
+    gicc_write(GICC_PMR, 0xFF);
+
+    /* Enable CPU interface */
+    gicc_write(GICC_CTLR, 1);
+}
+
 void gic_send_sgi(uint32_t target_cpu, uint32_t sgi_id) {
     /* SGI: target list filter = 0 (use target list), target = cpu bit */
     uint32_t val = (1U << (16 + target_cpu)) | (sgi_id & 0xF);

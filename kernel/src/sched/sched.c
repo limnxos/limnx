@@ -297,10 +297,12 @@ void sched_init(void) {
 
 void sched_set_smp_active(void) {
     smp_active = 1;
-    /* Copy BSP idle thread to percpu so get_idle() works in SMP mode */
+    /* Copy BSP threads to percpu so SMP mode works */
     percpu_t *pc = percpu_get();
     if (pc && !pc->idle_thread)
         pc->idle_thread = bsp_idle_thread;
+    if (pc && !pc->current_thread)
+        pc->current_thread = bsp_current_thread;
 
     /* Migrate shared queue → CPU 0's per-CPU queue */
     while (ready_head) {

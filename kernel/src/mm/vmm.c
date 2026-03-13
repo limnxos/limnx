@@ -103,13 +103,16 @@ void vmm_init(void) {
         l1[0] = l2_dev_phys | PTE_PRESENT | PTE_TABLE;
 
         /* Map device MMIO as 2MB blocks in L2 (block desc: bit 0=1, bit 1=0)
-         * GIC:  0x08000000 → L2 index 64
-         * UART: 0x09000000 → L2 index 72 */
+         * GIC:        0x08000000 → L2 index 64
+         * UART:       0x09000000 → L2 index 72
+         * virtio-mmio: 0x0a000000 → L2 index 80 */
         #define L2_BLOCK_DEV(addr) \
             ((addr) | PTE_PRESENT | PTE_ATTRINDX_DEVICE | PTE_ACCESSED | PTE_SH_ISH)
+        #define ARM64_VIRTIO_MMIO_BASE 0x0A000000ULL
         l2_dev[ARM64_GIC_BASE >> 21] = L2_BLOCK_DEV(ARM64_GIC_BASE);
         l2_dev[(ARM64_GIC_BASE + 0x200000) >> 21] = L2_BLOCK_DEV(ARM64_GIC_BASE + 0x200000);
         l2_dev[ARM64_UART_BASE >> 21] = L2_BLOCK_DEV(ARM64_UART_BASE);
+        l2_dev[ARM64_VIRTIO_MMIO_BASE >> 21] = L2_BLOCK_DEV(ARM64_VIRTIO_MMIO_BASE);
 
         /* L1[1]: RAM range 0x40000000-0x7FFFFFFF — allocate L2 table */
         uint64_t l2_ram_phys = pmm_alloc_page();
