@@ -11,6 +11,7 @@
 #include "arch/serial.h"
 #include "sync/spinlock.h"
 #include "errno.h"
+#include "kutil.h"
 #include "arch/cpu.h"
 #include "arch/paging.h"
 
@@ -171,6 +172,7 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
     process_t *proc = (process_t *)kmalloc(sizeof(process_t));
     if (!proc)
         return NULL;
+    mem_zero(proc, sizeof(process_t));
 
     proc->pid = process_alloc_pid();
     proc->user_entry = USER_CODE_BASE;
@@ -371,6 +373,7 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
         return NULL;
 
     process_t *proc = (process_t *)kmalloc(sizeof(process_t));
+    if (proc) mem_zero(proc, sizeof(process_t));
     if (!proc)
         return NULL;
 
@@ -564,6 +567,7 @@ static void fork_child_entry(void) {
 process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     process_t *child = (process_t *)kmalloc(sizeof(process_t));
     if (!child) return NULL;
+    mem_zero(child, sizeof(process_t));
 
     child->pid = process_alloc_pid();
     child->parent_pid = parent->pid;
