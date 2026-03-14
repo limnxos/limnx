@@ -34,6 +34,7 @@
 #include "ipc/supervisor.h"
 #include "ipc/shm.h"
 #include "ipc/infer_svc.h"
+#include "dtb/dtb.h"
 
 /* Linker symbols for embedded initrd (from ld -b binary) */
 extern char _binary_initrd_tar_start[];
@@ -99,13 +100,42 @@ static void console_reader_thread(void) {
     }
 }
 
-void kmain(void) {
+void kmain(uint64_t dtb_addr) {
     serial_init();
 
     serial_puts("\n========================================\n");
     serial_puts("  Limnx Kernel — ARM64 (aarch64)\n");
     serial_puts("  Target: QEMU virt (Cortex-A57)\n");
     serial_puts("========================================\n\n");
+
+    /* Parse device tree blob (passed by QEMU in X0, saved by boot.S) */
+    {
+        serial_printf("[dtb]  DTB address from boot: %lx\n", (unsigned long)dtb_addr);
+        /* If QEMU didn't pass DTB in X0 (bare-metal ELF boot), scan
+         * the first 2MB of RAM for FDT magic. QEMU virt places DTB at
+         * RAM_BASE + 0x100 or nearby. Kernel is at 0x40200000+ to avoid overlap. */
+        if (!dtb_addr) {
+            for (uint64_t probe = 0x40000000ULL; probe < 0x40200000ULL; probe += 4) {
+                uint32_t raw = *(volatile uint32_t *)probe;
+                if (raw == 0xedfe0dd0) {  /* big-endian 0xd00dfeed in LE */
+                    serial_printf("[dtb]  found DTB at %lx\n", (unsigned long)probe);
+                    dtb_addr = probe;
+                    break;
+                }
+            }
+        }
+        if (dtb_init((void *)dtb_addr) != 0)
+            serial_puts("[dtb]  WARNING: DTB parse failed, using defaults\n");
+
+        /* Update virtio-mmio runtime params from DTB */
+        const dtb_platform_info_t *plat = dtb_get_platform();
+        if (plat && plat->valid) {
+            extern uint64_t virtio_mmio_base_addr;
+            extern uint32_t virtio_mmio_num_devices;
+            virtio_mmio_base_addr = plat->virtio_mmio_base;
+            virtio_mmio_num_devices = plat->virtio_mmio_num_slots;
+        }
+    }
 
     /* === Stage 1: Arch early init === */
     arch_early_init();

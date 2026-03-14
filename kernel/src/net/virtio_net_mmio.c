@@ -256,7 +256,7 @@ int virtio_net_init(void) {
 
     /* Scan all 32 virtio-mmio slots */
     dev_base = 0;
-    for (uint32_t slot = 0; slot < VIRTIO_MMIO_NUM_SLOTS; slot++) {
+    for (uint32_t slot = 0; slot < virtio_mmio_num_devices; slot++) {
         uint64_t base = virtio_mmio_slot_base(slot);
 
         uint32_t magic = mmio_read32(base, VIRTIO_MMIO_MAGIC_VALUE);

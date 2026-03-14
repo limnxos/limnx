@@ -11,9 +11,9 @@
 
 #include <stdint.h>
 
-/* GICv2 base addresses (QEMU virt) */
-#define GICD_BASE   0x08000000ULL
-#define GICC_BASE   0x08010000ULL
+/* GICv2 base addresses — set by gic_init() from DTB (defaults: QEMU virt) */
+extern uint64_t gicd_base_addr;
+extern uint64_t gicc_base_addr;
 
 /* Distributor registers */
 #define GICD_CTLR       0x000

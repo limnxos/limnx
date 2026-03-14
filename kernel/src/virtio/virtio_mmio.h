@@ -76,15 +76,17 @@ static inline uint8_t mmio_read8(uint64_t base, uint32_t off) {
 /* QEMU virt virtio-mmio slot enumeration                             */
 /* ------------------------------------------------------------------ */
 
-#define VIRTIO_MMIO_BASE        0x0A000000ULL
+/* Runtime virtio-mmio parameters (set by dtb_init, defaults: QEMU virt) */
+extern uint64_t virtio_mmio_base_addr;
+extern uint32_t virtio_mmio_num_devices;
+
 #define VIRTIO_MMIO_SLOT_SIZE   0x200
-#define VIRTIO_MMIO_NUM_SLOTS   32
 
 /* QEMU virt IRQs: SPI 16+slot  =>  GIC INTID = 32 + 16 + slot = 48+slot */
 #define VIRTIO_MMIO_IRQ(slot)   (48 + (slot))
 
 static inline uint64_t virtio_mmio_slot_base(uint32_t slot) {
-    return VIRTIO_MMIO_BASE + (uint64_t)slot * VIRTIO_MMIO_SLOT_SIZE;
+    return virtio_mmio_base_addr + (uint64_t)slot * VIRTIO_MMIO_SLOT_SIZE;
 }
 
 /* ------------------------------------------------------------------ */

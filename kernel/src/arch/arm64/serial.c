@@ -8,16 +8,19 @@
 #include <stddef.h>
 #include "arch/serial.h"
 
-/* PL011 register offsets */
-#define UART_BASE   0x09000000ULL
-#define UART_DR     (*(volatile uint32_t *)(UART_BASE + 0x000))  /* Data Register */
-#define UART_FR     (*(volatile uint32_t *)(UART_BASE + 0x018))  /* Flag Register */
-#define UART_IBRD   (*(volatile uint32_t *)(UART_BASE + 0x024))  /* Integer Baud Rate */
-#define UART_FBRD   (*(volatile uint32_t *)(UART_BASE + 0x028))  /* Fractional Baud Rate */
-#define UART_LCR_H  (*(volatile uint32_t *)(UART_BASE + 0x02C))  /* Line Control */
-#define UART_CR     (*(volatile uint32_t *)(UART_BASE + 0x030))  /* Control Register */
-#define UART_IMSC   (*(volatile uint32_t *)(UART_BASE + 0x038))  /* Interrupt Mask */
-#define UART_ICR    (*(volatile uint32_t *)(UART_BASE + 0x044))  /* Interrupt Clear */
+/* PL011 runtime base address (default: QEMU virt, updated by dtb_init) */
+static uint64_t uart_base = 0x09000000ULL;
+
+/* PL011 register accessors */
+#define UART_REG(off) (*(volatile uint32_t *)(uart_base + (off)))
+#define UART_DR     UART_REG(0x000)  /* Data Register */
+#define UART_FR     UART_REG(0x018)  /* Flag Register */
+#define UART_IBRD   UART_REG(0x024)  /* Integer Baud Rate */
+#define UART_FBRD   UART_REG(0x028)  /* Fractional Baud Rate */
+#define UART_LCR_H  UART_REG(0x02C)  /* Line Control */
+#define UART_CR     UART_REG(0x030)  /* Control Register */
+#define UART_IMSC   UART_REG(0x038)  /* Interrupt Mask */
+#define UART_ICR    UART_REG(0x044)  /* Interrupt Clear */
 
 /* Flag register bits */
 #define FR_TXFF     (1 << 5)  /* TX FIFO full */

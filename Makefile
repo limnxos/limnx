@@ -324,6 +324,7 @@ ARM64_C_SRCS := kernel/src/arch/arm64/main.c \
                 kernel/src/mm/pmm.c kernel/src/mm/vmm.c \
                 kernel/src/mm/kheap.c \
                 kernel/src/mm/dma.c \
+                kernel/src/dtb/dtb.c \
                 kernel/src/sched/thread.c kernel/src/sched/sched.c \
                 kernel/src/sync/mutex.c kernel/src/sync/futex.c \
                 kernel/src/proc/process.c kernel/src/proc/elf.c \

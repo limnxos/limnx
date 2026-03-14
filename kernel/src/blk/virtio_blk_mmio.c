@@ -15,6 +15,11 @@
 #include "blk/virtio_blk.h"
 #include "net/virtio_net.h"   /* virtq_desc_t, virtq_avail_t, virtq_used_t */
 #include "virtio/virtio_mmio.h"
+#include "dtb/dtb.h"
+
+/* Runtime virtio-mmio parameters (defaults: QEMU virt) */
+uint64_t virtio_mmio_base_addr = 0x0A000000ULL;
+uint32_t virtio_mmio_num_devices = 32;
 #include "mm/pmm.h"
 #include "mm/dma.h"
 #include "mm/kheap.h"
@@ -226,7 +231,7 @@ int virtio_blk_init(void) {
 
     /* Scan all 32 virtio-mmio slots */
     dev_base = 0;
-    for (uint32_t slot = 0; slot < VIRTIO_MMIO_NUM_SLOTS; slot++) {
+    for (uint32_t slot = 0; slot < virtio_mmio_num_devices; slot++) {
         uint64_t base = virtio_mmio_slot_base(slot);
 
         uint32_t magic = mmio_read32(base, VIRTIO_MMIO_MAGIC_VALUE);

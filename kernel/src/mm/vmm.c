@@ -76,12 +76,17 @@ void vmm_init(void) {
      *
      * We use PMM to allocate the new tables, then switch TTBR0. */
     {
-        #define ARM64_RAM_BASE  0x40000000ULL
-        #define ARM64_RAM_SIZE  (256ULL * 1024 * 1024)  /* 256MB */
-        #define ARM64_KERN_END  (ARM64_RAM_BASE + ARM64_RAM_SIZE)
-        /* Device MMIO ranges we need to map */
-        #define ARM64_UART_BASE 0x09000000ULL
-        #define ARM64_GIC_BASE  0x08000000ULL
+        #include "dtb/dtb.h"
+        /* Get platform addresses from DTB (with QEMU virt defaults) */
+        const dtb_platform_info_t *plat = dtb_get_platform();
+        uint64_t ram_base   = (plat && plat->valid) ? plat->ram_base : 0x40000000ULL;
+        uint64_t ram_size   = (plat && plat->valid) ? plat->ram_size : (256ULL * 1024 * 1024);
+        uint64_t gic_base   = (plat && plat->valid) ? plat->gic_dist_base : 0x08000000ULL;
+        uint64_t uart_base  = (plat && plat->valid) ? plat->uart_base : 0x09000000ULL;
+        uint64_t vmio_base  = (plat && plat->valid) ? plat->virtio_mmio_base : 0x0A000000ULL;
+
+        #define L2_BLOCK_DEV(addr) \
+            ((addr) | PTE_PRESENT | PTE_ATTRINDX_DEVICE | PTE_ACCESSED | PTE_SH_ISH)
 
         /* Allocate L0 table */
         uint64_t l0_phys = pmm_alloc_page();
@@ -100,28 +105,21 @@ void vmm_init(void) {
         zero_page(l2_dev);
         l1[0] = l2_dev_phys | PTE_PRESENT | PTE_TABLE;
 
-        /* Map device MMIO as 2MB blocks in L2 (block desc: bit 0=1, bit 1=0)
-         * GIC:        0x08000000 → L2 index 64
-         * UART:       0x09000000 → L2 index 72
-         * virtio-mmio: 0x0a000000 → L2 index 80 */
-        #define L2_BLOCK_DEV(addr) \
-            ((addr) | PTE_PRESENT | PTE_ATTRINDX_DEVICE | PTE_ACCESSED | PTE_SH_ISH)
-        #define ARM64_VIRTIO_MMIO_BASE 0x0A000000ULL
-        l2_dev[ARM64_GIC_BASE >> 21] = L2_BLOCK_DEV(ARM64_GIC_BASE);
-        l2_dev[(ARM64_GIC_BASE + 0x200000) >> 21] = L2_BLOCK_DEV(ARM64_GIC_BASE + 0x200000);
-        l2_dev[ARM64_UART_BASE >> 21] = L2_BLOCK_DEV(ARM64_UART_BASE);
-        l2_dev[ARM64_VIRTIO_MMIO_BASE >> 21] = L2_BLOCK_DEV(ARM64_VIRTIO_MMIO_BASE);
+        /* Map device MMIO as 2MB blocks in L2 (addresses from DTB) */
+        l2_dev[gic_base >> 21] = L2_BLOCK_DEV(gic_base & ~0x1FFFFFULL);
+        l2_dev[(gic_base + 0x200000) >> 21] = L2_BLOCK_DEV((gic_base + 0x200000) & ~0x1FFFFFULL);
+        l2_dev[uart_base >> 21] = L2_BLOCK_DEV(uart_base & ~0x1FFFFFULL);
+        l2_dev[vmio_base >> 21] = L2_BLOCK_DEV(vmio_base & ~0x1FFFFFULL);
 
-        /* L1[1]: RAM range 0x40000000-0x7FFFFFFF — allocate L2 table */
+        /* L1[1]: RAM range — allocate L2 table */
+        uint64_t l1_ram_idx = ram_base >> 30;  /* L1 index for RAM base */
         uint64_t l2_ram_phys = pmm_alloc_page();
         uint64_t *l2_ram = (uint64_t *)PHYS_TO_VIRT(l2_ram_phys);
         zero_page(l2_ram);
-        l1[1] = l2_ram_phys | PTE_PRESENT | PTE_TABLE;
+        l1[l1_ram_idx] = l2_ram_phys | PTE_PRESENT | PTE_TABLE;
 
-        /* Map RAM using full L3 page tables (4KB pages) so vmm_map_page
-         * and vmm_map_page_in can create/modify individual page entries.
-         * 256MB = 128 × 2MB regions, each needing one L3 table (512 × 4KB). */
-        uint64_t num_2mb_regions = ARM64_RAM_SIZE / (2ULL * 1024 * 1024);
+        /* Map RAM using full L3 page tables (4KB pages) */
+        uint64_t num_2mb_regions = ram_size / (2ULL * 1024 * 1024);
         for (uint64_t i = 0; i < num_2mb_regions; i++) {
             uint64_t l3_phys = pmm_alloc_page();
             if (l3_phys == 0) {
@@ -129,13 +127,12 @@ void vmm_init(void) {
                 break;
             }
             uint64_t *l3 = (uint64_t *)PHYS_TO_VIRT(l3_phys);
-            /* Fill all 512 L3 entries as identity-mapped 4KB pages */
             for (int j = 0; j < 512; j++) {
-                uint64_t pa = ARM64_RAM_BASE + i * (2ULL * 1024 * 1024) + j * 4096;
-                l3[j] = pa | PTE_PRESENT | PTE_TABLE  /* L3 page desc: bits [1:0]=0b11 */
+                uint64_t pa = ram_base + i * (2ULL * 1024 * 1024) + j * 4096;
+                l3[j] = pa | PTE_PRESENT | PTE_TABLE
                        | PTE_ATTRINDX_NORMAL | PTE_ACCESSED | PTE_SH_ISH;
             }
-            l2_ram[i] = l3_phys | PTE_PRESENT | PTE_TABLE;  /* L2 table desc */
+            l2_ram[i] = l3_phys | PTE_PRESENT | PTE_TABLE;
         }
 
         /* Switch to new page tables */

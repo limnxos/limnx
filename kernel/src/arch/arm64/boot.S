@@ -12,12 +12,15 @@ _start:
     /* Disable interrupts */
     msr     daifset, #0xf
 
+    /* Save DTB pointer (X0 from QEMU) before it gets clobbered */
+    mov     x20, x0
+
     /* Disable alignment checking early — QEMU Cortex-A57 resets with A=1.
      * GCC may generate unaligned accesses (e.g. STR X to 4-byte-aligned addr). */
-    mrs     x0, sctlr_el1
-    bic     x0, x0, #(1 << 1)          /* A  = alignment check off */
-    bic     x0, x0, #(1 << 3)          /* SA = stack alignment off */
-    msr     sctlr_el1, x0
+    mrs     x2, sctlr_el1
+    bic     x2, x2, #(1 << 1)          /* A  = alignment check off */
+    bic     x2, x2, #(1 << 3)          /* SA = stack alignment off */
+    msr     sctlr_el1, x2
     isb
 
     /* Read CPU ID from MPIDR_EL1 — only boot on CPU 0 */
@@ -25,10 +28,10 @@ _start:
     and     x1, x1, #0xFF
     cbnz    x1, .Lhalt
 
-    /* Save DTB address (x0) for later use by kernel */
+    /* Save DTB address for kernel (from X20, preserved across SCTLR setup) */
     adrp    x1, arm64_dtb_base
     add     x1, x1, :lo12:arm64_dtb_base
-    str     x0, [x1]
+    str     x20, [x1]
 
     /* Set up the stack (grows down from _stack_top) */
     adrp    x0, _stack_top
@@ -153,7 +156,8 @@ _start:
     /* MMU is now on — we're still running at our physical address
      * because the identity mapping maps VA=PA for the kernel region */
 
-    /* Call kmain */
+    /* Call kmain(dtb_addr) — pass DTB pointer saved in X20 */
+    mov     x0, x20
     bl      kmain
 
     /* If kmain returns, halt */

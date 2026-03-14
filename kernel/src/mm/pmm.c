@@ -51,14 +51,22 @@ static inline int bitmap_test(uint64_t page) {
 
 void pmm_init(void) {
 #if defined(__aarch64__)
-    /* ARM64 QEMU virt: RAM at 0x40000000, identity-mapped (hhdm_offset=0).
-     * Kernel loaded at 0x40080000. Reserve first 4MB for kernel+stack.
-     * Usable RAM: 0x40400000 to 0x40000000+RAM_SIZE. */
+    /* ARM64: identity-mapped (hhdm_offset=0).
+     * RAM base/size from DTB (fallback: QEMU virt defaults).
+     * Kernel loaded at ram_base+0x80000. Reserve first 4MB for kernel+stack. */
     hhdm_offset = 0;
 
-    #define ARM64_RAM_BASE  0x40000000ULL
-    #define ARM64_RAM_SIZE  (256ULL * 1024 * 1024)  /* 256 MB (-m 256M) */
-    #define ARM64_KERN_END  0x40400000ULL            /* first 4MB reserved */
+    #include "dtb/dtb.h"
+    uint64_t ARM64_RAM_BASE = 0x40000000ULL;
+    uint64_t ARM64_RAM_SIZE = 256ULL * 1024 * 1024;
+    {
+        const dtb_platform_info_t *plat = dtb_get_platform();
+        if (plat && plat->valid) {
+            ARM64_RAM_BASE = plat->ram_base;
+            ARM64_RAM_SIZE = plat->ram_size;
+        }
+    }
+    uint64_t ARM64_KERN_END = ARM64_RAM_BASE + 0x800000ULL;  /* first 8MB reserved (DTB+kernel+BSS) */
 
     uint64_t highest_addr = ARM64_RAM_BASE + ARM64_RAM_SIZE;
     total_pages = highest_addr / PAGE_SIZE;

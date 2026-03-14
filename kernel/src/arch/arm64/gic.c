@@ -11,6 +11,11 @@
 
 #include "arch/arm64/gic.h"
 #include "arch/serial.h"
+#include "dtb/dtb.h"
+
+/* Runtime GIC base addresses (default: QEMU virt) */
+uint64_t gicd_base_addr = 0x08000000ULL;
+uint64_t gicc_base_addr = 0x08010000ULL;
 
 static volatile uint32_t *gicd_base;
 static volatile uint32_t *gicc_base;
@@ -32,8 +37,14 @@ static inline void gicc_write(uint32_t reg, uint32_t val) {
 }
 
 void gic_init(void) {
-    gicd_base = (volatile uint32_t *)GICD_BASE;
-    gicc_base = (volatile uint32_t *)GICC_BASE;
+    /* Use DTB-discovered addresses if available */
+    const dtb_platform_info_t *plat = dtb_get_platform();
+    if (plat && plat->valid) {
+        gicd_base_addr = plat->gic_dist_base;
+        gicc_base_addr = plat->gic_cpu_base;
+    }
+    gicd_base = (volatile uint32_t *)gicd_base_addr;
+    gicc_base = (volatile uint32_t *)gicc_base_addr;
 
     /* Disable distributor during setup */
     gicd_write(GICD_CTLR, 0);
