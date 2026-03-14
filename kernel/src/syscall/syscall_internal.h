@@ -65,6 +65,8 @@ int64_t sys_fstat(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_rename(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_chmod(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_fsstat(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_symlink(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_readlink(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
 /* Proc */
 void process_terminate(thread_t *t, int64_t status);

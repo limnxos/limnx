@@ -353,7 +353,9 @@ ARM64_C_SRCS := kernel/src/arch/arm64/main.c \
                 kernel/src/blk/bcache.c kernel/src/blk/limnfs.c \
                 kernel/src/net/virtio_net_mmio.c kernel/src/net/net.c \
                 kernel/src/net/tcp.c kernel/src/net/netstor.c \
-                kernel/src/mm/swap.c
+                kernel/src/mm/swap.c \
+                kernel/src/fb/fbcon.c \
+                kernel/src/fb/virtio_gpu_mmio.c
 ARM64_ASM_SRCS := kernel/src/arch/arm64/boot.S \
                   kernel/src/arch/arm64/vectors.S \
                   kernel/src/arch/arm64/ap_boot.S \

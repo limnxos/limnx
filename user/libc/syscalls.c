@@ -152,6 +152,8 @@
 #define SYS_GETEGID       137
 #define SYS_GETGROUPS     138
 #define SYS_SETGROUPS     139
+#define SYS_SYMLINK       140
+#define SYS_READLINK      141
 
 /* --- Syscall wrappers --- */
 
@@ -726,4 +728,12 @@ long sys_getgroups(long max_count, void *buf) {
 
 long sys_setgroups(long count, const void *buf) {
     return __syscall2(SYS_SETGROUPS, (long)buf, count);
+}
+
+long sys_symlink(const char *target, const char *path) {
+    return __syscall2(SYS_SYMLINK, (long)target, (long)path);
+}
+
+long sys_readlink(const char *path, char *buf, unsigned long bufsize) {
+    return __syscall3(SYS_READLINK, (long)path, (long)buf, (long)bufsize);
 }

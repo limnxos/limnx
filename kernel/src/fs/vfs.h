@@ -5,8 +5,10 @@
 
 #define VFS_FILE      0
 #define VFS_DIRECTORY 1
+#define VFS_SYMLINK   2
 
 #define MAX_VFS_NODES 1024
+#define MAX_SYMLINK_DEPTH 8
 #define MAX_FDS       64
 #define MAX_PATH      256
 
@@ -123,6 +125,10 @@ int  vfs_chmod(const char *path, uint16_t mode);
 
 /* Chown — update file owner/group */
 int  vfs_chown(int node_idx, uint16_t uid, uint16_t gid);
+
+/* Symlink operations */
+int  vfs_symlink(const char *path, const char *target);
+int  vfs_readlink(const char *path, char *buf, uint64_t bufsize);
 
 /* LimnFS mount — load disk tree into VFS */
 int  vfs_mount_limnfs(void);

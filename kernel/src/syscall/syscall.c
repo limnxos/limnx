@@ -279,6 +279,8 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_GETEGID]          = sys_getegid,
     [SYS_GETGROUPS]        = sys_getgroups,
     [SYS_SETGROUPS]        = sys_setgroups,
+    [SYS_SYMLINK]          = sys_symlink,
+    [SYS_READLINK]         = sys_readlink,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).
@@ -375,10 +377,25 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
             }
 
             /* User handler: set up signal frame */
-            uint64_t *kstack_top = (uint64_t *)(t->stack_base + t->stack_size);
-            uint64_t orig_rip = kstack_top[KSTACK_USER_RIP_OFF];
-            uint64_t orig_rsp = kstack_top[KSTACK_USER_RSP_OFF];
-            uint64_t orig_rflags = kstack_top[KSTACK_USER_FLAGS_OFF];
+            uint64_t orig_rip, orig_rsp, orig_rflags;
+#if defined(__aarch64__)
+            /* ARM64: read user context from per-CPU exception frame
+             * (kstack_top offsets don't work — SP isn't reset on SVC entry) */
+            {
+                extern uint64_t *arm64_exception_frame[];
+                uint64_t *ef = arm64_exception_frame[percpu_get()->cpu_id];
+                orig_rip    = ef[31];   /* elr_el1 */
+                orig_rflags = ef[32];   /* spsr_el1 */
+                orig_rsp    = ef[33];   /* sp_el0 */
+            }
+#else
+            {
+                uint64_t *kstack_top = (uint64_t *)(t->stack_base + t->stack_size);
+                orig_rip = kstack_top[KSTACK_USER_RIP_OFF];
+                orig_rsp = kstack_top[KSTACK_USER_RSP_OFF];
+                orig_rflags = kstack_top[KSTACK_USER_FLAGS_OFF];
+            }
+#endif
 
             /* Build signal frame on user stack */
             uint64_t frame_rsp = orig_rsp - 32;
@@ -393,15 +410,16 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
                 uint64_t old_phys = *pte & PTE_ADDR_MASK;
                 uint64_t old_flags = *pte & ~PTE_ADDR_MASK;
                 uint64_t clean = old_flags & ~(PTE_COW | PTE_WAS_WRITABLE);
+                uint64_t writable = PTE_MAKE_WRITABLE(clean) | PTE_PRESENT;
                 if (pmm_ref_get(old_phys) == 1) {
-                    *pte = old_phys | (clean | PTE_WRITABLE | PTE_PRESENT);
+                    *pte = old_phys | writable;
                 } else {
                     uint64_t new_phys = pmm_alloc_page();
                     if (new_phys == 0) break;
                     uint8_t *src = (uint8_t *)PHYS_TO_VIRT(old_phys);
                     uint8_t *dst = (uint8_t *)PHYS_TO_VIRT(new_phys);
                     for (int i = 0; i < 4096; i++) dst[i] = src[i];
-                    *pte = new_phys | (clean | PTE_WRITABLE | PTE_PRESENT);
+                    *pte = new_phys | writable;
                     pmm_ref_dec(old_phys);
                 }
                 invlpg_addr(frame_rsp & ~0xFFFULL);

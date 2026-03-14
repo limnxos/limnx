@@ -49,10 +49,22 @@ int64_t sys_sigreturn(uint64_t a1, uint64_t a2,
         proc->restart_pending = 0;
         uint64_t snum = proc->restart_syscall_num;
         if (snum < SYS_NR) {
-            uint64_t *kstack_top = (uint64_t *)(t->stack_base + t->stack_size);
-            kstack_top[-1] = orig_rsp;
-            kstack_top[-2] = orig_rip;
-            kstack_top[-3] = orig_rflags;
+#if defined(__aarch64__)
+            {
+                extern uint64_t *arm64_exception_frame[];
+                uint64_t *ef = arm64_exception_frame[percpu_get()->cpu_id];
+                ef[31] = orig_rip;
+                ef[32] = orig_rflags;
+                ef[33] = orig_rsp;
+            }
+#else
+            {
+                uint64_t *kstack_top = (uint64_t *)(t->stack_base + t->stack_size);
+                kstack_top[-1] = orig_rsp;
+                kstack_top[-2] = orig_rip;
+                kstack_top[-3] = orig_rflags;
+            }
+#endif
             return syscall_dispatch(snum,
                 proc->restart_args[0], proc->restart_args[1],
                 proc->restart_args[2], proc->restart_args[3],
@@ -60,11 +72,24 @@ int64_t sys_sigreturn(uint64_t a1, uint64_t a2,
         }
     }
 
-    /* Restore original context — modify kernel stack */
-    uint64_t *kstack_top = (uint64_t *)(t->stack_base + t->stack_size);
-    kstack_top[-1] = orig_rsp;
-    kstack_top[-2] = orig_rip;
-    kstack_top[-3] = orig_rflags;
+    /* Restore original context */
+#if defined(__aarch64__)
+    /* ARM64: restore via per-CPU exception frame */
+    {
+        extern uint64_t *arm64_exception_frame[];
+        uint64_t *ef = arm64_exception_frame[percpu_get()->cpu_id];
+        ef[31] = orig_rip;     /* elr_el1 */
+        ef[32] = orig_rflags;  /* spsr_el1 */
+        ef[33] = orig_rsp;     /* sp_el0 */
+    }
+#else
+    {
+        uint64_t *kstack_top = (uint64_t *)(t->stack_base + t->stack_size);
+        kstack_top[-1] = orig_rsp;
+        kstack_top[-2] = orig_rip;
+        kstack_top[-3] = orig_rflags;
+    }
+#endif
 
     return (int64_t)orig_rax;
 }

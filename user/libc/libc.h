@@ -113,6 +113,8 @@ long sys_geteuid(void);
 long sys_getegid(void);
 long sys_getgroups(long max_count, void *buf);
 long sys_setgroups(long count, const void *buf);
+long sys_symlink(const char *target, const char *path);
+long sys_readlink(const char *path, char *buf, unsigned long bufsize);
 
 /* termios structures (matching kernel termios.h) */
 typedef struct {

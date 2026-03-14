@@ -2,6 +2,7 @@
 #include "sched/sched.h"
 #include "sched/thread.h"
 #include "mm/vmm.h"
+#include "mm/pmm.h"
 #include "pty/pty.h"
 #include "ipc/unix_sock.h"
 #include "ipc/eventfd.h"
@@ -820,6 +821,62 @@ int64_t sys_chmod(uint64_t path_ptr, uint64_t mode,
     }
 
     return vfs_chmod(path, (uint16_t)mode);
+}
+
+int64_t sys_symlink(uint64_t target_ptr, uint64_t path_ptr,
+                            uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+
+    char target[MAX_PATH], raw_path[MAX_PATH], path[MAX_PATH];
+    if (copy_string_from_user((const char *)target_ptr, target, MAX_PATH) != 0)
+        return -EFAULT;
+    if (copy_string_from_user((const char *)path_ptr, raw_path, MAX_PATH) != 0)
+        return -EFAULT;
+
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    if (!(proc->capabilities & CAP_FS_WRITE) &&
+        !cap_token_check(proc->pid, CAP_FS_WRITE, raw_path))
+        return -EACCES;
+
+    resolve_user_path(proc, raw_path, path);
+    return vfs_symlink(path, target);
+}
+
+int64_t sys_readlink(uint64_t path_ptr, uint64_t buf_ptr,
+                             uint64_t bufsize, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+
+    char raw_path[MAX_PATH], path[MAX_PATH];
+    if (copy_string_from_user((const char *)path_ptr, raw_path, MAX_PATH) != 0)
+        return -EFAULT;
+    if (bufsize == 0 || bufsize > MAX_PATH)
+        return -EINVAL;
+    if (validate_user_ptr(buf_ptr, bufsize) != 0)
+        return -EFAULT;
+
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    resolve_user_path(proc, raw_path, path);
+
+    /* Read into kernel buffer first, then copy to user */
+    char kbuf[MAX_PATH];
+    int ret = vfs_readlink(path, kbuf, bufsize);
+    if (ret < 0) return ret;
+
+    /* Copy to user via HHDM */
+    uint64_t *pte = vmm_get_pte(proc->cr3, buf_ptr);
+    if (!pte || !(*pte & PTE_PRESENT)) return -EFAULT;
+    uint64_t phys = (*pte & PTE_ADDR_MASK) + (buf_ptr & 0xFFF);
+    char *ubuf = (char *)PHYS_TO_VIRT(phys);
+    for (int i = 0; i < ret + 1; i++)  /* +1 for null terminator */
+        ubuf[i] = kbuf[i];
+
+    return ret;
 }
 
 int64_t sys_fsstat(uint64_t buf_ptr, uint64_t a2,

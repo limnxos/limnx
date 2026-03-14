@@ -85,9 +85,18 @@ int vfs_find_child(int parent_idx, const char *name) {
     return -ENOENT;
 }
 
+static int vfs_resolve_path_depth(const char *path, int symlink_depth);
+
 int vfs_resolve_path(const char *path) {
+    return vfs_resolve_path_depth(path, 0);
+}
+
+static int vfs_resolve_path_depth(const char *path, int symlink_depth) {
     if (!path || path[0] != '/')
         return -EINVAL;
+
+    if (symlink_depth > MAX_SYMLINK_DEPTH)
+        return -ELOOP;
 
     /* Root itself */
     if (path[0] == '/' && path[1] == '\0')
@@ -123,6 +132,76 @@ int vfs_resolve_path(const char *path) {
             int child = vfs_find_child(current, component);
             if (child < 0)
                 return -ENOENT;
+
+            /* Follow symlinks transparently */
+            if (nodes[child].type == VFS_SYMLINK && nodes[child].data) {
+                char target[MAX_PATH];
+                uint64_t tlen = nodes[child].size;
+                if (tlen >= MAX_PATH) tlen = MAX_PATH - 1;
+                for (uint64_t i = 0; i < tlen; i++)
+                    target[i] = (char)nodes[child].data[i];
+                target[tlen] = '\0';
+
+                /* If relative target, resolve from symlink's parent directory */
+                if (target[0] != '/') {
+                    /* Build absolute path: parent_of_symlink + "/" + target + "/" + rest */
+                    char abs[MAX_PATH];
+                    int pi = nodes[child].parent;
+                    /* Reconstruct parent path */
+                    char ppath[MAX_PATH];
+                    ppath[0] = '\0';
+                    /* Walk up to root building path */
+                    int chain[64];
+                    int depth = 0;
+                    for (int n = pi; n > 0 && depth < 64; n = nodes[n].parent)
+                        chain[depth++] = n;
+                    int pos = 0;
+                    for (int d = depth - 1; d >= 0 && pos < MAX_PATH - 2; d--) {
+                        ppath[pos++] = '/';
+                        const char *nm = nodes[chain[d]].name;
+                        for (int j = 0; nm[j] && pos < MAX_PATH - 1; j++)
+                            ppath[pos++] = nm[j];
+                    }
+                    if (pos == 0) ppath[pos++] = '/';
+                    ppath[pos] = '\0';
+
+                    /* abs = ppath + "/" + target */
+                    pos = 0;
+                    for (int j = 0; ppath[j] && pos < MAX_PATH - 2; j++)
+                        abs[pos++] = ppath[j];
+                    if (pos > 0 && abs[pos - 1] != '/')
+                        abs[pos++] = '/';
+                    for (int j = 0; target[j] && pos < MAX_PATH - 1; j++)
+                        abs[pos++] = target[j];
+                    abs[pos] = '\0';
+
+                    /* Append remaining path components */
+                    if (*p) {
+                        if (pos > 0 && abs[pos - 1] != '/' && pos < MAX_PATH - 1)
+                            abs[pos++] = '/';
+                        while (*p && pos < MAX_PATH - 1)
+                            abs[pos++] = *p++;
+                        abs[pos] = '\0';
+                    }
+                    return vfs_resolve_path_depth(abs, symlink_depth + 1);
+                }
+
+                /* Absolute symlink: target + "/" + rest */
+                if (*p) {
+                    char full[MAX_PATH];
+                    int pos = 0;
+                    for (int j = 0; target[j] && pos < MAX_PATH - 2; j++)
+                        full[pos++] = target[j];
+                    if (pos > 0 && full[pos - 1] != '/')
+                        full[pos++] = '/';
+                    while (*p && pos < MAX_PATH - 1)
+                        full[pos++] = *p++;
+                    full[pos] = '\0';
+                    return vfs_resolve_path_depth(full, symlink_depth + 1);
+                }
+                return vfs_resolve_path_depth(target, symlink_depth + 1);
+            }
+
             current = child;
         }
 
@@ -402,8 +481,8 @@ int vfs_delete(const char *path) {
         limnfs_delete((uint32_t)parent_ino, n->name);
     }
 
-    /* Free buffer if writable and heap-allocated */
-    if ((n->flags & VFS_FLAG_WRITABLE) && n->data)
+    /* Free buffer if writable and heap-allocated, or if symlink */
+    if (((n->flags & VFS_FLAG_WRITABLE) || n->type == VFS_SYMLINK) && n->data)
         kfree(n->data);
 
     /* Mark as empty */
@@ -665,6 +744,78 @@ int vfs_chown(int node_idx, uint16_t uid, uint16_t gid) {
         limnfs_write_inode((uint32_t)nodes[node_idx].disk_inode, &inode);
     }
     return 0;
+}
+
+/* --- Symlink operations --- */
+
+int vfs_symlink(const char *path, const char *target) {
+    /* Check if already exists */
+    if (vfs_resolve_path(path) >= 0)
+        return -EEXIST;
+
+    /* Split path into parent + basename */
+    char parent_path[MAX_PATH], basename[MAX_PATH];
+    vfs_path_split(path, parent_path, basename);
+    if (basename[0] == '\0')
+        return -EINVAL;
+
+    int parent_idx = vfs_resolve_path(parent_path);
+    if (parent_idx < 0)
+        return -ENOENT;
+    if (nodes[parent_idx].type != VFS_DIRECTORY)
+        return -ENOTDIR;
+
+    /* Allocate buffer for target string */
+    uint64_t tlen = str_len(target);
+    if (tlen == 0 || tlen >= MAX_PATH)
+        return -EINVAL;
+
+    uint8_t *buf = (uint8_t *)kmalloc(tlen + 1);
+    if (!buf)
+        return -ENOMEM;
+    for (uint64_t i = 0; i < tlen; i++)
+        buf[i] = (uint8_t)target[i];
+    buf[tlen] = '\0';
+
+    int idx = vfs_register_node(parent_idx, basename, VFS_SYMLINK, tlen, buf);
+    if (idx < 0) {
+        kfree(buf);
+        return -ENOSPC;
+    }
+    nodes[idx].mode = 0777;  /* symlinks are always rwxrwxrwx */
+    return idx;
+}
+
+int vfs_readlink(const char *path, char *buf, uint64_t bufsize) {
+    if (!path || path[0] != '/')
+        return -EINVAL;
+
+    /* Resolve path WITHOUT following the final symlink component */
+    char parent_path[MAX_PATH], basename[MAX_PATH];
+    vfs_path_split(path, parent_path, basename);
+    if (basename[0] == '\0')
+        return -EINVAL;
+
+    int parent_idx = vfs_resolve_path(parent_path);
+    if (parent_idx < 0)
+        return -ENOENT;
+
+    int idx = vfs_find_child(parent_idx, basename);
+    if (idx < 0)
+        return -ENOENT;
+
+    if (nodes[idx].type != VFS_SYMLINK)
+        return -EINVAL;
+    if (!nodes[idx].data)
+        return -EINVAL;
+
+    uint64_t tlen = nodes[idx].size;
+    if (tlen >= bufsize)
+        tlen = bufsize - 1;
+    for (uint64_t i = 0; i < tlen; i++)
+        buf[i] = (char)nodes[idx].data[i];
+    buf[tlen] = '\0';
+    return (int)tlen;
 }
 
 int vfs_mount_limnfs(void) {

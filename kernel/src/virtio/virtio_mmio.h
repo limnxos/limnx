@@ -55,6 +55,7 @@
 #define VIRTIO_MMIO_MAGIC              0x74726976  /* "virt" */
 #define VIRTIO_MMIO_DEVID_NET          1
 #define VIRTIO_MMIO_DEVID_BLK          2
+#define VIRTIO_MMIO_DEVID_GPU          16
 
 /* ------------------------------------------------------------------ */
 /* MMIO accessors (volatile)                                          */

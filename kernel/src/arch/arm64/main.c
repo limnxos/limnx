@@ -211,6 +211,12 @@ void kmain(uint64_t dtb_addr) {
         serial_puts("[net]  Skipping network stack (no virtio-net)\n");
     }
 
+    /* Virtio-GPU framebuffer (MMIO transport) */
+    {
+        extern int virtio_gpu_mmio_init(void);
+        virtio_gpu_mmio_init();  /* non-fatal: no GPU just means serial-only */
+    }
+
     /* Virtio-blk (MMIO transport) */
     int blk_ok = 0;
     if (virtio_blk_init() == 0) {
