@@ -147,7 +147,11 @@
 #define SYS_SETGROUPS      139
 #define SYS_SYMLINK        140
 #define SYS_READLINK       141
-#define SYS_NR             142
+#define SYS_SETSID         142
+#define SYS_GETSID         143
+#define SYS_TCSETPGRP      144
+#define SYS_TCGETPGRP      145
+#define SYS_NR             146
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

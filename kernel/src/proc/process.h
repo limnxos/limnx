@@ -5,13 +5,18 @@
 #include "sched/thread.h"
 #include "fs/vfs.h"
 
-/* Signal numbers */
+/* Signal numbers (Linux-compatible) */
 #define SIGINT   2
 #define SIGKILL  9
+#define SIGUSR1  10
+#define SIGPIPE  13
 #define SIGTERM  15
 #define SIGCONT  18
 #define SIGSTOP  19
 #define SIGCHLD  20
+#define SIGTSTP  21
+#define SIGTTIN  22
+#define SIGTTOU  23
 
 /* Signal handler constants */
 #define SIG_DFL  0
@@ -87,6 +92,7 @@ typedef struct process {
     uint64_t      pid;
     uint64_t      parent_pid;
     uint64_t      pgid;            /* process group ID */
+    uint64_t      sid;             /* session ID (PID of session leader) */
     uint16_t      uid;             /* real user ID, 0 = root */
     uint16_t      gid;             /* real group ID, 0 = root */
     uint16_t      euid;            /* effective user ID */

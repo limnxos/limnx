@@ -36,6 +36,7 @@
 #define EPIPE           32  /* Broken pipe */
 
 /* Extended errno (Linux errno.h equivalent, codes 35+) */
+#define ENOTTY          25  /* Not a typewriter (inappropriate ioctl) */
 #define ELOOP           40  /* Too many levels of symbolic links */
 #define ENAMETOOLONG    36  /* File name too long */
 #define ENOSYS          38  /* Function not implemented */

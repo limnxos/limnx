@@ -281,6 +281,10 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_SETGROUPS]        = sys_setgroups,
     [SYS_SYMLINK]          = sys_symlink,
     [SYS_READLINK]         = sys_readlink,
+    [SYS_SETSID]           = sys_setsid,
+    [SYS_GETSID]           = sys_getsid,
+    [SYS_TCSETPGRP]        = sys_tcsetpgrp,
+    [SYS_TCGETPGRP]        = sys_tcgetpgrp,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).
@@ -368,6 +372,13 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
             if (handler == SIG_DFL) {
                 /* SIGCHLD and SIGCONT default action is ignore */
                 if (sig == SIGCHLD || sig == SIGCONT) continue;
+                /* SIGTSTP/SIGTTIN/SIGTTOU default action is stop */
+                if (sig == SIGTSTP || sig == SIGTTIN || sig == SIGTTOU) {
+                    t->state = THREAD_STOPPED;
+                    sched_yield();
+                    /* Resumed by SIGCONT — return to user */
+                    break;
+                }
                 /* Default: kill — route through sys_exit for full cleanup
                  * (closes fds, TCP, agents, tokens, re-parents children, etc.) */
                 serial_printf("[proc] Process %lu terminated (signal %d)\n",

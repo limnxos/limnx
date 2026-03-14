@@ -106,11 +106,11 @@ int64_t pty_master_write(int idx, const uint8_t *buf, uint32_t len) {
                 written++;
                 continue;
             }
-            /* ^Z (0x1A): send SIGSTOP to foreground group */
+            /* ^Z (0x1A): send SIGTSTP to foreground group */
             if (ch == 0x1A) {
                 s2m_push(p, '^'); s2m_push(p, 'Z'); s2m_push(p, '\n');
                 if (p->fg_pgid)
-                    process_kill_group(p->fg_pgid, 19); /* SIGSTOP */
+                    process_kill_group(p->fg_pgid, SIGTSTP);
                 p->m2s_read_pos = 0;
                 p->m2s_write_pos = 0;
                 p->m2s_count = 0;

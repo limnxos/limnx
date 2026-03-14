@@ -154,6 +154,10 @@
 #define SYS_SETGROUPS     139
 #define SYS_SYMLINK       140
 #define SYS_READLINK      141
+#define SYS_SETSID        142
+#define SYS_GETSID        143
+#define SYS_TCSETPGRP     144
+#define SYS_TCGETPGRP     145
 
 /* --- Syscall wrappers --- */
 
@@ -736,4 +740,20 @@ long sys_symlink(const char *target, const char *path) {
 
 long sys_readlink(const char *path, char *buf, unsigned long bufsize) {
     return __syscall3(SYS_READLINK, (long)path, (long)buf, (long)bufsize);
+}
+
+long sys_setsid(void) {
+    return __syscall0(SYS_SETSID);
+}
+
+long sys_getsid(long pid) {
+    return __syscall1(SYS_GETSID, pid);
+}
+
+long sys_tcsetpgrp(long fd, long pgrp) {
+    return __syscall2(SYS_TCSETPGRP, fd, pgrp);
+}
+
+long sys_tcgetpgrp(long fd) {
+    return __syscall1(SYS_TCGETPGRP, fd);
 }

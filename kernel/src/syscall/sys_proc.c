@@ -859,3 +859,66 @@ int64_t sys_procinfo(uint64_t index, uint64_t buf_ptr,
     }
     return -1;  /* no more processes */
 }
+
+int64_t sys_setsid(uint64_t a1, uint64_t a2,
+                            uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    /* Can't setsid if already a session leader */
+    if (proc->sid == proc->pid)
+        return -EPERM;
+
+    /* Create new session: sid = pgid = pid */
+    proc->sid = proc->pid;
+    proc->pgid = proc->pid;
+    return (int64_t)proc->sid;
+}
+
+int64_t sys_getsid(uint64_t pid, uint64_t a2,
+                            uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    if (pid == 0)
+        return (int64_t)proc->sid;
+
+    process_t *target = process_lookup(pid);
+    if (!target)
+        return -ESRCH;
+    return (int64_t)target->sid;
+}
+
+int64_t sys_tcsetpgrp(uint64_t fd, uint64_t pgrp,
+                               uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+    if (fd >= MAX_FDS) return -EBADF;
+
+    /* fd must be a PTY */
+    pty_t *pt = (pty_t *)proc->fd_table[fd].pty;
+    if (!pt) return -ENOTTY;
+
+    pt->fg_pgid = pgrp;
+    return 0;
+}
+
+int64_t sys_tcgetpgrp(uint64_t fd, uint64_t a2,
+                               uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+    if (fd >= MAX_FDS) return -EBADF;
+
+    pty_t *pt = (pty_t *)proc->fd_table[fd].pty;
+    if (!pt) return -ENOTTY;
+
+    return (int64_t)pt->fg_pgid;
+}

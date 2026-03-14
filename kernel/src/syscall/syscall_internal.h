@@ -210,4 +210,9 @@ int64_t sys_super_start(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_super_list(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_super_stop(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
+int64_t sys_setsid(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_getsid(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_tcsetpgrp(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_tcgetpgrp(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+
 #endif /* LIMNX_SYSCALL_INTERNAL_H */

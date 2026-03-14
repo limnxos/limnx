@@ -115,6 +115,15 @@ long sys_getgroups(long max_count, void *buf);
 long sys_setgroups(long count, const void *buf);
 long sys_symlink(const char *target, const char *path);
 long sys_readlink(const char *path, char *buf, unsigned long bufsize);
+long sys_setsid(void);
+long sys_getsid(long pid);
+long sys_tcsetpgrp(long fd, long pgrp);
+long sys_tcgetpgrp(long fd);
+
+/* Signal constants */
+#define SIGTSTP  21
+#define SIGTTIN  22
+#define SIGTTOU  23
 
 /* termios structures (matching kernel termios.h) */
 typedef struct {

@@ -194,6 +194,7 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
     {
         process_t *parent = process_lookup(proc->parent_pid);
         proc->pgid = parent ? parent->pgid : proc->pid;
+        proc->sid = parent ? parent->sid : proc->pid;
         /* Inherit uid/gid/euid/egid/caps from parent, or root defaults */
         if (parent) {
             proc->uid = parent->uid;
@@ -398,6 +399,7 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
     {
         process_t *parent = process_lookup(proc->parent_pid);
         proc->pgid = parent ? parent->pgid : proc->pid;
+        proc->sid = parent ? parent->sid : proc->pid;
         /* Inherit uid/gid/euid/egid/caps from parent, or root defaults */
         if (parent) {
             proc->uid = parent->uid;
@@ -579,6 +581,7 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     child->pid = process_alloc_pid();
     child->parent_pid = parent->pid;
     child->pgid = parent->pgid;
+    child->sid = parent->sid;
     child->uid = parent->uid;
     child->gid = parent->gid;
     child->euid = parent->euid;
@@ -761,6 +764,7 @@ uint64_t procfs_get_mem_pages(process_t *p) { return p->used_mem_pages; }
 uint32_t procfs_get_pending_signals(process_t *p) { return p->pending_signals; }
 uint32_t procfs_get_signal_mask(process_t *p) { return p->signal_mask; }
 uint32_t procfs_get_ns_id(process_t *p) { return p->ns_id; }
+uint64_t procfs_get_sid(process_t *p) { return p->sid; }
 int procfs_get_argc(process_t *p) { return p->argc; }
 const char *procfs_get_argv_buf(process_t *p) { return p->argv_buf; }
 int procfs_get_argv_buf_len(process_t *p) { return p->argv_buf_len; }
