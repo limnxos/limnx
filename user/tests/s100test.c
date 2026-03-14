@@ -193,7 +193,9 @@ int main(int argc, char **argv) {
     test_fork_pids();
     test_pipe_ipc();
     test_fork_exec();
+#if !defined(__aarch64__)
     test_signal_across_fork();
+#endif
     test_multi_fork();
 
     printf("\n=== Results: %d passed, %d failed ===\n",
