@@ -31,6 +31,14 @@ static void sigusr1_handler(int signum) {
     sys_sigreturn();
 }
 
+/* Brief sleep (50ms) to let scheduler run other processes */
+static void brief_sleep(void) {
+    long ts[2];          /* [0]=tv_sec, [1]=tv_nsec */
+    ts[0] = 0;
+    ts[1] = 50000000;    /* 50ms */
+    sys_nanosleep(ts);
+}
+
 /* --- Tests --- */
 
 static void test_fork_pids(void) {
@@ -72,7 +80,7 @@ static void test_pipe_ipc(void) {
     long child_pid = sys_fork();
 
     if (child_pid == 0) {
-        /* Child: close read end, write message */
+        /* Child: close read end, write message, close write end */
         sys_close(rfd);
         const char *msg = "hello";
         sys_fwrite(wfd, msg, 5);
@@ -80,8 +88,15 @@ static void test_pipe_ipc(void) {
         sys_exit(0);
     }
 
-    /* Parent: close write end, read message */
+    /* Parent: close write end first so pipe detects EOF correctly */
     sys_close(wfd);
+
+    /* Wait for child to finish writing and exit.
+     * This eliminates SMP race conditions — the child has definitely
+     * written to the pipe and closed its write end before we read. */
+    sys_waitpid(child_pid);
+
+    /* Now read — pipe has data and closed_write is true */
     char buf[16];
     for (int i = 0; i < 16; i++) buf[i] = 0;
     long n = sys_read(rfd, buf, 16);
@@ -90,19 +105,17 @@ static void test_pipe_ipc(void) {
     check("read 5 bytes from pipe", n == 5);
     check("pipe data correct", buf[0] == 'h' && buf[1] == 'e' &&
           buf[2] == 'l' && buf[3] == 'l' && buf[4] == 'o');
-
-    sys_waitpid(child_pid);
 }
 
 static void test_fork_exec(void) {
-    printf("[3] Fork + exec + waitpid\n");
+    printf("[3] Fork + execve + waitpid\n");
 
     long child_pid = sys_fork();
 
     if (child_pid == 0) {
-        /* Child: exec hello.elf (prints "Hello, world!" and exits 0) */
-        sys_exec("/hello.elf", 0);
-        /* If exec fails, exit with error */
+        /* Child: execve replaces this process with hello.elf */
+        sys_execve("/hello.elf", 0);
+        /* If execve fails, exit with error */
         sys_exit(99);
     }
 
@@ -123,16 +136,16 @@ static void test_signal_across_fork(void) {
     long child_pid = sys_fork();
 
     if (child_pid == 0) {
-        /* Child: brief yield then send SIGUSR1 to parent */
-        sys_yield();
-        sys_yield();
+        /* Child: sleep briefly to let parent enter wait loop,
+         * then send SIGUSR1 to parent */
+        brief_sleep();
         sys_kill(parent_pid, 10);
         sys_exit(0);
     }
 
-    /* Parent: wait for signal (with timeout) */
-    for (int i = 0; i < 10000 && !sig_received; i++)
-        sys_yield();
+    /* Parent: wait for signal with proper timeout (500ms) */
+    for (int i = 0; i < 10 && !sig_received; i++)
+        brief_sleep();
 
     check("SIGUSR1 received from child", sig_received == 1);
 

@@ -582,6 +582,7 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     child->rlimit_nfds = parent->rlimit_nfds;
     child->used_mem_pages = parent->used_mem_pages;
     child->seccomp_mask = parent->seccomp_mask;
+    child->seccomp_mask_hi = parent->seccomp_mask_hi;
     child->seccomp_strict = parent->seccomp_strict;
     child->audit_flags = parent->audit_flags;
     child->exit_status = 0;

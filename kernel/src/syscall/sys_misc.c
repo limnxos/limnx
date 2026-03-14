@@ -118,6 +118,7 @@ int64_t sys_write(uint64_t buf, uint64_t len,
         return -1;
 
     const char *s = (const char *)buf;
+
     for (uint64_t i = 0; i < len; i++)
         serial_putc(s[i]);
 
