@@ -222,6 +222,7 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
     proc->seccomp_mask_hi = 0;
     proc->seccomp_strict = 0;
     proc->audit_flags = 0;
+    proc->daemon = 0;
 
     /* Initialize file descriptor table */
     for (int i = 0; i < MAX_FDS; i++) {
@@ -424,6 +425,7 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
     proc->seccomp_mask_hi = 0;
     proc->seccomp_strict = 0;
     proc->audit_flags = 0;
+    proc->daemon = 0;
 
     /* Initialize file descriptor table */
     for (int i = 0; i < MAX_FDS; i++) {
@@ -585,6 +587,7 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     child->seccomp_mask_hi = parent->seccomp_mask_hi;
     child->seccomp_strict = parent->seccomp_strict;
     child->audit_flags = parent->audit_flags;
+    child->daemon = 0;  /* forked children are never daemons */
     child->exit_status = 0;
     child->exited = 0;
     child->wait_thread = NULL;
