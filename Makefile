@@ -92,7 +92,8 @@ USER_C_PROGRAMS := build/user/programs/shell.elf build/user/programs/agent.elf \
                    build/user/programs/multiagent.elf build/user/programs/netagent.elf \
                    build/user/programs/crasher.elf \
                    build/user/programs/serviced.elf \
-                   build/user/programs/hello.elf
+                   build/user/programs/hello.elf \
+                   build/user/programs/init.elf
 
 # Test programs
 USER_C_TESTS := build/user/tests/mathtest.elf build/user/tests/agenttest.elf \
@@ -129,7 +130,8 @@ USER_C_TESTS := build/user/tests/mathtest.elf build/user/tests/agenttest.elf \
                 build/user/tests/s78test.elf \
                 build/user/tests/s96test.elf \
                 build/user/tests/s100test.elf \
-                build/user/tests/s107test.elf
+                build/user/tests/s107test.elf \
+                build/user/tests/s108test.elf
 
 USER_C_ELFS := $(USER_C_PROGRAMS) $(USER_C_TESTS)
 
@@ -378,9 +380,11 @@ ARM64_LIBC_C_OBJS := $(patsubst user/libc/%.c,build/arm64/user/libc/%.o,$(LIBC_C
 # ARM64 user programs
 ARM64_USER_C_PROGRAMS := build/arm64/user/programs/shell.elf \
                           build/arm64/user/programs/serviced.elf \
-                          build/arm64/user/programs/hello.elf
+                          build/arm64/user/programs/hello.elf \
+                          build/arm64/user/programs/init.elf
 ARM64_USER_C_TESTS := build/arm64/user/tests/s100test.elf \
-                      build/arm64/user/tests/s107test.elf
+                      build/arm64/user/tests/s107test.elf \
+                      build/arm64/user/tests/s108test.elf
 ARM64_USER_C_ELFS := $(ARM64_USER_C_PROGRAMS) $(ARM64_USER_C_TESTS)
 
 # ARM64 initrd

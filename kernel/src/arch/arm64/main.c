@@ -324,84 +324,92 @@ void kmain(uint64_t dtb_addr) {
         }
     }
 
-    /* Create /etc/services config for serviced */
+    /* Create /etc config directory and default configs */
+    vfs_mkdir("/etc");
     {
-        vfs_mkdir("/etc");
         int svc_node = vfs_create("/etc/services");
         if (svc_node >= 0) {
             const char *default_cfg =
-                "# Service config: name|path|policy|after\n"
-                "# policy: one-for-one, one-for-all\n"
-                "# after: dependency name, or none\n";
+                "# Service config: name|path|policy|after\n";
             int len = 0;
             while (default_cfg[len]) len++;
             vfs_write(svc_node, 0, (const uint8_t *)default_cfg, len);
-            pr_info("Created /etc/services\n");
+        }
+
+        int tab_node = vfs_create("/etc/inittab");
+        if (tab_node >= 0) {
+            const char *inittab =
+                "# Init config: name:path:flags\n"
+                "serviced:/serviced.elf:respawn\n"
+                "shell:/shell.elf:wait\n";
+            int len = 0;
+            while (inittab[len]) len++;
+            vfs_write(tab_node, 0, (const uint8_t *)inittab, len);
+            pr_info("Created /etc/inittab\n");
         }
     }
 
-    /* Load and run serviced.elf — persistent service daemon */
-    pr_info("\nLoading serviced.elf...\n");
+    /* Launch init (pid 1) — Unix standard */
+    pr_info("\nLaunching init...\n");
     {
-        process_t *sd_proc = load_elf_from_vfs("/serviced.elf");
-        if (sd_proc) {
-            sd_proc->capabilities = 0xFFF;  /* full caps for service management */
-            sd_proc->daemon = 1;
-            pr_info("serviced.elf spawned (pid %lu)\n", sd_proc->pid);
-            sched_add(sd_proc->main_thread);
-        } else {
-            pr_warn("serviced.elf not found\n");
-        }
-    }
-
-    /* Load and run shell.elf with console PTY as stdin/stdout/stderr */
-    pr_info("\nLoading shell.elf...\n");
-    {
-        process_t *sh_proc = load_elf_from_vfs("/shell.elf");
-        if (sh_proc) {
-            /* Set up fd 0/1/2 as console PTY slave */
+        process_t *init_proc = load_elf_from_vfs("/init.elf");
+        if (init_proc) {
             if (con_pty >= 0) {
                 pty_t *pt = pty_get(con_pty);
                 if (pt) {
                     for (int fd = 0; fd < 3; fd++) {
-                        sh_proc->fd_table[fd].node = NULL;
-                        sh_proc->fd_table[fd].offset = 0;
-                        sh_proc->fd_table[fd].pipe = NULL;
-                        sh_proc->fd_table[fd].pipe_write = 0;
-                        sh_proc->fd_table[fd].pty = (void *)pt;
-                        sh_proc->fd_table[fd].pty_is_master = 0;
-                        sh_proc->fd_table[fd].unix_sock = NULL;
-                        sh_proc->fd_table[fd].eventfd = NULL;
-                        sh_proc->fd_table[fd].epoll = NULL;
-                        sh_proc->fd_table[fd].uring = NULL;
-                        sh_proc->fd_table[fd].open_flags = 2; /* O_RDWR */
-                        sh_proc->fd_table[fd].fd_flags = 0;
+                        init_proc->fd_table[fd].node = NULL;
+                        init_proc->fd_table[fd].offset = 0;
+                        init_proc->fd_table[fd].pipe = NULL;
+                        init_proc->fd_table[fd].pipe_write = 0;
+                        init_proc->fd_table[fd].pty = (void *)pt;
+                        init_proc->fd_table[fd].pty_is_master = 0;
+                        init_proc->fd_table[fd].unix_sock = NULL;
+                        init_proc->fd_table[fd].eventfd = NULL;
+                        init_proc->fd_table[fd].epoll = NULL;
+                        init_proc->fd_table[fd].uring = NULL;
+                        init_proc->fd_table[fd].open_flags = 2;
+                        init_proc->fd_table[fd].fd_flags = 0;
                     }
                     pt->slave_refs = 3;
-                    pt->fg_pgid = sh_proc->pid;
-                    pr_info("Shell fd 0/1/2 connected to console PTY slave\n");
+                    pt->fg_pgid = init_proc->pid;
+                    pr_info("init fd 0/1/2 connected to console PTY slave\n");
                 }
             }
-            /* Set LIMNX_VERSION env */
-            {
-                const char *env_entry = "LIMNX_VERSION=0.107";
-                int elen = 0;
-                while (env_entry[elen]) elen++;
-                for (int i = 0; i <= elen; i++)
-                    sh_proc->env_buf[i] = env_entry[i];
-                sh_proc->env_buf_len = elen + 1;
-                sh_proc->env_count = 1;
-            }
-
-            /* Set capabilities */
-            sh_proc->capabilities = 0x1FFF; /* CAP_ALL */
-
-            pr_info("shell.elf spawned (pid %lu)\n", sh_proc->pid);
-            sched_add(sh_proc->main_thread);
-            process_reap(sh_proc);
-            pr_info("shell.elf completed\n");
+            init_proc->capabilities = 0xFFFFFFFF;
+            pr_info("init.elf spawned (pid %lu)\n", init_proc->pid);
+            sched_add(init_proc->main_thread);
+            process_reap(init_proc);
+            pr_err("init exited — system halted\n");
         } else {
-            pr_err("shell.elf not found or failed to load\n");
+            pr_err("init.elf not found — falling back to shell\n");
+            process_t *sh_proc = load_elf_from_vfs("/shell.elf");
+            if (sh_proc) {
+                if (con_pty >= 0) {
+                    pty_t *pt = pty_get(con_pty);
+                    if (pt) {
+                        for (int fd = 0; fd < 3; fd++) {
+                            sh_proc->fd_table[fd].node = NULL;
+                            sh_proc->fd_table[fd].offset = 0;
+                            sh_proc->fd_table[fd].pipe = NULL;
+                            sh_proc->fd_table[fd].pipe_write = 0;
+                            sh_proc->fd_table[fd].pty = (void *)pt;
+                            sh_proc->fd_table[fd].pty_is_master = 0;
+                            sh_proc->fd_table[fd].unix_sock = NULL;
+                            sh_proc->fd_table[fd].eventfd = NULL;
+                            sh_proc->fd_table[fd].epoll = NULL;
+                            sh_proc->fd_table[fd].uring = NULL;
+                            sh_proc->fd_table[fd].open_flags = 2;
+                            sh_proc->fd_table[fd].fd_flags = 0;
+                        }
+                        pt->slave_refs = 3;
+                        pt->fg_pgid = sh_proc->pid;
+                    }
+                }
+                sh_proc->capabilities = 0xFFFFFFFF;
+                sched_add(sh_proc->main_thread);
+                process_reap(sh_proc);
+            }
         }
     }
 
