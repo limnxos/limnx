@@ -26,6 +26,11 @@
 #define PTE_SWAP         (1ULL << 10)  /* Page swapped to disk */
 #define PTE_WAS_WRITABLE (1ULL << 11)  /* Page was writable before COW */
 
+/* ARM64 memory attribute compatibility (no-op on x86_64) */
+#define PTE_ATTRINDX_NORMAL  (0ULL)
+#define PTE_ATTRINDX_DEVICE  (0ULL)
+#define PTE_SH_ISH           (0ULL)
+
 /* Physical address mask (bits 12-51) */
 #define PTE_ADDR_MASK    0x000FFFFFFFFFF000ULL
 

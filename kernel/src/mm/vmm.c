@@ -76,8 +76,6 @@ void vmm_init(void) {
      *
      * We use PMM to allocate the new tables, then switch TTBR0. */
     {
-        #include "arch/arm64/pte.h"
-
         #define ARM64_RAM_BASE  0x40000000ULL
         #define ARM64_RAM_SIZE  (256ULL * 1024 * 1024)  /* 256MB */
         #define ARM64_KERN_END  (ARM64_RAM_BASE + ARM64_RAM_SIZE)

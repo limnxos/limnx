@@ -339,6 +339,13 @@ void arch_tlb_shootdown(void) {
     }
 }
 
+/* Send IPI to a specific CPU by logical ID */
+void arch_send_ipi(uint32_t target_cpu_id, uint32_t vector) {
+    if (target_cpu_id >= cpu_count)
+        return;
+    lapic_send_ipi(percpu_array[target_cpu_id].lapic_id, vector);
+}
+
 /* SYSCALL init wrapper — called from syscall_init() on BSP */
 #define MSR_GS_BASE 0xC0000101
 void arch_syscall_init(void) {

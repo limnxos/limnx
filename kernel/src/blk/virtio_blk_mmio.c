@@ -16,6 +16,7 @@
 #include "net/virtio_net.h"   /* virtq_desc_t, virtq_avail_t, virtq_used_t */
 #include "virtio/virtio_mmio.h"
 #include "mm/pmm.h"
+#include "mm/dma.h"
 #include "mm/kheap.h"
 #include "arch/cpu.h"
 
@@ -60,16 +61,12 @@ static int setup_virtqueue(void) {
     /* Allocate contiguous pages for descriptor + avail + used */
     uint64_t total = virtq_size_bytes(q_size);
     uint32_t pages = (total + PAGE_SIZE - 1) / PAGE_SIZE;
-    uint64_t phys  = pmm_alloc_contiguous(pages);
-    if (phys == 0) {
+    uint8_t *virt = (uint8_t *)dma_alloc((uint64_t)pages * PAGE_SIZE);
+    if (!virt) {
         pr_err("failed to alloc %u pages for queue\n", pages);
         return -1;
     }
-
-    /* Zero the memory */
-    uint8_t *virt = (uint8_t *)PHYS_TO_VIRT(phys);
-    for (uint64_t i = 0; i < (uint64_t)pages * PAGE_SIZE; i++)
-        virt[i] = 0;
+    uint64_t phys = dma_virt_to_phys(virt);
 
     /* Compute ring pointers */
     q_desc  = (virtq_desc_t *)virt;
@@ -92,12 +89,9 @@ static int setup_virtqueue(void) {
 
 static int blk_do_request(uint32_t type, uint64_t sector, void *data_buf) {
     /* Allocate a page for request header + status byte */
-    uint64_t req_phys = pmm_alloc_page();
-    if (req_phys == 0) return -1;
-
-    uint8_t *req_virt = (uint8_t *)PHYS_TO_VIRT(req_phys);
-    for (int i = 0; i < (int)PAGE_SIZE; i++)
-        req_virt[i] = 0;
+    uint8_t *req_virt = (uint8_t *)dma_alloc(PAGE_SIZE);
+    if (!req_virt) return -1;
+    uint64_t req_phys = dma_virt_to_phys(req_virt);
 
     /* Fill request header at offset 0 */
     virtio_blk_req_t *hdr = (virtio_blk_req_t *)req_virt;
@@ -106,12 +100,12 @@ static int blk_do_request(uint32_t type, uint64_t sector, void *data_buf) {
     hdr->sector   = sector;
 
     /* Allocate a separate DMA page for the data buffer */
-    uint64_t data_phys = pmm_alloc_page();
-    if (data_phys == 0) {
-        pmm_free_page(req_phys);
+    uint8_t *data_virt = (uint8_t *)dma_alloc(PAGE_SIZE);
+    if (!data_virt) {
+        dma_free(req_virt, PAGE_SIZE);
         return -1;
     }
-    uint8_t *data_virt = (uint8_t *)PHYS_TO_VIRT(data_phys);
+    uint64_t data_phys = dma_virt_to_phys(data_virt);
 
     /* If write, copy data into DMA buffer */
     if (type == VIRTIO_BLK_T_OUT) {
@@ -174,8 +168,8 @@ static int blk_do_request(uint32_t type, uint64_t sector, void *data_buf) {
     if (!completed) {
         pr_err("timeout waiting for blk request (sector=%lu type=%u)\n",
                sector, type);
-        pmm_free_page(req_phys);
-        pmm_free_page(data_phys);
+        dma_free(req_virt, PAGE_SIZE);
+        dma_free(data_virt, PAGE_SIZE);
         return -1;
     }
 

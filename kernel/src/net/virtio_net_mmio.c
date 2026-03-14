@@ -20,6 +20,7 @@
 #include "arch/frame.h"
 #include "arch/cpu.h"
 #include "mm/pmm.h"
+#include "mm/dma.h"
 #include "mm/kheap.h"
 
 /* ------------------------------------------------------------------ */
@@ -82,19 +83,15 @@ static int setup_virtqueue(uint16_t queue_idx,
     /* Legacy: alignment */
     mmio_write32(dev_base, VIRTIO_MMIO_QUEUE_ALIGN, 4096);
 
-    /* Allocate contiguous pages */
+    /* Allocate contiguous DMA pages */
     uint64_t total = virtq_size_bytes(qsz);
     uint32_t pages = (total + PAGE_SIZE - 1) / PAGE_SIZE;
-    uint64_t phys  = pmm_alloc_contiguous(pages);
-    if (phys == 0) {
+    uint8_t *virt = (uint8_t *)dma_alloc((uint64_t)pages * PAGE_SIZE);
+    if (!virt) {
         pr_err("failed to alloc %u pages for queue %u\n", pages, queue_idx);
         return -1;
     }
-
-    /* Zero memory */
-    uint8_t *virt = (uint8_t *)PHYS_TO_VIRT(phys);
-    for (uint64_t i = 0; i < (uint64_t)pages * PAGE_SIZE; i++)
-        virt[i] = 0;
+    uint64_t phys = dma_virt_to_phys(virt);
 
     /* Compute ring pointers */
     *out_desc  = (virtq_desc_t *)virt;
@@ -122,9 +119,10 @@ static void rx_fill_descriptors(void) {
         if (rxq_buffers[i] != 0)
             continue;
 
-        uint64_t buf_phys = pmm_alloc_page();
-        if (buf_phys == 0)
+        void *buf = dma_alloc(PAGE_SIZE);
+        if (!buf)
             break;
+        uint64_t buf_phys = dma_virt_to_phys(buf);
         rxq_buffers[i] = buf_phys;
 
         rxq_desc[i].addr  = buf_phys;
@@ -171,7 +169,7 @@ static void virtio_net_mmio_irq(interrupt_frame_t *frame) {
             }
 
             /* Free buffer so rx_fill_descriptors can reallocate */
-            pmm_free_page(rxq_buffers[desc_id]);
+            dma_free((void *)PHYS_TO_VIRT(rxq_buffers[desc_id]), PAGE_SIZE);
             rxq_buffers[desc_id] = 0;
         }
 
@@ -197,18 +195,17 @@ int virtio_net_tx(const void *frame_data, uint32_t len) {
         if (desc_id < txq_size) {
             uint64_t buf_phys = txq_desc[desc_id].addr;
             if (buf_phys)
-                pmm_free_page(buf_phys);
+                dma_free((void *)PHYS_TO_VIRT(buf_phys), PAGE_SIZE);
             txq_desc[desc_id].addr = 0;
         }
         txq_last_used++;
     }
 
     /* Allocate a DMA page for TX buffer */
-    uint64_t buf_phys = pmm_alloc_page();
-    if (buf_phys == 0)
+    uint8_t *buf = (uint8_t *)dma_alloc(PAGE_SIZE);
+    if (!buf)
         return -1;
-
-    uint8_t *buf = (uint8_t *)PHYS_TO_VIRT(buf_phys);
+    uint64_t buf_phys = dma_virt_to_phys(buf);
 
     /* Write virtio-net header (all zeros = no offload) */
     for (int i = 0; i < VIRTIO_NET_HDR_SIZE; i++)
@@ -328,12 +325,11 @@ int virtio_net_init(void) {
 
     /* Allocate RX buffer tracking array */
     uint32_t track_pages = ((uint64_t)rxq_size * 8 + PAGE_SIZE - 1) / PAGE_SIZE;
-    uint64_t track_phys  = pmm_alloc_contiguous(track_pages);
-    if (track_phys == 0) {
+    rxq_buffers = (uint64_t *)dma_alloc((uint64_t)track_pages * PAGE_SIZE);
+    if (!rxq_buffers) {
         pr_err("failed to alloc RX buffer tracking array\n");
         goto fail;
     }
-    rxq_buffers = (uint64_t *)PHYS_TO_VIRT(track_phys);
     for (uint16_t i = 0; i < rxq_size; i++)
         rxq_buffers[i] = 0;
 

@@ -19,6 +19,7 @@
 
 #include <stdint.h>
 #include "compiler.h"
+#include "arch/cpu.h"
 
 /* ------------------------------------------------------------------ */
 /* MMIO register offsets (virtio-mmio legacy / v1)                    */
@@ -106,9 +107,9 @@ static inline uint64_t virtq_size_bytes(uint16_t qsz) {
     return first + used_sz;
 }
 
-/* ARM64 device memory barrier */
+/* Device memory barrier (mfence on x86_64, dmb sy on ARM64) */
 static inline void virtio_mb(void) {
-    __asm__ volatile ("dmb sy" ::: "memory");
+    arch_memory_barrier();
 }
 
 #endif /* LIMNX_VIRTIO_MMIO_H */

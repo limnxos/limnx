@@ -32,6 +32,7 @@ SRCS     := kernel/src/main.c \
             kernel/src/arch/x86_64/smp.c kernel/src/arch/x86_64/boot.c \
             kernel/src/mm/pmm.c kernel/src/mm/vmm.c \
             kernel/src/mm/kheap.c \
+            kernel/src/mm/dma.c \
             kernel/src/sched/thread.c \
             kernel/src/sched/sched.c \
             kernel/src/syscall/syscall.c \
@@ -125,7 +126,8 @@ USER_C_TESTS := build/user/tests/mathtest.elf build/user/tests/agenttest.elf \
                 build/user/tests/s74test.elf build/user/tests/s75test.elf \
                 build/user/tests/s76test.elf build/user/tests/s77test.elf \
                 build/user/tests/s78test.elf \
-                build/user/tests/s96test.elf
+                build/user/tests/s96test.elf \
+                build/user/tests/s100test.elf
 
 USER_C_ELFS := $(USER_C_PROGRAMS) $(USER_C_TESTS)
 
@@ -321,6 +323,7 @@ ARM64_C_SRCS := kernel/src/arch/arm64/main.c \
                 kernel/src/arch/arm64/stubs.c \
                 kernel/src/mm/pmm.c kernel/src/mm/vmm.c \
                 kernel/src/mm/kheap.c \
+                kernel/src/mm/dma.c \
                 kernel/src/sched/thread.c kernel/src/sched/sched.c \
                 kernel/src/sync/mutex.c kernel/src/sync/futex.c \
                 kernel/src/proc/process.c kernel/src/proc/elf.c \

@@ -6,6 +6,7 @@
 #include "arch/frame.h"
 #include "arch/io.h"
 #include "mm/pmm.h"
+#include "mm/dma.h"
 #include "arch/serial.h"
 #include "arch/cpu.h"
 
@@ -74,20 +75,16 @@ static int setup_virtqueue(uint16_t queue_idx,
     }
     *out_qsz = qsz;
 
-    /* Allocate contiguous pages for the queue */
+    /* Allocate contiguous DMA pages for the queue */
     uint64_t total_bytes = virtq_size_bytes(qsz);
     uint32_t pages_needed = (total_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
-    uint64_t phys = pmm_alloc_contiguous(pages_needed);
-    if (phys == 0) {
+    uint8_t *virt = (uint8_t *)dma_alloc((uint64_t)pages_needed * PAGE_SIZE);
+    if (!virt) {
         pr_err("Failed to alloc %u pages for queue %u\n",
                pages_needed, queue_idx);
         return -1;
     }
-
-    /* Zero the memory */
-    uint8_t *virt = (uint8_t *)PHYS_TO_VIRT(phys);
-    for (uint64_t i = 0; i < (uint64_t)pages_needed * PAGE_SIZE; i++)
-        virt[i] = 0;
+    uint64_t phys = dma_virt_to_phys(virt);
 
     /* Compute pointers */
     *out_desc  = (virtq_desc_t *)virt;
@@ -112,8 +109,9 @@ static void rx_fill_descriptors(void) {
         if (rxq_buffers[i] != 0)
             continue; /* already has a buffer */
 
-        uint64_t buf_phys = pmm_alloc_page();
-        if (buf_phys == 0) break;
+        void *buf = dma_alloc(PAGE_SIZE);
+        if (!buf) break;
+        uint64_t buf_phys = dma_virt_to_phys(buf);
         rxq_buffers[i] = buf_phys;
 
         rxq_desc[i].addr  = buf_phys;
@@ -143,17 +141,16 @@ int virtio_net_tx(const void *frame, uint32_t len) {
         uint32_t desc_id = txq_used->ring[used_idx].id;
         uint64_t buf_phys = txq_desc[desc_id].addr;
         if (buf_phys)
-            pmm_free_page(buf_phys);
+            dma_free((void *)PHYS_TO_VIRT(buf_phys), PAGE_SIZE);
         txq_desc[desc_id].addr = 0;
         txq_last_used++;
     }
 
-    /* Allocate a page for the TX buffer */
-    uint64_t buf_phys = pmm_alloc_page();
-    if (buf_phys == 0)
+    /* Allocate a DMA page for the TX buffer */
+    uint8_t *buf = (uint8_t *)dma_alloc(PAGE_SIZE);
+    if (!buf)
         return -1;
-
-    uint8_t *buf = (uint8_t *)PHYS_TO_VIRT(buf_phys);
+    uint64_t buf_phys = dma_virt_to_phys(buf);
 
     /* Write virtio-net header (all zeros = no offload) */
     for (int i = 0; i < VIRTIO_NET_HDR_SIZE; i++)
@@ -208,8 +205,8 @@ static void virtio_net_irq(interrupt_frame_t *frame) {
         }
 
         /* Mark buffer as empty so rx_fill_descriptors can reuse it */
+        dma_free((void *)PHYS_TO_VIRT(rxq_buffers[desc_id]), PAGE_SIZE);
         rxq_buffers[desc_id] = 0;
-        pmm_free_page(rxq_desc[desc_id].addr);
 
         rxq_last_used++;
     }
@@ -270,11 +267,10 @@ int virtio_net_init(void) {
     if (setup_virtqueue(TX_QUEUE, &txq_size, &txq_desc, &txq_avail, &txq_used) != 0)
         goto fail;
 
-    /* Allocate RX buffer tracking array (from PMM) */
+    /* Allocate RX buffer tracking array */
     uint32_t track_pages = ((uint64_t)rxq_size * 8 + PAGE_SIZE - 1) / PAGE_SIZE;
-    uint64_t track_phys = pmm_alloc_contiguous(track_pages);
-    if (track_phys == 0) goto fail;
-    rxq_buffers = (uint64_t *)PHYS_TO_VIRT(track_phys);
+    rxq_buffers = (uint64_t *)dma_alloc((uint64_t)track_pages * PAGE_SIZE);
+    if (!rxq_buffers) goto fail;
     for (uint16_t i = 0; i < rxq_size; i++)
         rxq_buffers[i] = 0;
 
