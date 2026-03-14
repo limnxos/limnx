@@ -15,7 +15,12 @@
 
 #include "arch/serial.h"
 #include "arch/percpu.h"
+#include "arch/frame.h"
 #include <stdint.h>
+
+/* Page fault handler from sys_mm.c — handles COW, swap-in, demand paging */
+extern int page_fault_handler(uint64_t fault_addr, uint64_t err_code,
+                              interrupt_frame_t *frame);
 
 /* ESR_EL1 exception class field */
 #define ESR_EC_SHIFT    26
@@ -44,11 +49,18 @@ long __attribute__((weak)) syscall_dispatch(long num, long a1, long a2,
 /*
  * Synchronous exception handler — dispatches SVC, data/instruction aborts
  */
+/* Per-CPU exception frame pointer — used by sys_fork to read user context */
+extern uint64_t *arm64_exception_frame[];
+
 void arm64_sync_handler(arm64_frame_t *frame, uint64_t esr) {
     uint32_t ec = (esr & ESR_EC_MASK) >> ESR_EC_SHIFT;
 
     switch (ec) {
     case ESR_EC_SVC64: {
+        /* Save frame pointer for sys_fork to access user context */
+        percpu_t *_pc = percpu_get();
+        arm64_exception_frame[_pc->cpu_id] = (uint64_t *)frame;
+
         /* Syscall: x8=number, x0-x5=args, return in x0 */
         long ret = syscall_dispatch(
             (long)frame->x[8],
@@ -68,14 +80,25 @@ void arm64_sync_handler(arm64_frame_t *frame, uint64_t esr) {
         break;
     }
     case ESR_EC_DABT_EL0: {
-        /* Data abort from user mode — kill the faulting process */
+        /* Data abort from user mode — try COW/swap/demand paging first */
         uint64_t far;
         __asm__ volatile ("mrs %0, far_el1" : "=r"(far));
+
+        /* Translate ARM64 ESR to x86-style err_code for page_fault_handler:
+         * bit 0 (present): ISS[5] (DFSC bit 2) — translation fault vs permission fault
+         * bit 1 (write): ISS[6] (WnR) — 1 if write, 0 if read
+         * bit 2 (user): always 1 (EL0 abort) */
+        uint32_t dfsc = esr & 0x3F;  /* Data Fault Status Code */
+        int is_permission = (dfsc >= 0x0C && dfsc <= 0x0F);  /* permission fault */
+        int is_write = (esr >> 6) & 1;  /* WnR bit */
+        uint64_t err_code = (is_permission ? 1 : 0) | (is_write ? 2 : 0) | 4;
+
+        if (page_fault_handler(far, err_code, (interrupt_frame_t *)frame) == 0)
+            break;  /* Handled (COW, swap-in, or demand page) */
+
+        /* Unhandled — kill the process */
         serial_printf("[fault] User data abort at PC=0x%lx FAR=0x%lx ESR=0x%lx\n",
                       frame->elr_el1, far, esr);
-        /* Force process exit by redirecting to SYS_EXIT(139) */
-        frame->x[8] = 2;   /* SYS_EXIT */
-        frame->x[0] = 139; /* SIGSEGV-like exit code */
         frame->x[0] = syscall_dispatch(2, 139, 0, 0, 0, 0);
         break;
     }

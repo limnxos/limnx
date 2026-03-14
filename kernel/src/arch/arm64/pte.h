@@ -26,6 +26,11 @@
 #define PTE_USER         (1ULL << 6)   /* AP[1]=1, EL0 access */
 #define PTE_READONLY     (1ULL << 7)   /* AP[2]=1, read-only */
 
+/* Portable writable/readonly helpers (ARM64: set/clear AP[2]) */
+#define PTE_MAKE_READONLY(f) ((f) | PTE_READONLY)
+#define PTE_MAKE_WRITABLE(f) ((f) & ~PTE_READONLY)
+#define PTE_IS_WRITABLE(f)   (!((f) & PTE_READONLY))
+
 /* Memory attributes (AttrIndx in bits [4:2]):
  * Maps to MAIR_EL1 indices set in boot.S:
  *   Index 0 = Normal WB (0xFF)

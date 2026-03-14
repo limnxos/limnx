@@ -26,6 +26,11 @@
 #define PTE_SWAP         (1ULL << 10)  /* Page swapped to disk */
 #define PTE_WAS_WRITABLE (1ULL << 11)  /* Page was writable before COW */
 
+/* Portable writable/readonly helpers (arch-specific semantics) */
+#define PTE_MAKE_READONLY(f) ((f) & ~PTE_WRITABLE)
+#define PTE_MAKE_WRITABLE(f) ((f) | PTE_WRITABLE)
+#define PTE_IS_WRITABLE(f)   ((f) & PTE_WRITABLE)
+
 /* ARM64 memory attribute compatibility (no-op on x86_64) */
 #define PTE_ATTRINDX_NORMAL  (0ULL)
 #define PTE_ATTRINDX_DEVICE  (0ULL)

@@ -103,6 +103,9 @@ void arm64_ap_main(uint64_t cpu_id) {
     percpu_t *pc = &percpu_array[cpu_id];
     arch_set_percpu_base((uint64_t)pc);
 
+    /* Enable NEON/FP on this AP (CPACR_EL1) — needed for context_switch fxsave/fxrstor */
+    arch_fpu_init();
+
     pr_info("AP%lu online, initializing\n", cpu_id);
 
     /* Initialize GIC CPU interface for this core.
@@ -277,5 +280,8 @@ void arch_syscall_init(void) {
 
 void arch_set_kernel_stack(uint64_t stack_top) {
     (void)stack_top;
-    /* ARM64: SP_EL1 is set automatically by exception entry */
 }
+
+/* Per-CPU saved exception frame pointer — set by arm64_sync_handler,
+ * read by sys_fork to extract user context without kstack_top offsets. */
+uint64_t *arm64_exception_frame[MAX_CPUS];

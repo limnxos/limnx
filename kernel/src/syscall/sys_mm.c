@@ -666,7 +666,7 @@ int page_fault_handler(uint64_t fault_addr, uint64_t err_code,
             uint64_t clean_flags = old_flags & ~(PTE_COW | PTE_WAS_WRITABLE);
 
             if (pmm_ref_get(old_phys) == 1) {
-                *pte = old_phys | (clean_flags | PTE_WRITABLE | PTE_PRESENT);
+                *pte = old_phys | PTE_MAKE_WRITABLE(clean_flags) | PTE_PRESENT;
                 invlpg_addr(fault_addr & ~0xFFFULL);
                 return 0;
             }
@@ -678,7 +678,7 @@ int page_fault_handler(uint64_t fault_addr, uint64_t err_code,
             uint8_t *dst = (uint8_t *)PHYS_TO_VIRT(new_phys);
             for (int i = 0; i < 4096; i++) dst[i] = src[i];
 
-            *pte = new_phys | (clean_flags | PTE_WRITABLE | PTE_PRESENT);
+            *pte = new_phys | PTE_MAKE_WRITABLE(clean_flags) | PTE_PRESENT;
             invlpg_addr(fault_addr & ~0xFFFULL);
 
             pmm_ref_dec(old_phys);

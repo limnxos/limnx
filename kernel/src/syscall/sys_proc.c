@@ -1,4 +1,6 @@
 #include "syscall/syscall_internal.h"
+#include "arch/syscall_arch.h"
+#include "arch/percpu.h"
 #include "sched/sched.h"
 #include "sched/thread.h"
 #include "proc/elf.h"
@@ -620,25 +622,33 @@ int64_t sys_fork(uint64_t a1, uint64_t a2,
     ctx.r14    = kstack_top[-8];
     ctx.r15    = kstack_top[-9];
 #elif defined(__aarch64__)
-    /* Layout (from ARM64 syscall entry, high to low):
-     *   kstack_top[-1] = user SP (SP_EL0)
-     *   kstack_top[-2] = user PC (ELR_EL1)
-     *   kstack_top[-3] = user PSTATE (SPSR_EL1)
-     *   kstack_top[-4..] = callee-saved x19-x29 */
-    ctx.elr  = kstack_top[-2];
-    ctx.sp   = kstack_top[-1];
-    ctx.spsr = kstack_top[-3];
-    ctx.x19  = kstack_top[-4];
-    ctx.x20  = kstack_top[-5];
-    ctx.x21  = kstack_top[-6];
-    ctx.x22  = kstack_top[-7];
-    ctx.x23  = kstack_top[-8];
-    ctx.x24  = kstack_top[-9];
-    ctx.x25  = kstack_top[-10];
-    ctx.x26  = kstack_top[-11];
-    ctx.x27  = kstack_top[-12];
-    ctx.x28  = kstack_top[-13];
-    ctx.x29  = kstack_top[-14];
+    /* Read user context directly from the exception frame saved by
+     * vectors.S SAVE_CONTEXT. The frame pointer is stored per-CPU by
+     * arm64_sync_handler — avoids dependence on SP == kstack_top. */
+    {
+        extern uint64_t *arm64_exception_frame[];
+        uint64_t *frame = arm64_exception_frame[percpu_get()->cpu_id];
+        /* SAVE_CONTEXT layout (arm64_frame_t / interrupt_frame_t):
+         *   [frame+0..240]  = x0-x30
+         *   [frame+248]     = elr_el1
+         *   [frame+256]     = spsr_el1
+         *   [frame+264]     = sp_el0 */
+        ctx.elr  = *(uint64_t *)((uint8_t *)frame + 248);
+        ctx.sp   = *(uint64_t *)((uint8_t *)frame + 264);
+        ctx.spsr = *(uint64_t *)((uint8_t *)frame + 256);
+        /* Callee-saved regs from SAVE_CONTEXT: x19-x29 */
+        ctx.x19  = frame[19];
+        ctx.x20  = frame[20];
+        ctx.x21  = frame[21];
+        ctx.x22  = frame[22];
+        ctx.x23  = frame[23];
+        ctx.x24  = frame[24];
+        ctx.x25  = frame[25];
+        ctx.x26  = frame[26];
+        ctx.x27  = frame[27];
+        ctx.x28  = frame[28];
+        ctx.x29  = frame[29];
+    }
 #endif
 
     process_t *child = process_fork(proc, &ctx);

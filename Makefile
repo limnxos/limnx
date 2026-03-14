@@ -91,7 +91,8 @@ USER_C_PROGRAMS := build/user/programs/shell.elf build/user/programs/agent.elf \
                    build/user/programs/inferd.elf build/user/programs/worker.elf \
                    build/user/programs/multiagent.elf build/user/programs/netagent.elf \
                    build/user/programs/crasher.elf \
-                   build/user/programs/serviced.elf
+                   build/user/programs/serviced.elf \
+                   build/user/programs/hello.elf
 
 # Test programs
 USER_C_TESTS := build/user/tests/mathtest.elf build/user/tests/agenttest.elf \
@@ -373,8 +374,10 @@ ARM64_LIBC_C_OBJS := $(patsubst user/libc/%.c,build/arm64/user/libc/%.o,$(LIBC_C
 
 # ARM64 user programs
 ARM64_USER_C_PROGRAMS := build/arm64/user/programs/shell.elf \
-                          build/arm64/user/programs/serviced.elf
-ARM64_USER_C_ELFS := $(ARM64_USER_C_PROGRAMS)
+                          build/arm64/user/programs/serviced.elf \
+                          build/arm64/user/programs/hello.elf
+ARM64_USER_C_TESTS := build/arm64/user/tests/s100test.elf
+ARM64_USER_C_ELFS := $(ARM64_USER_C_PROGRAMS) $(ARM64_USER_C_TESTS)
 
 # ARM64 initrd
 ARM64_INITRD := build/arm64/initrd.tar

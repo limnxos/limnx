@@ -435,8 +435,8 @@ uint64_t vmm_clone_cow(uint64_t parent_cr3,
                                         flags & ~PTE_PRESENT);
                         pmm_ref_inc(phys);
                     } else {
-                        uint64_t cow_flags = (flags & ~PTE_WRITABLE) | PTE_COW;
-                        if (flags & PTE_WRITABLE)
+                        uint64_t cow_flags = PTE_MAKE_READONLY(flags) | PTE_COW;
+                        if (PTE_IS_WRITABLE(flags))
                             cow_flags |= PTE_WAS_WRITABLE;
                         parent_pt[i3] = phys | cow_flags;
 
