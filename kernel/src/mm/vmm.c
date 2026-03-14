@@ -391,18 +391,23 @@ uint64_t vmm_clone_cow(uint64_t parent_cr3,
 
 #if defined(__aarch64__)
     /*
-     * ARM64: kernel and user share L0[0]. Walk the deep-copied L1→L2→L3
-     * tables, skipping block descriptors and kernel-shared L3 tables.
-     *
+     * ARM64: Walk ALL L0 entries. L0[0] contains both kernel and user pages
+     * (identity-mapped), so we must skip kernel-shared L3 tables there.
+     * Other L0 entries (e.g. L0[255] for user stack) are purely user-owned
+     * and must be fully COW'd.
      */
     uint64_t *kern_l0 = (uint64_t *)PHYS_TO_VIRT(pml4_phys);
 
-    if (parent_pml4[0] & PTE_PRESENT) {
-        uint64_t *parent_l1 = (uint64_t *)PHYS_TO_VIRT(parent_pml4[0] & PTE_ADDR_MASK);
+    for (int i0 = 0; i0 < 512; i0++) {
+        if (!(parent_pml4[i0] & PTE_PRESENT)) continue;
+        if (!(parent_pml4[i0] & PTE_TABLE)) continue;
 
+        uint64_t *parent_l1 = (uint64_t *)PHYS_TO_VIRT(parent_pml4[i0] & PTE_ADDR_MASK);
+
+        /* Get kernel L1 for this L0 entry (only L0[0] has kernel pages) */
         uint64_t *kern_l1 = NULL;
-        if (kern_l0[0] & PTE_PRESENT)
-            kern_l1 = (uint64_t *)PHYS_TO_VIRT(kern_l0[0] & PTE_ADDR_MASK);
+        if ((kern_l0[i0] & PTE_PRESENT) && (kern_l0[i0] & PTE_TABLE))
+            kern_l1 = (uint64_t *)PHYS_TO_VIRT(kern_l0[i0] & PTE_ADDR_MASK);
 
         for (int i1 = 0; i1 < 512; i1++) {
             if (!(parent_l1[i1] & PTE_PRESENT)) continue;
@@ -417,6 +422,7 @@ uint64_t vmm_clone_cow(uint64_t parent_cr3,
             for (int i2 = 0; i2 < 512; i2++) {
                 if (!(parent_l2[i2] & PTE_PRESENT)) continue;
                 if (!(parent_l2[i2] & PTE_TABLE)) continue;
+                /* Skip kernel-shared L3 tables (only relevant under L0[0]) */
                 if (kern_l2 && parent_l2[i2] == kern_l2[i2]) continue;
 
                 uint64_t *parent_pt = (uint64_t *)PHYS_TO_VIRT(parent_l2[i2] & PTE_ADDR_MASK);
@@ -428,7 +434,8 @@ uint64_t vmm_clone_cow(uint64_t parent_cr3,
                     uint64_t phys = pte & PTE_ADDR_MASK;
                     uint64_t flags = pte & ~PTE_ADDR_MASK;
 
-                    uint64_t virt = ((uint64_t)i1 << 30) |
+                    uint64_t virt = ((uint64_t)i0 << 39) |
+                                    ((uint64_t)i1 << 30) |
                                     ((uint64_t)i2 << 21) | ((uint64_t)i3 << 12);
 
                     if (is_shm_page(virt, mmap_table, mmap_count)) {
@@ -517,23 +524,25 @@ void vmm_free_user_pages(uint64_t cr3) {
 
 #if defined(__aarch64__)
     /*
-     * ARM64: kernel and user pages share L0[0]. The process has deep-copied
-     * L1 and L2 tables from the kernel. We must:
-     *  - Skip L2 block descriptors (device MMIO — no PTE_TABLE bit)
-     *  - Skip L2 table entries that point to kernel-shared L3 tables
-     *  - Only walk/free L3 tables created by vmm_map_page_in for user pages
-     *  - Free the deep-copied L1 and L2 pages
+     * ARM64: Walk ALL L0 entries. L0[0] contains both kernel and user pages
+     * (deep-copied L1/L2 from kernel + user-added L3 tables), so we must
+     * skip kernel-shared L3 tables and block descriptors there.
+     * Other L0 entries (e.g. L0[255] for user stack) are purely user-owned
+     * and the entire subtree (L1/L2/L3 + leaf pages) must be freed.
      */
     uint64_t *kern_l0 = (uint64_t *)PHYS_TO_VIRT(pml4_phys);
 
-    if (top_pml4[0] & PTE_PRESENT) {
-        uint64_t l1_phys = top_pml4[0] & PTE_ADDR_MASK;
+    for (int i0 = 0; i0 < 512; i0++) {
+        if (!(top_pml4[i0] & PTE_PRESENT)) continue;
+        if (!(top_pml4[i0] & PTE_TABLE)) continue;
+
+        uint64_t l1_phys = top_pml4[i0] & PTE_ADDR_MASK;
         uint64_t *l1 = (uint64_t *)PHYS_TO_VIRT(l1_phys);
 
-        /* Get kernel L1 for comparison */
+        /* Get kernel L1 for this L0 entry (only L0[0] has kernel pages) */
         uint64_t *kern_l1 = NULL;
-        if (kern_l0[0] & PTE_PRESENT)
-            kern_l1 = (uint64_t *)PHYS_TO_VIRT(kern_l0[0] & PTE_ADDR_MASK);
+        if ((kern_l0[i0] & PTE_PRESENT) && (kern_l0[i0] & PTE_TABLE))
+            kern_l1 = (uint64_t *)PHYS_TO_VIRT(kern_l0[i0] & PTE_ADDR_MASK);
 
         for (int i1 = 0; i1 < 512; i1++) {
             if (!(l1[i1] & PTE_PRESENT)) continue;
@@ -569,11 +578,11 @@ void vmm_free_user_pages(uint64_t cr3) {
                 pmm_free_page(pt_phys);
             }
 
-            /* Free the deep-copied L2 page */
+            /* Free the deep-copied (or user-allocated) L2 page */
             pmm_free_page(l2_phys);
         }
 
-        /* Free the deep-copied L1 page */
+        /* Free the L1 page */
         pmm_free_page(l1_phys);
     }
 

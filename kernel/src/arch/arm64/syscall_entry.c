@@ -127,10 +127,24 @@ void arm64_sync_handler(arm64_frame_t *frame, uint64_t esr) {
         for (;;) __asm__ volatile ("wfi");
         break;
     }
-    default:
+    default: {
         serial_printf("[fault] Unhandled sync exception EC=0x%x ESR=0x%lx ELR=0x%lx\n",
                       ec, esr, frame->elr_el1);
+        /* Check if exception came from lower EL (EL0) — SPSR_EL1.M[3:0] == 0 */
+        uint32_t spsr_m = frame->spsr_el1 & 0xF;
+        if (spsr_m == 0) {
+            /* EL0 process executing privileged instruction — kill it */
+            serial_printf("[fault] Killing pid (EC=0x%x from EL0, PC=0x%lx)\n",
+                          ec, frame->elr_el1);
+            frame->x[0] = syscall_dispatch(2, 139, 0, 0, 0, 0);
+        } else {
+            /* Kernel exception — fatal, halt */
+            serial_printf("[PANIC] Unhandled kernel exception EC=0x%x ELR=0x%lx\n",
+                          ec, frame->elr_el1);
+            for (;;) __asm__ volatile ("wfi");
+        }
         break;
+    }
     }
 }
 

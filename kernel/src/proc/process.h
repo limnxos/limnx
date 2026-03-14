@@ -79,6 +79,7 @@ typedef struct fork_context {
     uint64_t x19, x20, x21, x22, x23, x24;
     uint64_t x25, x26, x27, x28;
     uint64_t x29;       /* frame pointer */
+    uint64_t x30;       /* link register (return address) */
 } fork_context_t;
 #endif
 

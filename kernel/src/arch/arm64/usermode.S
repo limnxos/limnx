@@ -20,6 +20,11 @@
  */
 .global arch_enter_usermode_asm
 arch_enter_usermode_asm:
+    /* Disable interrupts — ELR/SPSR must not be written with IRQs enabled.
+     * A timer IRQ between msr elr_el1 and eret would clobber these registers.
+     * ERET restores PSTATE from SPSR (which has interrupts unmasked for EL0). */
+    msr     daifset, #0xf
+
     /* Flush I-cache: D/I caches not coherent, must sync after loading ELF */
     ic      iallu
     dsb     ish
@@ -85,9 +90,14 @@ arch_enter_usermode_asm:
  *   offset 88: x27
  *   offset 96: x28
  *   offset 104: x29
+ *   offset 112: x30 (LR)
  */
 .global arch_enter_forked_child_asm
 arch_enter_forked_child_asm:
+    /* Disable interrupts — same as arch_enter_usermode_asm.
+     * ELR/SPSR writes must be atomic with ERET. */
+    msr     daifset, #0xf
+
     /* Load system registers from fork context */
     ldr     x1, [x0, #0]       /* elr */
     ldr     x2, [x0, #8]       /* sp */
@@ -96,13 +106,13 @@ arch_enter_forked_child_asm:
     msr     sp_el0, x2
     msr     spsr_el1, x3
 
-    /* Restore callee-saved registers */
+    /* Restore callee-saved registers + LR */
     ldp     x19, x20, [x0, #24]
     ldp     x21, x22, [x0, #40]
     ldp     x23, x24, [x0, #56]
     ldp     x25, x26, [x0, #72]
     ldp     x27, x28, [x0, #88]
-    ldr     x29, [x0, #104]
+    ldp     x29, x30, [x0, #104]
 
     /* Child returns 0 from fork */
     mov     x0, #0

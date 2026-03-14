@@ -648,6 +648,7 @@ int64_t sys_fork(uint64_t a1, uint64_t a2,
         ctx.x27  = frame[27];
         ctx.x28  = frame[28];
         ctx.x29  = frame[29];
+        ctx.x30  = frame[30];  /* LR — SAVE_CONTEXT stores x30 at [sp+240] = frame[30] */
     }
 #endif
 
