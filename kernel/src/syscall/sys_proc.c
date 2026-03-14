@@ -755,6 +755,10 @@ int64_t sys_waitpid(uint64_t pid, uint64_t flags,
         }
     }
     int64_t status = child->exit_status;
+    {
+        extern void vfs_procfs_unregister_pid(uint64_t pid);
+        vfs_procfs_unregister_pid(pid);
+    }
     process_unregister(pid);
     kfree(child);
     return status;

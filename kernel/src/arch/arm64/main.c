@@ -186,6 +186,7 @@ void kmain(uint64_t dtb_addr) {
     /* === Stage 6: VFS + initrd === */
     serial_puts("\n--- VFS init ---\n");
     vfs_init();
+    vfs_procfs_init();
 
     /* Load embedded initrd */
     {
@@ -383,7 +384,7 @@ void kmain(uint64_t dtb_addr) {
             }
             /* Set LIMNX_VERSION env */
             {
-                const char *env_entry = "LIMNX_VERSION=0.100";
+                const char *env_entry = "LIMNX_VERSION=0.107";
                 int elen = 0;
                 while (env_entry[elen]) elen++;
                 for (int i = 0; i <= elen; i++)

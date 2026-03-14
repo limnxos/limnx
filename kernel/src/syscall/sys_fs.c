@@ -26,6 +26,22 @@ int64_t sys_open(uint64_t path_ptr, uint64_t flags,
         return -1;
     resolve_user_path(proc, raw_path, path);
 
+    /* Refresh /proc/<pid>/ content on open */
+    if (path[0] == '/' && path[1] == 'p' && path[2] == 'r' &&
+        path[3] == 'o' && path[4] == 'c' && path[5] == '/') {
+        /* Extract PID from /proc/<pid>/... */
+        uint64_t ppid = 0;
+        const char *dp = path + 6;
+        while (*dp >= '0' && *dp <= '9') {
+            ppid = ppid * 10 + (*dp - '0');
+            dp++;
+        }
+        if (ppid > 0) {
+            extern void vfs_procfs_refresh(uint64_t pid);
+            vfs_procfs_refresh(ppid);
+        }
+    }
+
     /* Find the file in VFS */
     int node_idx = vfs_open(path);
 
@@ -842,7 +858,8 @@ int64_t sys_symlink(uint64_t target_ptr, uint64_t path_ptr,
         return -EACCES;
 
     resolve_user_path(proc, raw_path, path);
-    return vfs_symlink(path, target);
+    int ret = vfs_symlink(path, target);
+    return ret < 0 ? ret : 0;  /* POSIX: return 0 on success */
 }
 
 int64_t sys_readlink(uint64_t path_ptr, uint64_t buf_ptr,

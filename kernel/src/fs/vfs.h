@@ -133,4 +133,10 @@ int  vfs_readlink(const char *path, char *buf, uint64_t bufsize);
 /* LimnFS mount — load disk tree into VFS */
 int  vfs_mount_limnfs(void);
 
+/* /proc filesystem */
+void vfs_procfs_init(void);
+void vfs_procfs_register_pid(uint64_t pid);
+void vfs_procfs_unregister_pid(uint64_t pid);
+void vfs_procfs_refresh(uint64_t pid);
+
 #endif

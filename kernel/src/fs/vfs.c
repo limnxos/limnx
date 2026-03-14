@@ -818,6 +818,244 @@ int vfs_readlink(const char *path, char *buf, uint64_t bufsize) {
     return (int)tlen;
 }
 
+/* --- /proc filesystem --- */
+
+/* Forward-declare process access to avoid circular include (process.h includes vfs.h) */
+struct process;
+extern struct process *process_lookup(uint64_t pid);
+extern struct process *proc_table_get(int idx);
+
+/* Extern helpers defined in process.c (avoids circular include with process.h) */
+extern uint64_t procfs_get_pid(struct process *p);
+extern uint64_t procfs_get_ppid(struct process *p);
+extern const char *procfs_get_name(struct process *p);
+extern const char *procfs_get_cwd(struct process *p);
+extern uint16_t procfs_get_uid(struct process *p);
+extern uint16_t procfs_get_gid(struct process *p);
+extern uint32_t procfs_get_caps(struct process *p);
+extern uint64_t procfs_get_mem_pages(struct process *p);
+extern uint32_t procfs_get_pending_signals(struct process *p);
+extern uint32_t procfs_get_signal_mask(struct process *p);
+extern uint32_t procfs_get_ns_id(struct process *p);
+extern int procfs_get_argc(struct process *p);
+extern const char *procfs_get_argv_buf(struct process *p);
+extern int procfs_get_argv_buf_len(struct process *p);
+extern uint8_t procfs_get_thread_state(struct process *p);
+
+static int procfs_dir_idx = -1;  /* VFS index of /proc */
+
+void vfs_procfs_init(void) {
+    procfs_dir_idx = vfs_mkdir("/proc");
+    if (procfs_dir_idx < 0) {
+        pr_err("failed to create /proc\n");
+        return;
+    }
+    pr_info("/proc filesystem initialized\n");
+}
+
+/* Simple integer-to-string */
+static int itoa_simple(uint64_t val, char *buf, int bufsize) {
+    char tmp[24];
+    int pos = 0;
+    if (val == 0) { tmp[pos++] = '0'; }
+    else {
+        while (val > 0 && pos < 23) {
+            tmp[pos++] = '0' + (val % 10);
+            val /= 10;
+        }
+    }
+    if (pos >= bufsize) pos = bufsize - 1;
+    for (int i = 0; i < pos; i++)
+        buf[i] = tmp[pos - 1 - i];
+    buf[pos] = '\0';
+    return pos;
+}
+
+/* Simple sprintf for status file content */
+static int procfs_format_status(struct process *p, char *buf, int bufsize) {
+    int pos = 0;
+    const char *name = procfs_get_name(p);
+    uint8_t state = procfs_get_thread_state(p);
+    const char *state_str = "unknown";
+    switch (state) {
+        case 0: state_str = "ready"; break;
+        case 1: state_str = "running"; break;
+        case 2: state_str = "dead"; break;
+        case 3: state_str = "stopped"; break;
+        case 4: state_str = "blocked"; break;
+    }
+
+#define APPEND_STR(s) do { \
+    const char *_s = (s); \
+    while (*_s && pos < bufsize - 1) buf[pos++] = *_s++; \
+} while(0)
+#define APPEND_NUM(v) do { \
+    char _nb[24]; itoa_simple((v), _nb, 24); APPEND_STR(_nb); \
+} while(0)
+#define APPEND_HEX(v) do { \
+    uint32_t _v = (v); char _hb[12]; \
+    _hb[0]='0'; _hb[1]='x'; \
+    for (int _i=7; _i>=0; _i--) { \
+        int _d = (_v >> (_i*4)) & 0xF; \
+        _hb[9-_i] = _d < 10 ? '0'+_d : 'a'+_d-10; \
+    } _hb[10]='\0'; APPEND_STR(_hb); \
+} while(0)
+
+    APPEND_STR("Name:\t"); APPEND_STR(name[0] ? name : "(none)"); APPEND_STR("\n");
+    APPEND_STR("State:\t"); APPEND_STR(state_str); APPEND_STR("\n");
+    APPEND_STR("Pid:\t"); APPEND_NUM(procfs_get_pid(p)); APPEND_STR("\n");
+    APPEND_STR("PPid:\t"); APPEND_NUM(procfs_get_ppid(p)); APPEND_STR("\n");
+    APPEND_STR("Uid:\t"); APPEND_NUM(procfs_get_uid(p)); APPEND_STR("\n");
+    APPEND_STR("Gid:\t"); APPEND_NUM(procfs_get_gid(p)); APPEND_STR("\n");
+    APPEND_STR("Caps:\t"); APPEND_HEX(procfs_get_caps(p)); APPEND_STR("\n");
+    APPEND_STR("VmPages:\t"); APPEND_NUM(procfs_get_mem_pages(p)); APPEND_STR("\n");
+    APPEND_STR("SigPend:\t"); APPEND_HEX(procfs_get_pending_signals(p)); APPEND_STR("\n");
+    APPEND_STR("SigMask:\t"); APPEND_HEX(procfs_get_signal_mask(p)); APPEND_STR("\n");
+    APPEND_STR("Ns:\t"); APPEND_NUM(procfs_get_ns_id(p)); APPEND_STR("\n");
+    APPEND_STR("Cwd:\t"); APPEND_STR(procfs_get_cwd(p)); APPEND_STR("\n");
+
+#undef APPEND_STR
+#undef APPEND_NUM
+#undef APPEND_HEX
+
+    buf[pos] = '\0';
+    return pos;
+}
+
+void vfs_procfs_register_pid(uint64_t pid) {
+    if (procfs_dir_idx < 0) return;
+
+    /* Create /proc/<pid>/ directory */
+    char path[MAX_PATH];
+    char pidstr[24];
+    itoa_simple(pid, pidstr, 24);
+
+    /* /proc/<pid> */
+    int pos = 0;
+    const char *prefix = "/proc/";
+    while (*prefix) path[pos++] = *prefix++;
+    for (int i = 0; pidstr[i]; i++) path[pos++] = pidstr[i];
+    path[pos] = '\0';
+
+    int dir_idx = vfs_mkdir(path);
+    if (dir_idx < 0) return;
+
+    /* Create /proc/<pid>/status */
+    char spath[MAX_PATH];
+    for (int i = 0; i < pos; i++) spath[i] = path[i];
+    const char *suf = "/status";
+    for (int i = 0; suf[i]; i++) spath[pos + i] = suf[i];
+    spath[pos + 7] = '\0';
+
+    uint8_t *sbuf = (uint8_t *)kmalloc(1024);
+    if (sbuf) {
+        sbuf[0] = '\0';
+        int idx = vfs_register_node(dir_idx, "status", VFS_FILE, 0, sbuf);
+        if (idx >= 0) {
+            nodes[idx].capacity = 1024;
+        } else {
+            kfree(sbuf);
+        }
+    }
+
+    /* Create /proc/<pid>/cmdline */
+    uint8_t *cbuf = (uint8_t *)kmalloc(512);
+    if (cbuf) {
+        cbuf[0] = '\0';
+        int idx = vfs_register_node(dir_idx, "cmdline", VFS_FILE, 0, cbuf);
+        if (idx >= 0) {
+            nodes[idx].capacity = 512;
+        } else {
+            kfree(cbuf);
+        }
+    }
+
+    /* Create /proc/<pid>/cwd — symlink to process cwd */
+    struct process *p = process_lookup(pid);
+    if (p) {
+        const char *cwd = procfs_get_cwd(p);
+        if (cwd && cwd[0]) {
+            vfs_symlink(path[0] == '/' ? spath : path, cwd);
+            /* Actually create cwd symlink properly */
+            char cwdpath[MAX_PATH];
+            int cp = 0;
+            for (int i = 0; i < pos; i++) cwdpath[cp++] = path[i];
+            cwdpath[cp++] = '/'; cwdpath[cp++] = 'c'; cwdpath[cp++] = 'w';
+            cwdpath[cp++] = 'd'; cwdpath[cp] = '\0';
+            vfs_symlink(cwdpath, cwd);
+        }
+    }
+}
+
+static void procfs_delete_subtree(int dir_idx) {
+    /* Delete all children of this directory */
+    for (int i = 0; i < node_count; i++) {
+        if (nodes[i].name[0] == '\0') continue;
+        if (nodes[i].parent != dir_idx) continue;
+        /* Free data for files/symlinks */
+        if (nodes[i].data && (nodes[i].type == VFS_FILE || nodes[i].type == VFS_SYMLINK)) {
+            if (nodes[i].capacity > 0 || nodes[i].type == VFS_SYMLINK)
+                kfree(nodes[i].data);
+        }
+        nodes[i].name[0] = '\0';
+        nodes[i].data = NULL;
+        nodes[i].size = 0;
+        nodes[i].capacity = 0;
+        nodes[i].parent = -1;
+    }
+    /* Delete the directory itself */
+    nodes[dir_idx].name[0] = '\0';
+    nodes[dir_idx].data = NULL;
+    nodes[dir_idx].size = 0;
+    nodes[dir_idx].parent = -1;
+}
+
+void vfs_procfs_unregister_pid(uint64_t pid) {
+    if (procfs_dir_idx < 0) return;
+
+    /* Find /proc/<pid> directory */
+    char pidstr[24];
+    itoa_simple(pid, pidstr, 24);
+    int dir_idx = vfs_find_child(procfs_dir_idx, pidstr);
+    if (dir_idx < 0) return;
+
+    procfs_delete_subtree(dir_idx);
+}
+
+void vfs_procfs_refresh(uint64_t pid) {
+    if (procfs_dir_idx < 0) return;
+
+    struct process *p = process_lookup(pid);
+    if (!p) return;
+
+    /* Find /proc/<pid> directory */
+    char pidstr[24];
+    itoa_simple(pid, pidstr, 24);
+    int dir_idx = vfs_find_child(procfs_dir_idx, pidstr);
+    if (dir_idx < 0) return;
+
+    /* Update status file */
+    int status_idx = vfs_find_child(dir_idx, "status");
+    if (status_idx >= 0 && nodes[status_idx].data) {
+        int len = procfs_format_status(p, (char *)nodes[status_idx].data, 1024);
+        nodes[status_idx].size = (uint64_t)len;
+    }
+
+    /* Update cmdline file */
+    int cmdline_idx = vfs_find_child(dir_idx, "cmdline");
+    if (cmdline_idx >= 0 && nodes[cmdline_idx].data) {
+        int alen = procfs_get_argv_buf_len(p);
+        const char *abuf = procfs_get_argv_buf(p);
+        if (alen > 0 && alen < 512) {
+            /* Copy argv_buf — NUL-separated args, replace NULs with spaces */
+            for (int i = 0; i < alen; i++)
+                nodes[cmdline_idx].data[i] = abuf[i] ? (uint8_t)abuf[i] : ' ';
+            nodes[cmdline_idx].data[alen] = '\0';
+            nodes[cmdline_idx].size = (uint64_t)alen;
+        }
+    }
+}
+
 int vfs_mount_limnfs(void) {
     if (!limnfs_mounted())
         return -ENODEV;

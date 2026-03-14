@@ -576,6 +576,7 @@ void kmain(void) {
     serial_puts("\n--- Stage 6 init ---\n");
 
     vfs_init();
+    vfs_procfs_init();
 
     /* Load initrd from Limine module */
     if (module_request.response && module_request.response->module_count > 0) {
@@ -915,7 +916,7 @@ void kmain(void) {
             }
             /* Set LIMNX_VERSION env on shell */
             {
-                const char *env_entry = "LIMNX_VERSION=0.106";
+                const char *env_entry = "LIMNX_VERSION=0.107";
                 int elen = 0;
                 while (env_entry[elen]) elen++;
                 for (int i = 0; i <= elen; i++)

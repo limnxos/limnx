@@ -27,6 +27,10 @@ uint64_t process_alloc_pid(void) {
     return pid;
 }
 
+/* Forward-declare procfs hooks (defined in vfs.c, avoids circular include) */
+extern void vfs_procfs_register_pid(uint64_t pid);
+extern void vfs_procfs_unregister_pid(uint64_t pid);
+
 int process_register(process_t *proc) {
     uint64_t flags;
     spin_lock_irqsave(&proc_table_lock, &flags);
@@ -34,6 +38,7 @@ int process_register(process_t *proc) {
         if (proc_table[i] == NULL) {
             proc_table[i] = proc;
             spin_unlock_irqrestore(&proc_table_lock, flags);
+            vfs_procfs_register_pid(proc->pid);
             return 0;
         }
     }
@@ -741,4 +746,25 @@ int process_kill_group(uint64_t pgid, int signum) {
             count++;
     }
     return count > 0 ? 0 : -1;
+}
+
+/* --- Procfs accessor helpers (avoids circular include with vfs.h) --- */
+
+uint64_t procfs_get_pid(process_t *p) { return p->pid; }
+uint64_t procfs_get_ppid(process_t *p) { return p->parent_pid; }
+const char *procfs_get_name(process_t *p) { return p->name; }
+const char *procfs_get_cwd(process_t *p) { return p->cwd; }
+uint16_t procfs_get_uid(process_t *p) { return p->uid; }
+uint16_t procfs_get_gid(process_t *p) { return p->gid; }
+uint32_t procfs_get_caps(process_t *p) { return p->capabilities; }
+uint64_t procfs_get_mem_pages(process_t *p) { return p->used_mem_pages; }
+uint32_t procfs_get_pending_signals(process_t *p) { return p->pending_signals; }
+uint32_t procfs_get_signal_mask(process_t *p) { return p->signal_mask; }
+uint32_t procfs_get_ns_id(process_t *p) { return p->ns_id; }
+int procfs_get_argc(process_t *p) { return p->argc; }
+const char *procfs_get_argv_buf(process_t *p) { return p->argv_buf; }
+int procfs_get_argv_buf_len(process_t *p) { return p->argv_buf_len; }
+uint8_t procfs_get_thread_state(process_t *p) {
+    if (!p->main_thread) return 2; /* DEAD */
+    return (uint8_t)p->main_thread->state;
 }
