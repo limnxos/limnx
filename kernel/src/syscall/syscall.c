@@ -45,7 +45,7 @@ int validate_user_ptr(uint64_t ptr, uint64_t len) {
 
 int copy_string_from_user(const char *user_src, char *kern_dst,
                                   uint64_t max_len) {
-    if ((uint64_t)user_src >= USER_ADDR_MAX)
+    if (!user_src || (uint64_t)user_src >= USER_ADDR_MAX)
         return -1;
 
     for (uint64_t i = 0; i < max_len - 1; i++) {
@@ -379,11 +379,12 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
             /* User handler: set up signal frame */
             uint64_t orig_rip, orig_rsp, orig_rflags;
 #if defined(__aarch64__)
-            /* ARM64: read user context from per-CPU exception frame
-             * (kstack_top offsets don't work — SP isn't reset on SVC entry) */
+            /* ARM64: read user context from per-thread exception frame.
+             * Must be per-thread because a blocked thread may be preempted
+             * by another SVC on the same CPU, clobbering the per-CPU pointer. */
             {
-                extern uint64_t *arm64_exception_frame[];
-                uint64_t *ef = arm64_exception_frame[percpu_get()->cpu_id];
+                uint64_t *ef = (uint64_t *)t->arch_frame;
+                if (!ef) break;
                 orig_rip    = ef[31];   /* elr_el1 */
                 orig_rflags = ef[32];   /* spsr_el1 */
                 orig_rsp    = ef[33];   /* sp_el0 */
@@ -397,8 +398,14 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
             }
 #endif
 
-            /* Build signal frame on user stack */
+            /* Build signal frame on user stack.
+             * ARM64 needs full register save (34 regs × 8 = 272 bytes)
+             * x86_64 only needs 4 values (rsp, rip, rflags, rax = 32 bytes) */
+#if defined(__aarch64__)
+            uint64_t frame_rsp = orig_rsp - (34 * 8);
+#else
             uint64_t frame_rsp = orig_rsp - 32;
+#endif
             frame_rsp &= ~0xFULL;  /* 16-byte align */
 
             /* Write frame via HHDM (user stack is mapped in process address space) */
@@ -431,10 +438,21 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
             uint64_t stack_phys = (*pte & PTE_ADDR_MASK) + (frame_rsp & 0xFFF);
             uint64_t *frame = (uint64_t *)PHYS_TO_VIRT(stack_phys);
 
+#if defined(__aarch64__)
+            /* ARM64: save full exception frame (x0-x30, elr, spsr, sp) */
+            {
+                uint64_t *ef = (uint64_t *)t->arch_frame;
+                for (int ri = 0; ri < 34; ri++)
+                    frame[ri] = ef[ri];
+                /* Overwrite x0 slot with original syscall result (not signal number) */
+                frame[0] = (uint64_t)result;
+            }
+#else
             frame[0] = orig_rsp;
             frame[1] = orig_rip;
             frame[2] = orig_rflags;
             frame[3] = (uint64_t)result;
+#endif
 
             if (proc->signal_depth < MAX_SIGNAL_DEPTH)
                 proc->signal_frame_stack[proc->signal_depth++] = frame_rsp;

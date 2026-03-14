@@ -38,7 +38,41 @@ int64_t sys_sigreturn(uint64_t a1, uint64_t a2,
     uint64_t frame_addr = proc->signal_frame_stack[--proc->signal_depth];
     if (frame_addr == 0) return -1;
 
-    uint64_t *frame = (uint64_t *)frame_addr;
+    /* Read signal frame from user stack via PTE walk + HHDM
+     * (user virtual addresses are not directly accessible in kernel space) */
+    uint64_t *pte_frame = vmm_get_pte(proc->cr3, frame_addr);
+    if (!pte_frame || !(*pte_frame & PTE_PRESENT)) return -1;
+    uint64_t frame_phys = (*pte_frame & PTE_ADDR_MASK) + (frame_addr & 0xFFF);
+    uint64_t *frame = (uint64_t *)PHYS_TO_VIRT(frame_phys);
+
+#if defined(__aarch64__)
+    /* ARM64: restore full exception frame (x0-x30, elr, spsr, sp) */
+    uint64_t orig_rax = frame[0];  /* x0 = original syscall result */
+
+    /* SA_RESTART: re-invoke the interrupted syscall after signal handler */
+    if (proc->restart_pending) {
+        proc->restart_pending = 0;
+        uint64_t snum = proc->restart_syscall_num;
+        if (snum < SYS_NR) {
+            uint64_t *ef = (uint64_t *)t->arch_frame;
+            for (int ri = 0; ri < 34; ri++)
+                ef[ri] = frame[ri];
+            return syscall_dispatch(snum,
+                proc->restart_args[0], proc->restart_args[1],
+                proc->restart_args[2], proc->restart_args[3],
+                proc->restart_args[4]);
+        }
+    }
+
+    /* Restore all registers to exception frame */
+    {
+        uint64_t *ef = (uint64_t *)t->arch_frame;
+        for (int ri = 0; ri < 34; ri++)
+            ef[ri] = frame[ri];
+    }
+
+    return (int64_t)orig_rax;
+#else
     uint64_t orig_rsp    = frame[0];
     uint64_t orig_rip    = frame[1];
     uint64_t orig_rflags = frame[2];
@@ -49,22 +83,10 @@ int64_t sys_sigreturn(uint64_t a1, uint64_t a2,
         proc->restart_pending = 0;
         uint64_t snum = proc->restart_syscall_num;
         if (snum < SYS_NR) {
-#if defined(__aarch64__)
-            {
-                extern uint64_t *arm64_exception_frame[];
-                uint64_t *ef = arm64_exception_frame[percpu_get()->cpu_id];
-                ef[31] = orig_rip;
-                ef[32] = orig_rflags;
-                ef[33] = orig_rsp;
-            }
-#else
-            {
-                uint64_t *kstack_top = (uint64_t *)(t->stack_base + t->stack_size);
-                kstack_top[-1] = orig_rsp;
-                kstack_top[-2] = orig_rip;
-                kstack_top[-3] = orig_rflags;
-            }
-#endif
+            uint64_t *kstack_top = (uint64_t *)(t->stack_base + t->stack_size);
+            kstack_top[-1] = orig_rsp;
+            kstack_top[-2] = orig_rip;
+            kstack_top[-3] = orig_rflags;
             return syscall_dispatch(snum,
                 proc->restart_args[0], proc->restart_args[1],
                 proc->restart_args[2], proc->restart_args[3],
@@ -73,25 +95,15 @@ int64_t sys_sigreturn(uint64_t a1, uint64_t a2,
     }
 
     /* Restore original context */
-#if defined(__aarch64__)
-    /* ARM64: restore via per-CPU exception frame */
-    {
-        extern uint64_t *arm64_exception_frame[];
-        uint64_t *ef = arm64_exception_frame[percpu_get()->cpu_id];
-        ef[31] = orig_rip;     /* elr_el1 */
-        ef[32] = orig_rflags;  /* spsr_el1 */
-        ef[33] = orig_rsp;     /* sp_el0 */
-    }
-#else
     {
         uint64_t *kstack_top = (uint64_t *)(t->stack_base + t->stack_size);
         kstack_top[-1] = orig_rsp;
         kstack_top[-2] = orig_rip;
         kstack_top[-3] = orig_rflags;
     }
-#endif
 
     return (int64_t)orig_rax;
+#endif
 }
 
 int64_t sys_sigprocmask(uint64_t how, uint64_t new_mask,

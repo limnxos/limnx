@@ -50,6 +50,7 @@ typedef struct thread {
     uint8_t            fpu_state[FPU_STATE_SIZE] __attribute__((aligned(16)));
     uint64_t           ticks_used;   /* accumulated CPU ticks */
     uint64_t           fs_base;      /* FS.base for TLS (per-thread) */
+    void              *arch_frame;   /* ARM64: per-thread exception frame ptr */
 } thread_t;
 
 thread_t *thread_create(void (*entry)(void), uint64_t stack_size);

@@ -16,6 +16,7 @@
 #include "arch/serial.h"
 #include "arch/percpu.h"
 #include "arch/frame.h"
+#include "sched/thread.h"
 #include <stdint.h>
 
 /* Page fault handler from sys_mm.c — handles COW, swap-in, demand paging */
@@ -57,9 +58,17 @@ void arm64_sync_handler(arm64_frame_t *frame, uint64_t esr) {
 
     switch (ec) {
     case ESR_EC_SVC64: {
-        /* Save frame pointer for sys_fork to access user context */
+        /* Save frame pointer for sys_fork/signal to access user context.
+         * Must be per-THREAD (not per-CPU) because a blocked thread may
+         * be preempted by another thread on the same CPU, clobbering
+         * the per-CPU pointer before the original thread resumes. */
         percpu_t *_pc = percpu_get();
         arm64_exception_frame[_pc->cpu_id] = (uint64_t *)frame;
+        {
+            extern thread_t *thread_get_current(void);
+            thread_t *_ct = thread_get_current();
+            if (_ct) _ct->arch_frame = (void *)frame;
+        }
 
         /* Syscall: x8=number, x0-x5=args, return in x0 */
         long ret = syscall_dispatch(

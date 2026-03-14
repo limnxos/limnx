@@ -623,11 +623,10 @@ int64_t sys_fork(uint64_t a1, uint64_t a2,
     ctx.r15    = kstack_top[-9];
 #elif defined(__aarch64__)
     /* Read user context directly from the exception frame saved by
-     * vectors.S SAVE_CONTEXT. The frame pointer is stored per-CPU by
+     * vectors.S SAVE_CONTEXT. Per-thread arch_frame set by
      * arm64_sync_handler — avoids dependence on SP == kstack_top. */
     {
-        extern uint64_t *arm64_exception_frame[];
-        uint64_t *frame = arm64_exception_frame[percpu_get()->cpu_id];
+        uint64_t *frame = (uint64_t *)t->arch_frame;
         /* SAVE_CONTEXT layout (arm64_frame_t / interrupt_frame_t):
          *   [frame+0..240]  = x0-x30
          *   [frame+248]     = elr_el1
