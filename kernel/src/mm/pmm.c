@@ -66,7 +66,13 @@ void pmm_init(void) {
             ARM64_RAM_SIZE = plat->ram_size;
         }
     }
-    uint64_t ARM64_KERN_END = ARM64_RAM_BASE + 0x800000ULL;  /* first 8MB reserved (DTB+kernel+BSS) */
+    /* Use linker-provided _kernel_end to find actual end of kernel binary.
+     * This accounts for kernel + embedded initrd (which can be large). */
+    extern char _kernel_end[];
+    uint64_t ARM64_KERN_END = ((uint64_t)_kernel_end + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1ULL);
+    /* Ensure at least RAM_BASE + 2MB (in case _kernel_end is bogus) */
+    if (ARM64_KERN_END < ARM64_RAM_BASE + 0x200000ULL)
+        ARM64_KERN_END = ARM64_RAM_BASE + 0x200000ULL;
 
     uint64_t highest_addr = ARM64_RAM_BASE + ARM64_RAM_SIZE;
     total_pages = highest_addr / PAGE_SIZE;
