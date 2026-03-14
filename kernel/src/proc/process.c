@@ -559,8 +559,6 @@ static void fork_child_entry(void) {
     arch_switch_address_space(proc->cr3);
     arch_prepare_usermode_return();
     arch_set_tls_base(t->fs_base);
-
-    /* Enter usermode as fork child — arch-specific register restore + SYSRETQ/ERET */
     arch_enter_forked_child(&proc->fork_ctx);
 }
 

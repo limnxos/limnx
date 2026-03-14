@@ -393,6 +393,7 @@ uint64_t vmm_clone_cow(uint64_t parent_cr3,
     /*
      * ARM64: kernel and user share L0[0]. Walk the deep-copied L1→L2→L3
      * tables, skipping block descriptors and kernel-shared L3 tables.
+     *
      */
     uint64_t *kern_l0 = (uint64_t *)PHYS_TO_VIRT(pml4_phys);
 
