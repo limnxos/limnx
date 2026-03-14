@@ -21,6 +21,9 @@ __pycache__/
 CLAUDE.md
 CONVENTIONS.md
 
+# Debug/QEMU logs
+debug/
+
 # docs
 MILESTONE.md
 docs/
