@@ -5,6 +5,10 @@
  *
  * Supports: F32, F16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0,
  *           Q2_K, Q3_K, Q4_K, Q5_K, Q6_K
+ *
+ * All code is portable C — no arch-specific intrinsics.
+ * Inner loops are structured for compiler auto-vectorization
+ * (SSE2 on x86_64, NEON on ARM64).
  */
 
 /* GGML type IDs */
@@ -30,23 +34,21 @@ static float f16_to_f32(uint16_t h) {
 
     if (exp == 0) {
         if (mant == 0) {
-            /* Signed zero */
             union { uint32_t u; float f; } r;
             r.u = sign;
             return r.f;
         }
-        /* Subnormal: normalize */
         while (!(mant & 0x400)) {
             mant <<= 1;
             exp--;
         }
         exp++;
         mant &= 0x3FF;
-        exp += 112; /* bias adjust: 127 - 15 */
+        exp += 112;
     } else if (exp == 31) {
-        exp = 255; /* inf/nan */
+        exp = 255;
     } else {
-        exp += 112; /* bias adjust: 127 - 15 */
+        exp += 112;
     }
 
     uint32_t bits = sign | (exp << 23) | (mant << 13);
@@ -55,92 +57,87 @@ static float f16_to_f32(uint16_t h) {
     return r.f;
 }
 
-/* --- Q8_0: 34 bytes → 32 floats --- */
-/* Layout: f16 scale (2B) + int8_t quants[32] (32B) */
+/* Read little-endian uint16 (safe for unaligned access) */
+static inline uint16_t read_u16(const uint8_t *p) {
+    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
+}
 
-static void dequant_q8_0_block(const void *src, float *dst) {
-    const uint8_t *p = (const uint8_t *)src;
-    uint16_t scale_h;
-    memcpy(&scale_h, p, 2);
-    float scale = f16_to_f32(scale_h);
+/* --- Q8_0: 34 bytes → 32 floats --- */
+
+static void dequant_q8_0_block(const uint8_t *p, float *dst) {
+    float scale = f16_to_f32(read_u16(p));
     const int8_t *quants = (const int8_t *)(p + 2);
-    for (int i = 0; i < 32; i++)
-        dst[i] = (float)quants[i] * scale;
+
+    /* Process 4 elements per iteration for auto-vectorization */
+    for (int i = 0; i < 32; i += 4) {
+        dst[i]     = (float)quants[i]     * scale;
+        dst[i + 1] = (float)quants[i + 1] * scale;
+        dst[i + 2] = (float)quants[i + 2] * scale;
+        dst[i + 3] = (float)quants[i + 3] * scale;
+    }
 }
 
 /* --- Q4_0: 18 bytes → 32 floats --- */
-/* Layout: f16 scale (2B) + uint8_t quants[16] (16B, 2 nibbles per byte) */
 
-static void dequant_q4_0_block(const void *src, float *dst) {
-    const uint8_t *p = (const uint8_t *)src;
-    uint16_t scale_h;
-    memcpy(&scale_h, p, 2);
-    float scale = f16_to_f32(scale_h);
+static void dequant_q4_0_block(const uint8_t *p, float *dst) {
+    float scale = f16_to_f32(read_u16(p));
     const uint8_t *quants = p + 2;
 
-    for (int i = 0; i < 16; i++) {
-        int lo = (quants[i] & 0x0F) - 8;
-        int hi = (quants[i] >> 4) - 8;
-        dst[i * 2]     = (float)lo * scale;
-        dst[i * 2 + 1] = (float)hi * scale;
+    /* Process 4 bytes (8 floats) per iteration for auto-vectorization */
+    for (int i = 0; i < 16; i += 4) {
+        dst[i * 2]     = (float)((int)(quants[i]     & 0x0F) - 8) * scale;
+        dst[i * 2 + 1] = (float)((int)(quants[i]     >> 4)   - 8) * scale;
+        dst[i * 2 + 2] = (float)((int)(quants[i + 1] & 0x0F) - 8) * scale;
+        dst[i * 2 + 3] = (float)((int)(quants[i + 1] >> 4)   - 8) * scale;
+        dst[i * 2 + 4] = (float)((int)(quants[i + 2] & 0x0F) - 8) * scale;
+        dst[i * 2 + 5] = (float)((int)(quants[i + 2] >> 4)   - 8) * scale;
+        dst[i * 2 + 6] = (float)((int)(quants[i + 3] & 0x0F) - 8) * scale;
+        dst[i * 2 + 7] = (float)((int)(quants[i + 3] >> 4)   - 8) * scale;
     }
 }
 
 /* --- Q4_1: 20 bytes → 32 floats --- */
-/* Layout: f16 scale (2B) + f16 min (2B) + uint8_t quants[16] (16B) */
 
-static void dequant_q4_1_block(const void *src, float *dst) {
-    const uint8_t *p = (const uint8_t *)src;
-    uint16_t scale_h, min_h;
-    memcpy(&scale_h, p, 2);
-    memcpy(&min_h, p + 2, 2);
-    float scale = f16_to_f32(scale_h);
-    float min_val = f16_to_f32(min_h);
+static void dequant_q4_1_block(const uint8_t *p, float *dst) {
+    float scale = f16_to_f32(read_u16(p));
+    float min_val = f16_to_f32(read_u16(p + 2));
     const uint8_t *quants = p + 4;
 
-    for (int i = 0; i < 16; i++) {
-        int lo = quants[i] & 0x0F;
-        int hi = quants[i] >> 4;
-        dst[i * 2]     = (float)lo * scale + min_val;
-        dst[i * 2 + 1] = (float)hi * scale + min_val;
+    for (int i = 0; i < 16; i += 4) {
+        dst[i * 2]     = (float)(quants[i]     & 0x0F) * scale + min_val;
+        dst[i * 2 + 1] = (float)(quants[i]     >> 4)   * scale + min_val;
+        dst[i * 2 + 2] = (float)(quants[i + 1] & 0x0F) * scale + min_val;
+        dst[i * 2 + 3] = (float)(quants[i + 1] >> 4)   * scale + min_val;
+        dst[i * 2 + 4] = (float)(quants[i + 2] & 0x0F) * scale + min_val;
+        dst[i * 2 + 5] = (float)(quants[i + 2] >> 4)   * scale + min_val;
+        dst[i * 2 + 6] = (float)(quants[i + 3] & 0x0F) * scale + min_val;
+        dst[i * 2 + 7] = (float)(quants[i + 3] >> 4)   * scale + min_val;
     }
 }
 
 /* --- Q5_0: 22 bytes → 32 floats --- */
-/* Layout: f16 scale (2B) + uint8_t qh[4] (4B, high bits) + uint8_t quants[16] (16B) */
 
-static void dequant_q5_0_block(const void *src, float *dst) {
-    const uint8_t *p = (const uint8_t *)src;
-    uint16_t scale_h;
-    memcpy(&scale_h, p, 2);
-    float scale = f16_to_f32(scale_h);
-    const uint8_t *qh = p + 2;      /* 4 bytes = 32 bits for high bit */
-    const uint8_t *qs = p + 6;      /* 16 bytes for low 4 bits */
+static void dequant_q5_0_block(const uint8_t *p, float *dst) {
+    float scale = f16_to_f32(read_u16(p));
+    const uint8_t *qh = p + 2;
+    const uint8_t *qs = p + 6;
 
     uint32_t hmask;
     memcpy(&hmask, qh, 4);
 
     for (int i = 0; i < 16; i++) {
-        int lo = (qs[i] & 0x0F);
-        int hi = (qs[i] >> 4);
-        /* Add 5th bit from hmask */
-        lo |= ((hmask >> (i * 2)) & 1) << 4;
-        hi |= ((hmask >> (i * 2 + 1)) & 1) << 4;
+        int lo = (qs[i] & 0x0F) | (((hmask >> (i * 2))     & 1) << 4);
+        int hi = (qs[i] >> 4)   | (((hmask >> (i * 2 + 1)) & 1) << 4);
         dst[i * 2]     = (float)(lo - 16) * scale;
         dst[i * 2 + 1] = (float)(hi - 16) * scale;
     }
 }
 
 /* --- Q5_1: 24 bytes → 32 floats --- */
-/* Layout: f16 scale (2B) + f16 min (2B) + uint8_t qh[4] (4B) + uint8_t quants[16] (16B) */
 
-static void dequant_q5_1_block(const void *src, float *dst) {
-    const uint8_t *p = (const uint8_t *)src;
-    uint16_t scale_h, min_h;
-    memcpy(&scale_h, p, 2);
-    memcpy(&min_h, p + 2, 2);
-    float scale = f16_to_f32(scale_h);
-    float min_val = f16_to_f32(min_h);
+static void dequant_q5_1_block(const uint8_t *p, float *dst) {
+    float scale = f16_to_f32(read_u16(p));
+    float min_val = f16_to_f32(read_u16(p + 2));
     const uint8_t *qh = p + 4;
     const uint8_t *qs = p + 8;
 
@@ -148,37 +145,28 @@ static void dequant_q5_1_block(const void *src, float *dst) {
     memcpy(&hmask, qh, 4);
 
     for (int i = 0; i < 16; i++) {
-        int lo = (qs[i] & 0x0F);
-        int hi = (qs[i] >> 4);
-        lo |= ((hmask >> (i * 2)) & 1) << 4;
-        hi |= ((hmask >> (i * 2 + 1)) & 1) << 4;
+        int lo = (qs[i] & 0x0F) | (((hmask >> (i * 2))     & 1) << 4);
+        int hi = (qs[i] >> 4)   | (((hmask >> (i * 2 + 1)) & 1) << 4);
         dst[i * 2]     = (float)lo * scale + min_val;
         dst[i * 2 + 1] = (float)hi * scale + min_val;
     }
 }
 
 /* --- Q2_K: 84 bytes → 256 floats --- */
-/* Layout: uint8_t scales[16] + uint8_t quants[64] + f16 d + f16 dmin */
 
-static void dequant_q2_k_block(const void *src, float *dst) {
-    const uint8_t *p = (const uint8_t *)src;
-    const uint8_t *scales = p;          /* 16 bytes: 4-bit scale + 4-bit min per sub-block */
-    const uint8_t *quants = p + 16;     /* 64 bytes: 2 bits per value, 4 values per byte */
-    uint16_t d_h, dmin_h;
-    memcpy(&d_h, p + 80, 2);
-    memcpy(&dmin_h, p + 82, 2);
-    float d = f16_to_f32(d_h);
-    float dmin = f16_to_f32(dmin_h);
+static void dequant_q2_k_block(const uint8_t *p, float *dst) {
+    const uint8_t *scales = p;
+    const uint8_t *quants = p + 16;
+    float d = f16_to_f32(read_u16(p + 80));
+    float dmin = f16_to_f32(read_u16(p + 82));
 
-    /* 16 sub-blocks of 16 values each */
     for (int sb = 0; sb < 16; sb++) {
         float sc = d * (float)(scales[sb] & 0x0F);
         float mn = dmin * (float)(scales[sb] >> 4);
-        /* Each sub-block: 4 bytes = 16 values (2 bits each) */
         const uint8_t *qb = quants + sb * 4;
         for (int j = 0; j < 4; j++) {
             uint8_t q = qb[j];
-            dst[sb * 16 + j * 4 + 0] = sc * (float)((q >> 0) & 3) - mn;
+            dst[sb * 16 + j * 4]     = sc * (float)((q >> 0) & 3) - mn;
             dst[sb * 16 + j * 4 + 1] = sc * (float)((q >> 2) & 3) - mn;
             dst[sb * 16 + j * 4 + 2] = sc * (float)((q >> 4) & 3) - mn;
             dst[sb * 16 + j * 4 + 3] = sc * (float)((q >> 6) & 3) - mn;
@@ -187,145 +175,109 @@ static void dequant_q2_k_block(const void *src, float *dst) {
 }
 
 /* --- Q3_K: 110 bytes → 256 floats --- */
-/* Layout: uint8_t hmasks[32] + uint8_t quants[64] + uint8_t scales[12] + f16 d */
 
-static void dequant_q3_k_block(const void *src, float *dst) {
-    const uint8_t *p = (const uint8_t *)src;
-    const uint8_t *hmasks = p;          /* 32 bytes: high bit per value */
-    const uint8_t *quants = p + 32;     /* 64 bytes: low 2 bits, 4 per byte */
-    const uint8_t *sc_raw = p + 96;     /* 12 bytes: packed scales */
-    uint16_t d_h;
-    memcpy(&d_h, p + 108, 2);
-    float d = f16_to_f32(d_h);
+static void dequant_q3_k_block(const uint8_t *p, float *dst) {
+    const uint8_t *hmasks = p;
+    const uint8_t *quants = p + 32;
+    const uint8_t *sc_raw = p + 96;
+    float d = f16_to_f32(read_u16(p + 108));
 
     /* Decode 16 6-bit scales from 12 bytes */
-    uint32_t sc32[16];
-    {
-        /* bytes 0..3 → low 4 bits of scales 0..7 */
-        for (int i = 0; i < 4; i++) {
-            sc32[2*i]   = sc_raw[i] & 0x0F;
-            sc32[2*i+1] = sc_raw[i] >> 4;
-        }
-        /* bytes 4..7 → low 4 bits of scales 8..15 */
-        for (int i = 0; i < 4; i++) {
-            sc32[8+2*i]   = sc_raw[4+i] & 0x0F;
-            sc32[8+2*i+1] = sc_raw[4+i] >> 4;
-        }
-        /* bytes 8..11 → high 2 bits of scales 0..15 */
-        for (int i = 0; i < 4; i++) {
-            sc32[4*i+0] |= ((sc_raw[8+i] >> 0) & 3) << 4;
-            sc32[4*i+1] |= ((sc_raw[8+i] >> 2) & 3) << 4;
-            sc32[4*i+2] |= ((sc_raw[8+i] >> 4) & 3) << 4;
-            sc32[4*i+3] |= ((sc_raw[8+i] >> 6) & 3) << 4;
-        }
+    int32_t sc32[16];
+    for (int i = 0; i < 4; i++) {
+        sc32[2*i]   = sc_raw[i] & 0x0F;
+        sc32[2*i+1] = sc_raw[i] >> 4;
+    }
+    for (int i = 0; i < 4; i++) {
+        sc32[8+2*i]   = sc_raw[4+i] & 0x0F;
+        sc32[8+2*i+1] = sc_raw[4+i] >> 4;
+    }
+    for (int i = 0; i < 4; i++) {
+        sc32[4*i]   |= ((sc_raw[8+i] >> 0) & 3) << 4;
+        sc32[4*i+1] |= ((sc_raw[8+i] >> 2) & 3) << 4;
+        sc32[4*i+2] |= ((sc_raw[8+i] >> 4) & 3) << 4;
+        sc32[4*i+3] |= ((sc_raw[8+i] >> 6) & 3) << 4;
     }
 
-    /* 16 sub-blocks of 16 values each */
     for (int sb = 0; sb < 16; sb++) {
-        float sc = d * ((int32_t)sc32[sb] - 32);
+        float sc = d * (float)(sc32[sb] - 32);
         for (int j = 0; j < 16; j++) {
             int idx = sb * 16 + j;
-            /* Low 2 bits from quants */
-            int qbyte_idx = idx / 4;
-            int qbit_shift = (idx % 4) * 2;
-            int q_lo = (quants[qbyte_idx] >> qbit_shift) & 3;
-            /* High bit from hmasks */
-            int hbyte_idx = idx / 8;
-            int hbit = (hmasks[hbyte_idx] >> (idx % 8)) & 1;
+            int q_lo = (quants[idx / 4] >> ((idx % 4) * 2)) & 3;
+            int hbit = (hmasks[idx / 8] >> (idx % 8)) & 1;
             int q = q_lo | (hbit << 2);
             dst[idx] = sc * ((float)q - 4.0f);
         }
     }
 }
 
-/* --- Q4_K: 144 bytes → 256 floats --- */
-/* Layout: f16 d (2B) + f16 dmin (2B) + uint8_t scales[12] (12B) + uint8_t quants[128] (128B) */
+/* --- K-quant scale decode (shared by Q4_K and Q5_K) ---
+ * Decodes 8 scale/min pairs from 12 bytes of packed data. */
 
-static void dequant_q4_k_block(const void *src, float *dst) {
-    const uint8_t *p = (const uint8_t *)src;
-    uint16_t d_h, dmin_h;
-    memcpy(&d_h, p, 2);
-    memcpy(&dmin_h, p + 2, 2);
-    float d = f16_to_f32(d_h);
-    float dmin = f16_to_f32(dmin_h);
-    const uint8_t *sc_raw = p + 4;     /* 12 bytes */
-    const uint8_t *quants = p + 16;    /* 128 bytes */
-
-    /* Decode 8 6-bit scale/min pairs from 12 bytes.
-     * 8 sub-blocks of 32 values each.
-     * Encoding: bytes 0..3 have low 6 bits of scales[0..3] and mins[0..3]
-     *           bytes 4..7 have low 6 bits of scales[4..7] and mins[4..7]
-     *           bytes 8..11 have high 2 bits */
-    uint8_t sc[8], mn[8];
-    /* Low 4 bits */
-    sc[0] = sc_raw[0] & 0x3F;  mn[0] = sc_raw[0] >> 6 | ((sc_raw[1] & 0x0F) << 2);
+static void decode_k_scales(const uint8_t *sc_raw, uint8_t *sc, uint8_t *mn) {
+    sc[0] = sc_raw[0] & 0x3F;
+    mn[0] = sc_raw[0] >> 6 | ((sc_raw[1] & 0x0F) << 2);
     sc[1] = (sc_raw[1] >> 4) | ((sc_raw[2] & 0x03) << 4);
     mn[1] = (sc_raw[2] >> 2);
-    sc[2] = sc_raw[3] & 0x3F;  mn[2] = sc_raw[3] >> 6 | ((sc_raw[4] & 0x0F) << 2);
+    sc[2] = sc_raw[3] & 0x3F;
+    mn[2] = sc_raw[3] >> 6 | ((sc_raw[4] & 0x0F) << 2);
     sc[3] = (sc_raw[4] >> 4) | ((sc_raw[5] & 0x03) << 4);
     mn[3] = (sc_raw[5] >> 2);
-    sc[4] = sc_raw[6] & 0x3F;  mn[4] = sc_raw[6] >> 6 | ((sc_raw[7] & 0x0F) << 2);
+    sc[4] = sc_raw[6] & 0x3F;
+    mn[4] = sc_raw[6] >> 6 | ((sc_raw[7] & 0x0F) << 2);
     sc[5] = (sc_raw[7] >> 4) | ((sc_raw[8] & 0x03) << 4);
     mn[5] = (sc_raw[8] >> 2);
-    sc[6] = sc_raw[9] & 0x3F;  mn[6] = sc_raw[9] >> 6 | ((sc_raw[10] & 0x0F) << 2);
+    sc[6] = sc_raw[9] & 0x3F;
+    mn[6] = sc_raw[9] >> 6 | ((sc_raw[10] & 0x0F) << 2);
     sc[7] = (sc_raw[10] >> 4) | ((sc_raw[11] & 0x03) << 4);
     mn[7] = (sc_raw[11] >> 2);
+}
 
-    /* 8 sub-blocks of 32 values, 4 bits per value */
+/* --- Q4_K: 144 bytes → 256 floats --- */
+
+static void dequant_q4_k_block(const uint8_t *p, float *dst) {
+    float d = f16_to_f32(read_u16(p));
+    float dmin = f16_to_f32(read_u16(p + 2));
+    uint8_t sc[8], mn[8];
+    decode_k_scales(p + 4, sc, mn);
+    const uint8_t *quants = p + 16;
+
     for (int sb = 0; sb < 8; sb++) {
         float scale = d * (float)sc[sb];
         float min_val = dmin * (float)mn[sb];
         const uint8_t *qb = quants + sb * 16;
-        for (int j = 0; j < 16; j++) {
-            int lo = qb[j] & 0x0F;
-            int hi = qb[j] >> 4;
-            dst[sb * 32 + j * 2]     = scale * (float)lo - min_val;
-            dst[sb * 32 + j * 2 + 1] = scale * (float)hi - min_val;
+        /* Process 4 bytes (8 floats) per iteration */
+        for (int j = 0; j < 16; j += 4) {
+            dst[sb * 32 + j * 2]     = scale * (float)(qb[j]     & 0x0F) - min_val;
+            dst[sb * 32 + j * 2 + 1] = scale * (float)(qb[j]     >> 4)   - min_val;
+            dst[sb * 32 + j * 2 + 2] = scale * (float)(qb[j + 1] & 0x0F) - min_val;
+            dst[sb * 32 + j * 2 + 3] = scale * (float)(qb[j + 1] >> 4)   - min_val;
+            dst[sb * 32 + j * 2 + 4] = scale * (float)(qb[j + 2] & 0x0F) - min_val;
+            dst[sb * 32 + j * 2 + 5] = scale * (float)(qb[j + 2] >> 4)   - min_val;
+            dst[sb * 32 + j * 2 + 6] = scale * (float)(qb[j + 3] & 0x0F) - min_val;
+            dst[sb * 32 + j * 2 + 7] = scale * (float)(qb[j + 3] >> 4)   - min_val;
         }
     }
 }
 
 /* --- Q5_K: 176 bytes → 256 floats --- */
-/* Layout: f16 d (2B) + f16 dmin (2B) + uint8_t scales[12] (12B) + uint8_t qh[32] (32B) + uint8_t ql[128] (128B) */
 
-static void dequant_q5_k_block(const void *src, float *dst) {
-    const uint8_t *p = (const uint8_t *)src;
-    uint16_t d_h, dmin_h;
-    memcpy(&d_h, p, 2);
-    memcpy(&dmin_h, p + 2, 2);
-    float d = f16_to_f32(d_h);
-    float dmin = f16_to_f32(dmin_h);
-    const uint8_t *sc_raw = p + 4;     /* 12 bytes */
-    const uint8_t *qh = p + 16;        /* 32 bytes: high bits */
-    const uint8_t *ql = p + 48;        /* 128 bytes: low 4 bits */
-
-    /* Same scale encoding as Q4_K */
+static void dequant_q5_k_block(const uint8_t *p, float *dst) {
+    float d = f16_to_f32(read_u16(p));
+    float dmin = f16_to_f32(read_u16(p + 2));
     uint8_t sc[8], mn[8];
-    sc[0] = sc_raw[0] & 0x3F;  mn[0] = sc_raw[0] >> 6 | ((sc_raw[1] & 0x0F) << 2);
-    sc[1] = (sc_raw[1] >> 4) | ((sc_raw[2] & 0x03) << 4);
-    mn[1] = (sc_raw[2] >> 2);
-    sc[2] = sc_raw[3] & 0x3F;  mn[2] = sc_raw[3] >> 6 | ((sc_raw[4] & 0x0F) << 2);
-    sc[3] = (sc_raw[4] >> 4) | ((sc_raw[5] & 0x03) << 4);
-    mn[3] = (sc_raw[5] >> 2);
-    sc[4] = sc_raw[6] & 0x3F;  mn[4] = sc_raw[6] >> 6 | ((sc_raw[7] & 0x0F) << 2);
-    sc[5] = (sc_raw[7] >> 4) | ((sc_raw[8] & 0x03) << 4);
-    mn[5] = (sc_raw[8] >> 2);
-    sc[6] = sc_raw[9] & 0x3F;  mn[6] = sc_raw[9] >> 6 | ((sc_raw[10] & 0x0F) << 2);
-    sc[7] = (sc_raw[10] >> 4) | ((sc_raw[11] & 0x03) << 4);
-    mn[7] = (sc_raw[11] >> 2);
+    decode_k_scales(p + 4, sc, mn);
+    const uint8_t *qh = p + 16;
+    const uint8_t *ql = p + 48;
 
-    /* 8 sub-blocks of 32 values */
     for (int sb = 0; sb < 8; sb++) {
         float scale = d * (float)sc[sb];
         float min_val = dmin * (float)mn[sb];
         const uint8_t *qb = ql + sb * 16;
-        const uint8_t *hb = qh + sb * 4;  /* 4 bytes = 32 high bits */
+        const uint8_t *hb = qh + sb * 4;
         for (int j = 0; j < 16; j++) {
-            int lo = qb[j] & 0x0F;
-            int hi = qb[j] >> 4;
-            /* High bit from qh */
-            lo |= ((hb[j / 4] >> ((j % 4) * 2)) & 1) << 4;
-            hi |= ((hb[j / 4] >> ((j % 4) * 2 + 1)) & 1) << 4;
+            int lo = (qb[j] & 0x0F) | (((hb[j / 4] >> ((j % 4) * 2))     & 1) << 4);
+            int hi = (qb[j] >> 4)   | (((hb[j / 4] >> ((j % 4) * 2 + 1)) & 1) << 4);
             dst[sb * 32 + j * 2]     = scale * (float)lo - min_val;
             dst[sb * 32 + j * 2 + 1] = scale * (float)hi - min_val;
         }
@@ -333,42 +285,28 @@ static void dequant_q5_k_block(const void *src, float *dst) {
 }
 
 /* --- Q6_K: 210 bytes → 256 floats --- */
-/* Layout: uint8_t ql[128] + uint8_t qh[64] + int8_t scales[16] + f16 d */
 
-static void dequant_q6_k_block(const void *src, float *dst) {
-    const uint8_t *p = (const uint8_t *)src;
-    const uint8_t *ql = p;              /* 128 bytes: low 4 bits */
-    const uint8_t *qh = p + 128;       /* 64 bytes: high 2 bits */
-    const int8_t  *scales = (const int8_t *)(p + 192);  /* 16 bytes */
-    uint16_t d_h;
-    memcpy(&d_h, p + 208, 2);
-    float d = f16_to_f32(d_h);
+static void dequant_q6_k_block(const uint8_t *p, float *dst) {
+    const uint8_t *ql = p;
+    const uint8_t *qh = p + 128;
+    const int8_t  *scales = (const int8_t *)(p + 192);
+    float d = f16_to_f32(read_u16(p + 208));
 
-    /* 16 sub-blocks of 16 values each */
     for (int sb = 0; sb < 16; sb++) {
         float sc = d * (float)scales[sb];
         for (int j = 0; j < 16; j++) {
             int idx = sb * 16 + j;
-            /* Low 4 bits from ql (2 nibbles per byte) */
-            int ql_byte = idx / 2;
-            int q_lo;
-            if (idx % 2 == 0)
-                q_lo = ql[ql_byte] & 0x0F;
-            else
-                q_lo = ql[ql_byte] >> 4;
-
-            /* High 2 bits from qh (4 values per byte) */
-            int qh_byte = idx / 4;
-            int qh_shift = (idx % 4) * 2;
-            int q_hi = (qh[qh_byte] >> qh_shift) & 3;
-
+            int q_lo = (idx & 1) ? (ql[idx / 2] >> 4) : (ql[idx / 2] & 0x0F);
+            int q_hi = (qh[idx / 4] >> ((idx % 4) * 2)) & 3;
             int q = q_lo | (q_hi << 4);
             dst[idx] = sc * ((float)q - 32.0f);
         }
     }
 }
 
-/* --- Dispatch --- */
+/* --- Dispatch ---
+ * Switch-outside-loop: type check once, then tight inner loop per type.
+ * Eliminates per-block branch prediction overhead for large tensors. */
 
 int dequant(const void *src, float *dst, uint64_t n, uint32_t type) {
     if (type == GGML_TYPE_F32) {
@@ -378,7 +316,15 @@ int dequant(const void *src, float *dst, uint64_t n, uint32_t type) {
 
     if (type == GGML_TYPE_F16) {
         const uint16_t *s = (const uint16_t *)src;
-        for (uint64_t i = 0; i < n; i++)
+        /* Process 4 elements per iteration for auto-vectorization */
+        uint64_t i = 0;
+        for (; i + 3 < n; i += 4) {
+            dst[i]     = f16_to_f32(s[i]);
+            dst[i + 1] = f16_to_f32(s[i + 1]);
+            dst[i + 2] = f16_to_f32(s[i + 2]);
+            dst[i + 3] = f16_to_f32(s[i + 3]);
+        }
+        for (; i < n; i++)
             dst[i] = f16_to_f32(s[i]);
         return 0;
     }
@@ -393,23 +339,50 @@ int dequant(const void *src, float *dst, uint64_t n, uint32_t type) {
     uint64_t n_blocks = n / block_size;
     const uint8_t *p = (const uint8_t *)src;
 
-    for (uint64_t b = 0; b < n_blocks; b++) {
-        float *out = dst + b * block_size;
-        const void *blk = p + b * block_bytes;
-
-        switch (type) {
-        case GGML_TYPE_Q4_0: dequant_q4_0_block(blk, out); break;
-        case GGML_TYPE_Q4_1: dequant_q4_1_block(blk, out); break;
-        case GGML_TYPE_Q5_0: dequant_q5_0_block(blk, out); break;
-        case GGML_TYPE_Q5_1: dequant_q5_1_block(blk, out); break;
-        case GGML_TYPE_Q8_0: dequant_q8_0_block(blk, out); break;
-        case GGML_TYPE_Q2_K: dequant_q2_k_block(blk, out); break;
-        case GGML_TYPE_Q3_K: dequant_q3_k_block(blk, out); break;
-        case GGML_TYPE_Q4_K: dequant_q4_k_block(blk, out); break;
-        case GGML_TYPE_Q5_K: dequant_q5_k_block(blk, out); break;
-        case GGML_TYPE_Q6_K: dequant_q6_k_block(blk, out); break;
-        default: return -1;
-        }
+    /* Switch-outside-loop: one branch, then tight dequant loop */
+    switch (type) {
+    case GGML_TYPE_Q4_0:
+        for (uint64_t b = 0; b < n_blocks; b++)
+            dequant_q4_0_block(p + b * block_bytes, dst + b * block_size);
+        break;
+    case GGML_TYPE_Q4_1:
+        for (uint64_t b = 0; b < n_blocks; b++)
+            dequant_q4_1_block(p + b * block_bytes, dst + b * block_size);
+        break;
+    case GGML_TYPE_Q5_0:
+        for (uint64_t b = 0; b < n_blocks; b++)
+            dequant_q5_0_block(p + b * block_bytes, dst + b * block_size);
+        break;
+    case GGML_TYPE_Q5_1:
+        for (uint64_t b = 0; b < n_blocks; b++)
+            dequant_q5_1_block(p + b * block_bytes, dst + b * block_size);
+        break;
+    case GGML_TYPE_Q8_0:
+        for (uint64_t b = 0; b < n_blocks; b++)
+            dequant_q8_0_block(p + b * block_bytes, dst + b * block_size);
+        break;
+    case GGML_TYPE_Q2_K:
+        for (uint64_t b = 0; b < n_blocks; b++)
+            dequant_q2_k_block(p + b * block_bytes, dst + b * block_size);
+        break;
+    case GGML_TYPE_Q3_K:
+        for (uint64_t b = 0; b < n_blocks; b++)
+            dequant_q3_k_block(p + b * block_bytes, dst + b * block_size);
+        break;
+    case GGML_TYPE_Q4_K:
+        for (uint64_t b = 0; b < n_blocks; b++)
+            dequant_q4_k_block(p + b * block_bytes, dst + b * block_size);
+        break;
+    case GGML_TYPE_Q5_K:
+        for (uint64_t b = 0; b < n_blocks; b++)
+            dequant_q5_k_block(p + b * block_bytes, dst + b * block_size);
+        break;
+    case GGML_TYPE_Q6_K:
+        for (uint64_t b = 0; b < n_blocks; b++)
+            dequant_q6_k_block(p + b * block_bytes, dst + b * block_size);
+        break;
+    default:
+        return -1;
     }
 
     return 0;
