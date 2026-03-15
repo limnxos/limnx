@@ -233,4 +233,12 @@ int64_t sys_getsid(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_tcsetpgrp(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_tcgetpgrp(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
+int64_t sys_uname(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_gettid(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_tgkill(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_clock_getres(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_dup3(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_readv(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_ftruncate(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+
 #endif /* LIMNX_SYSCALL_INTERNAL_H */

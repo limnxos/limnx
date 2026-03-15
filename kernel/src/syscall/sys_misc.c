@@ -918,3 +918,105 @@ int64_t sys_writev(uint64_t fd, uint64_t iov_ptr, uint64_t iovcnt,
     }
     return total;
 }
+
+/* ---- Syscall stubs for musl/busybox compatibility ---- */
+
+int64_t sys_uname(uint64_t buf_ptr, uint64_t a2,
+                           uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    /* struct utsname: 6 fields × 65 bytes = 390 bytes */
+    if (validate_user_ptr(buf_ptr, 390) != 0)
+        return -EFAULT;
+    char *buf = (char *)buf_ptr;
+    /* Zero entire struct */
+    for (int i = 0; i < 390; i++) buf[i] = 0;
+    /* sysname */
+    const char *s = "Limnx";
+    for (int i = 0; s[i]; i++) buf[i] = s[i];
+    /* nodename (offset 65) */
+    s = "limnx";
+    for (int i = 0; s[i]; i++) buf[65 + i] = s[i];
+    /* release (offset 130) */
+    s = "1.6.0";
+    for (int i = 0; s[i]; i++) buf[130 + i] = s[i];
+    /* version (offset 195) */
+    s = "#1 SMP";
+    for (int i = 0; s[i]; i++) buf[195 + i] = s[i];
+    /* machine (offset 260) */
+#if defined(__x86_64__)
+    s = "x86_64";
+#elif defined(__aarch64__)
+    s = "aarch64";
+#else
+    s = "unknown";
+#endif
+    for (int i = 0; s[i]; i++) buf[260 + i] = s[i];
+    return 0;
+}
+
+int64_t sys_gettid(uint64_t a1, uint64_t a2,
+                            uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    return t && t->process ? (int64_t)t->process->pid : 1;
+}
+
+int64_t sys_tgkill(uint64_t tgid, uint64_t tid, uint64_t sig,
+                            uint64_t a4, uint64_t a5) {
+    (void)tgid; (void)a4; (void)a5;
+    /* Single-threaded: tgkill = kill */
+    return sys_kill(tid, sig, 0, 0, 0);
+}
+
+int64_t sys_clock_getres(uint64_t clockid, uint64_t res_ptr,
+                                  uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)clockid; (void)a3; (void)a4; (void)a5;
+    if (res_ptr && validate_user_ptr(res_ptr, 16) == 0) {
+        int64_t *ts = (int64_t *)res_ptr;
+        ts[0] = 0;          /* tv_sec */
+        ts[1] = 1000000;    /* tv_nsec = 1ms resolution */
+    }
+    return 0;
+}
+
+int64_t sys_dup3(uint64_t oldfd, uint64_t newfd, uint64_t flags,
+                          uint64_t a4, uint64_t a5) {
+    (void)flags; (void)a4; (void)a5;
+    /* dup3 = dup2 with flags (O_CLOEXEC) — ignore flags for now */
+    return sys_dup2(oldfd, newfd, 0, 0, 0);
+}
+
+int64_t sys_readv(uint64_t fd, uint64_t iov_ptr, uint64_t iovcnt,
+                           uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    process_t *proc = t ? t->process : NULL;
+    if (!proc) return -1;
+    if (validate_user_ptr(iov_ptr, iovcnt * 16) != 0)
+        return -EFAULT;
+
+    struct { uint64_t base; uint64_t len; } *iov = (void *)iov_ptr;
+    int64_t total = 0;
+    for (uint64_t i = 0; i < iovcnt; i++) {
+        if (iov[i].len == 0) continue;
+        int64_t n = sys_read(fd, iov[i].base, iov[i].len, 0, 0);
+        if (n < 0) return total > 0 ? total : n;
+        total += n;
+        if ((uint64_t)n < iov[i].len) break;  /* short read */
+    }
+    return total;
+}
+
+int64_t sys_ftruncate(uint64_t fd, uint64_t length,
+                               uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    /* ftruncate: truncate file by fd */
+    thread_t *t = thread_get_current();
+    process_t *proc = t ? t->process : NULL;
+    if (!proc || fd >= MAX_FDS) return -EBADF;
+    fd_entry_t *fde = &proc->fd_table[fd];
+    if (!fde->node) return -EBADF;
+    int node_idx = vfs_node_index(fde->node);
+    if (node_idx < 0) return -EBADF;
+    return vfs_truncate_node(node_idx, length);
+}
