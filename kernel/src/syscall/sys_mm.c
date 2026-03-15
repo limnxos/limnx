@@ -16,7 +16,7 @@ static inline void flush_page(uint64_t addr) {
 
 int64_t sys_mmap(uint64_t addr_hint, uint64_t length,
                           uint64_t prot, uint64_t flags, uint64_t fd) {
-    (void)addr_hint; (void)fd;  /* TODO: use these */
+    (void)addr_hint; (void)fd;
 
     /* Linux mmap: (addr, length, prot, flags, fd, offset)
      * For anonymous private mappings (the common case for malloc/TLS):
@@ -57,7 +57,7 @@ int64_t sys_mmap(uint64_t addr_hint, uint64_t length,
     /* Allocate contiguous physical pages */
     uint64_t phys = pmm_alloc_contiguous((uint32_t)num_pages);
     if (phys == 0)
-        return -1;
+        return -ENOMEM;
 
     /* Map pages into process address space */
     uint64_t virt = proc->mmap_next_addr;
@@ -529,7 +529,7 @@ int64_t sys_mmap_file(uint64_t fd, uint64_t offset,
     return (int64_t)virt;
 }
 
-int64_t sys_mprotect(uint64_t virt_addr, uint64_t num_pages,
+int64_t sys_mprotect(uint64_t virt_addr, uint64_t length,
                              uint64_t prot, uint64_t a4, uint64_t a5) {
     (void)a4; (void)a5;
 
@@ -538,8 +538,10 @@ int64_t sys_mprotect(uint64_t virt_addr, uint64_t num_pages,
     if (!proc) return -EINVAL;
 
     if (virt_addr & 0xFFF) return -EINVAL;  /* not page-aligned */
-    if (num_pages == 0) return -EINVAL;
+    if (length == 0) return -EINVAL;
 
+    /* Linux mprotect takes length in bytes, convert to pages */
+    uint64_t num_pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
     uint64_t range_end = virt_addr + num_pages * PAGE_SIZE;
 
     /* Validate: entire range must be within a single mmap entry */
