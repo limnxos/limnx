@@ -107,55 +107,79 @@ static void process_enter_usermode(void) {
     /* Load the process's address space */
     arch_switch_address_space(proc->cr3);
 
-    uint64_t user_rsp = proc->user_stack_top;
-    uint64_t user_rdi = 0;  /* argc */
-    uint64_t user_rsi = 0;  /* argv */
+    /* Set up Linux-standard initial stack layout.
+     * musl/glibc _start reads: sp[0]=argc, sp[1..]=argv[], NULL, envp[], NULL, auxv[]
+     * Our libc _start reads: rdi=argc, rsi=argv (both set for compatibility). */
+    uint64_t sp = proc->user_stack_top;
 
-    if (proc->argc > 0) {
-        /*
-         * Set up argv on the user stack:
-         *   1. Copy packed strings from argv_buf
-         *   2. Write argv[] pointer array (NULL-terminated)
-         *   3. Align RSP to 16 bytes
-         */
-        uint64_t sp = proc->user_stack_top;
-
-        /* 1. Copy strings onto stack, record start of each */
-        uint64_t str_addrs[PROC_MAX_ARGS];
-        int idx = 0;
+    /* 1. Push argument strings */
+    uint64_t str_addrs[PROC_MAX_ARGS];
+    int nargs = 0;
+    {
         int i = 0;
-        while (i < proc->argv_buf_len && idx < proc->argc) {
+        while (i < proc->argv_buf_len && nargs < proc->argc) {
             int slen = 0;
             while (i + slen < proc->argv_buf_len && proc->argv_buf[i + slen] != '\0')
                 slen++;
-            slen++;  /* include NUL */
+            slen++;
             sp -= (uint64_t)slen;
-            /* Copy string to user stack */
             char *dst = (char *)sp;
             for (int j = 0; j < slen; j++)
                 dst[j] = proc->argv_buf[i + j];
-            str_addrs[idx] = sp;
-            idx++;
+            str_addrs[nargs] = sp;
+            nargs++;
             i += slen;
         }
-
-        /* 2. Align sp to 8-byte boundary for pointer array */
-        sp &= ~7ULL;
-
-        /* 3. Write argv[] pointer array (NULL-terminated) */
-        sp -= (uint64_t)(idx + 1) * 8;  /* space for idx pointers + NULL */
-        uint64_t *argv_arr = (uint64_t *)sp;
-        for (int j = 0; j < idx; j++)
-            argv_arr[j] = str_addrs[j];
-        argv_arr[idx] = 0;  /* NULL terminator */
-
-        /* 4. Align RSP to 16 bytes */
-        sp &= ~0xFULL;
-
-        user_rsp = sp;
-        user_rdi = (uint64_t)idx;       /* argc */
-        user_rsi = (uint64_t)argv_arr;  /* argv */
     }
+
+    /* 2. Push environment strings */
+    uint64_t env_addrs[64];
+    int nenv = 0;
+    {
+        int pos = 0;
+        while (pos < proc->env_buf_len && nenv < 64) {
+            int slen = 0;
+            while (pos + slen < proc->env_buf_len && proc->env_buf[pos + slen] != '\0')
+                slen++;
+            if (slen == 0) { pos++; continue; }
+            slen++;
+            sp -= (uint64_t)slen;
+            char *dst = (char *)sp;
+            for (int j = 0; j < slen; j++)
+                dst[j] = proc->env_buf[pos + j];
+            env_addrs[nenv] = sp;
+            nenv++;
+            pos += slen;
+        }
+    }
+
+    sp &= ~0xFULL;
+
+    /* 3. Build Linux stack layout: auxv, envp, argv, argc */
+    sp -= 16;
+    ((uint64_t *)sp)[0] = 0;  /* AT_NULL */
+    ((uint64_t *)sp)[1] = 0;
+
+    sp -= (uint64_t)(nenv + 1) * 8;
+    uint64_t *envp_arr = (uint64_t *)sp;
+    for (int j = 0; j < nenv; j++)
+        envp_arr[j] = env_addrs[j];
+    envp_arr[nenv] = 0;
+
+    sp -= (uint64_t)(nargs + 1) * 8;
+    uint64_t *argv_arr = (uint64_t *)sp;
+    for (int j = 0; j < nargs; j++)
+        argv_arr[j] = str_addrs[j];
+    argv_arr[nargs] = 0;
+
+    sp -= 8;
+    *(uint64_t *)sp = (uint64_t)nargs;
+
+    sp &= ~0xFULL;
+
+    uint64_t user_rsp = sp;
+    uint64_t user_rdi = (uint64_t)nargs;
+    uint64_t user_rsi = (uint64_t)argv_arr;
 
     /*
      * Fix GS state before entering user mode via SYSRETQ.

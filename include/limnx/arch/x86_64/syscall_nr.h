@@ -21,6 +21,7 @@
 #define __NR_rt_sigprocmask  14
 #define __NR_rt_sigreturn    15
 #define __NR_ioctl           16
+#define __NR_writev          20
 #define __NR_access          21
 #define __NR_pipe            22
 #define __NR_select          23

@@ -33,6 +33,7 @@
 #define SYS_RT_SIGPROCMASK  __NR_rt_sigprocmask
 #define SYS_RT_SIGRETURN    __NR_rt_sigreturn
 #define SYS_IOCTL           __NR_ioctl
+#define SYS_WRITEV          __NR_writev
 #define SYS_PIPE2           __NR_pipe2
 #define SYS_SCHED_YIELD     __NR_sched_yield
 #define SYS_NANOSLEEP       __NR_nanosleep
@@ -48,6 +49,8 @@
 #define SYS_EXECVE          __NR_execve
 #define SYS_EXIT            __NR_exit
 #define SYS_EXIT_GROUP      __NR_exit_group
+#define SYS_SET_TID_ADDRESS __NR_set_tid_address
+#define SYS_GETPPID         __NR_getppid
 #define SYS_WAIT4           __NR_wait4
 #define SYS_KILL            __NR_kill
 #define SYS_FCNTL           __NR_fcntl

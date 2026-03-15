@@ -547,21 +547,20 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
     proc->seccomp_mask_hi = 0;
     proc->seccomp_strict = 0;
 
-    /* Set up argv on user stack and enter usermode.
-     * This mirrors process_enter_usermode() logic. */
+    /* Set up Linux-standard initial stack layout for usermode entry.
+     * musl/glibc _start reads: sp[0]=argc, sp[1..]=argv[], NULL, envp[], NULL, auxv[]
+     * Our libc _start reads: rdi=argc, rsi=argv (works too since we push both). */
     arch_switch_address_space(proc->cr3);
     syscall_set_kernel_stack(t->stack_base + t->stack_size);
 
-    uint64_t user_rsp = proc->user_stack_top;
-    uint64_t user_rdi = 0;
-    uint64_t user_rsi = 0;
+    uint64_t sp = proc->user_stack_top;
 
-    if (proc->argc > 0) {
-        uint64_t sp = proc->user_stack_top;
-        uint64_t str_addrs[PROC_MAX_ARGS];
-        int idx = 0;
+    /* 1. Push argument strings onto stack */
+    uint64_t str_addrs[PROC_MAX_ARGS];
+    int nargs = 0;
+    {
         int ii = 0;
-        while (ii < proc->argv_buf_len && idx < proc->argc) {
+        while (ii < proc->argv_buf_len && nargs < proc->argc) {
             int slen = 0;
             while (ii + slen < proc->argv_buf_len && proc->argv_buf[ii + slen] != '\0')
                 slen++;
@@ -570,24 +569,73 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
             char *dst = (char *)sp;
             for (int j = 0; j < slen; j++)
                 dst[j] = proc->argv_buf[ii + j];
-            str_addrs[idx] = sp;
-            idx++;
+            str_addrs[nargs] = sp;
+            nargs++;
             ii += slen;
         }
-        sp &= ~7ULL;
-        sp -= (uint64_t)(idx + 1) * 8;
-        uint64_t *argv_arr = (uint64_t *)sp;
-        for (int j = 0; j < idx; j++)
-            argv_arr[j] = str_addrs[j];
-        argv_arr[idx] = 0;
-        sp &= ~0xFULL;
-        user_rsp = sp;
-        user_rdi = (uint64_t)idx;
-        user_rsi = (uint64_t)argv_arr;
     }
 
+    /* 2. Push environment strings */
+    uint64_t env_addrs[64];
+    int nenv = 0;
+    {
+        int pos = 0;
+        while (pos < proc->env_buf_len && nenv < 64) {
+            int slen = 0;
+            while (pos + slen < proc->env_buf_len && proc->env_buf[pos + slen] != '\0')
+                slen++;
+            if (slen == 0) { pos++; continue; }
+            slen++;
+            sp -= (uint64_t)slen;
+            char *dst = (char *)sp;
+            for (int j = 0; j < slen; j++)
+                dst[j] = proc->env_buf[pos + j];
+            env_addrs[nenv] = sp;
+            nenv++;
+            pos += slen;
+        }
+    }
+
+    /* Align to 16 bytes */
+    sp &= ~0xFULL;
+
+    /* 3. Build the stack layout:
+     *   auxv: AT_NULL (0, 0) — minimal auxiliary vector
+     *   envp: env[0], env[1], ..., NULL
+     *   argv: argv[0], argv[1], ..., NULL
+     *   argc: nargs
+     */
+
+    /* Auxv: AT_NULL = (0, 0) */
+    sp -= 16;
+    ((uint64_t *)sp)[0] = 0;  /* AT_NULL */
+    ((uint64_t *)sp)[1] = 0;
+
+    /* envp array + NULL */
+    sp -= (uint64_t)(nenv + 1) * 8;
+    uint64_t *envp_arr = (uint64_t *)sp;
+    for (int j = 0; j < nenv; j++)
+        envp_arr[j] = env_addrs[j];
+    envp_arr[nenv] = 0;
+
+    /* argv array + NULL */
+    sp -= (uint64_t)(nargs + 1) * 8;
+    uint64_t *argv_arr = (uint64_t *)sp;
+    for (int j = 0; j < nargs; j++)
+        argv_arr[j] = str_addrs[j];
+    argv_arr[nargs] = 0;
+
+    /* argc */
+    sp -= 8;
+    *(uint64_t *)sp = (uint64_t)nargs;
+
+    /* 16-byte align final SP */
+    sp &= ~0xFULL;
+
+    /* Enter usermode: rdi=argc (for our libc), rsi=argv (for our libc)
+     * musl reads from RSP directly, so the stack layout is what matters. */
     arch_prepare_usermode_return();
-    arch_enter_usermode(proc->user_entry, user_rsp, user_rdi, user_rsi);
+    arch_enter_usermode(proc->user_entry, sp, (uint64_t)nargs, (uint64_t)argv_arr);
     /* Never reached */
 }
 

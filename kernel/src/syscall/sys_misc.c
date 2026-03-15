@@ -852,3 +852,69 @@ int64_t sys_task_wait(uint64_t task_id, uint64_t a2,
     (void)a2; (void)a3; (void)a4; (void)a5;
     return taskgraph_is_done((uint32_t)task_id) ? 0 : -EAGAIN;
 }
+
+/* ---- Linux compat stubs (needed by musl) ---- */
+
+int64_t sys_brk(uint64_t addr, uint64_t a2,
+                         uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    /* Linux brk(0) returns current break. brk(new) expands heap.
+     * We don't support brk expansion — always return current break
+     * to force musl to use mmap for allocation. */
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return 0;
+    /* Program break = end of BSS, page-aligned up.
+     * For ELF programs loaded at 0x400000 with ~8KB of segments,
+     * the break starts after the last mapped segment. */
+    /* Use a per-process break address. If not set, estimate from mmap base. */
+    /* Simple: return an address just past the ELF segments.
+     * The ELF loader sets up segments at 0x400000-0x406000ish.
+     * Return the first page after that as the break. */
+    (void)addr;
+    /* Return a safe address that tells musl "brk is here, don't expand" */
+    return 0x800000;  /* 8MB — past any ELF but below mmap region */
+}
+
+int64_t sys_set_tid_address(uint64_t tidptr, uint64_t a2,
+                                     uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)tidptr; (void)a2; (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    return t && t->process ? (int64_t)t->process->pid : 1;
+}
+
+int64_t sys_exit_group(uint64_t status, uint64_t a2,
+                                uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    return sys_exit(status, 0, 0, 0, 0);
+}
+
+int64_t sys_getppid(uint64_t a1, uint64_t a2,
+                             uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    thread_t *t = thread_get_current();
+    if (!t || !t->process) return 1;
+    return (int64_t)t->process->parent_pid;
+}
+
+int64_t sys_writev(uint64_t fd, uint64_t iov_ptr, uint64_t iovcnt,
+                            uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+    /* Scatter-gather write: iterate iovec array, write each buffer */
+    thread_t *t = thread_get_current();
+    process_t *proc = t ? t->process : NULL;
+    if (!proc) return -1;
+
+    if (validate_user_ptr(iov_ptr, iovcnt * 16) != 0)
+        return -EFAULT;
+
+    struct { uint64_t base; uint64_t len; } *iov = (void *)iov_ptr;
+    int64_t total = 0;
+
+    for (uint64_t i = 0; i < iovcnt; i++) {
+        if (iov[i].len == 0) continue;
+        int64_t n = sys_fwrite(fd, iov[i].base, iov[i].len, 0, 0);
+        if (n < 0) return total > 0 ? total : n;
+        total += n;
+    }
+    return total;
+}

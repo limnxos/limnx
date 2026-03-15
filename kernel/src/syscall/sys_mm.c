@@ -14,12 +14,24 @@ static inline void flush_page(uint64_t addr) {
     arch_flush_tlb_page(addr);
 }
 
-int64_t sys_mmap(uint64_t num_pages, uint64_t a2,
-                          uint64_t a3, uint64_t a4, uint64_t a5) {
-    (void)a2; (void)a3; (void)a4; (void)a5;
+int64_t sys_mmap(uint64_t addr_hint, uint64_t length,
+                          uint64_t prot, uint64_t flags, uint64_t fd) {
+    (void)addr_hint; (void)fd;  /* TODO: use these */
 
+    /* Linux mmap: (addr, length, prot, flags, fd, offset)
+     * For anonymous private mappings (the common case for malloc/TLS):
+     * addr=0, length=bytes, flags=MAP_PRIVATE|MAP_ANONYMOUS */
+    uint64_t num_pages;
+    if (length == 0)
+        return -EINVAL;
+    /* If length looks like a page count (old Limnx API compat: small number, no flags) */
+    if (length <= MMAP_MAX_PAGES && flags == 0) {
+        num_pages = length;  /* old API: sys_mmap(num_pages) */
+    } else {
+        num_pages = (length + PAGE_SIZE - 1) / PAGE_SIZE;
+    }
     if (num_pages == 0 || num_pages > MMAP_MAX_PAGES)
-        return -1;
+        return -EINVAL;
 
     thread_t *t = thread_get_current();
     process_t *proc = t->process;
