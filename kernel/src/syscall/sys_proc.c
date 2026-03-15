@@ -256,6 +256,12 @@ int64_t sys_exec(uint64_t path_ptr, uint64_t argv_ptr,
         child->sgid = exec_gid;
     }
 
+    /* Inherit parent's cwd */
+    for (int i = 0; i < MAX_PATH; i++) {
+        child->cwd[i] = proc->cwd[i];
+        if (!proc->cwd[i]) break;
+    }
+
     /* Inherit parent's environment */
     child->env_count = proc->env_count;
     child->env_buf_len = proc->env_buf_len;

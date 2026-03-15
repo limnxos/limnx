@@ -769,17 +769,26 @@ int64_t sys_chdir(uint64_t path_ptr, uint64_t a2,
     if (!node || node->type != VFS_DIRECTORY)
         return -1;
 
-    /* Store resolved absolute path as new cwd */
-    uint64_t len = 0;
-    while (path[len]) len++;
-    if (len >= MAX_PATH) len = MAX_PATH - 1;
+    /* Build canonical path by walking VFS node chain to root */
+    if (idx == 0) {
+        proc->cwd[0] = '/';
+        proc->cwd[1] = '\0';
+    } else {
+        int chain[64];
+        int depth = 0;
+        for (int n = idx; n > 0 && depth < 64; n = vfs_get_node(n)->parent)
+            chain[depth++] = n;
 
-    for (uint64_t i = 0; i <= len; i++)
-        proc->cwd[i] = path[i];
-
-    /* Remove trailing slash (except for root) */
-    if (len > 1 && proc->cwd[len - 1] == '/')
-        proc->cwd[len - 1] = '\0';
+        int pos = 0;
+        for (int d = depth - 1; d >= 0 && pos < MAX_PATH - 2; d--) {
+            proc->cwd[pos++] = '/';
+            const char *nm = vfs_get_node(chain[d])->name;
+            for (int j = 0; nm[j] && pos < MAX_PATH - 1; j++)
+                proc->cwd[pos++] = nm[j];
+        }
+        if (pos == 0) proc->cwd[pos++] = '/';
+        proc->cwd[pos] = '\0';
+    }
 
     return 0;
 }
