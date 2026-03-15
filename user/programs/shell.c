@@ -804,7 +804,8 @@ static int is_builtin(const char *cmd) {
            strcmp(cmd, "test") == 0 || strcmp(cmd, "cp") == 0 ||
            strcmp(cmd, "head") == 0 || strcmp(cmd, "tail") == 0 ||
            strcmp(cmd, "wc") == 0 || strcmp(cmd, "wait") == 0 ||
-           strcmp(cmd, "fg") == 0 || strcmp(cmd, "service") == 0;
+           strcmp(cmd, "fg") == 0 || strcmp(cmd, "bg") == 0 ||
+           strcmp(cmd, "service") == 0;
 }
 
 static void cmd_help(void) {
@@ -1174,6 +1175,31 @@ static void cmd_fg(int argc, char **argv) {
     fg_pid = 0;
     jobs[job_idx].active = 0;
     last_exit_status = (int)st;
+}
+
+static void cmd_bg(int argc, char **argv) {
+    int job_idx = -1;
+
+    if (argc < 2) {
+        for (int i = MAX_JOBS - 1; i >= 0; i--) {
+            if (jobs[i].active) { job_idx = i; break; }
+        }
+        if (job_idx < 0) {
+            printf("bg: no background jobs\n");
+            return;
+        }
+    } else {
+        long pid;
+        job_idx = parse_job_spec(argv[1], &pid);
+        if (job_idx < 0) {
+            printf("bg: invalid job spec '%s'\n", argv[1]);
+            return;
+        }
+    }
+
+    /* Send SIGCONT to resume stopped job in background */
+    sys_kill(jobs[job_idx].pid, 18);  /* SIGCONT */
+    printf("[%d] %s &\n", job_idx + 1, jobs[job_idx].name);
 }
 
 /* ---- Service IPC protocol (must match serviced.c) ---- */
@@ -1722,6 +1748,8 @@ static int run_builtin(command_t *cmd, int *should_exit) {
         cmd_jobs();
     } else if (strcmp(name, "wait") == 0) {
         cmd_wait(argc, argv);
+    } else if (strcmp(name, "bg") == 0) {
+        cmd_bg(argc, argv);
     } else if (strcmp(name, "fg") == 0) {
         cmd_fg(argc, argv);
     } else if (strcmp(name, "service") == 0) {
