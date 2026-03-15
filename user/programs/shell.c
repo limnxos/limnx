@@ -805,7 +805,8 @@ static int is_builtin(const char *cmd) {
            strcmp(cmd, "head") == 0 || strcmp(cmd, "tail") == 0 ||
            strcmp(cmd, "wc") == 0 || strcmp(cmd, "wait") == 0 ||
            strcmp(cmd, "fg") == 0 || strcmp(cmd, "bg") == 0 ||
-           strcmp(cmd, "service") == 0;
+           strcmp(cmd, "service") == 0 || strcmp(cmd, "[") == 0 ||
+           strcmp(cmd, "true") == 0 || strcmp(cmd, "false") == 0;
 }
 
 static void cmd_help(void) {
@@ -1772,6 +1773,51 @@ static int run_builtin(command_t *cmd, int *should_exit) {
         else cmd_wc(argv[1]);
     } else if (strcmp(name, "test") == 0) {
         cmd_test(argc, argv);
+    } else if (strcmp(name, "true") == 0) {
+        last_exit_status = 0;
+        return 1;
+    } else if (strcmp(name, "false") == 0) {
+        last_exit_status = 1;
+        return 1;
+    } else if (strcmp(name, "[") == 0) {
+        /* POSIX test expression: [ expr ] */
+        /* Supported: -f file, -d dir, -z str, -n str, str1 = str2,
+         *            str1 != str2, num1 -eq num2, num1 -ne num2,
+         *            num1 -lt num2, num1 -gt num2 */
+        last_exit_status = 1;  /* default: false */
+        if (argc < 3) { /* empty test */ }
+        else if (strcmp(argv[1], "-f") == 0 && argc >= 3) {
+            long fd = sys_open(argv[2], 0);
+            if (fd >= 0) { sys_close(fd); last_exit_status = 0; }
+        } else if (strcmp(argv[1], "-d") == 0 && argc >= 3) {
+            char dirent[272];
+            /* A directory can be listed via readdir */
+            long ret = sys_readdir(argv[2], 0, dirent);
+            /* If readdir returns 0 or -ENOENT (empty dir), it's a dir */
+            if (ret == 0 || ret == -2 /* ENOENT for empty */)
+                last_exit_status = 0;
+            /* Also try stat */
+            char st[16];
+            if (sys_stat(argv[2], st) == 0 && st[8] == 1) /* type==VFS_DIRECTORY */
+                last_exit_status = 0;
+        } else if (strcmp(argv[1], "-z") == 0 && argc >= 3) {
+            last_exit_status = (argv[2][0] == '\0') ? 0 : 1;
+        } else if (strcmp(argv[1], "-n") == 0 && argc >= 3) {
+            last_exit_status = (argv[2][0] != '\0') ? 0 : 1;
+        } else if (argc >= 4 && strcmp(argv[2], "=") == 0) {
+            last_exit_status = (strcmp(argv[1], argv[3]) == 0) ? 0 : 1;
+        } else if (argc >= 4 && strcmp(argv[2], "!=") == 0) {
+            last_exit_status = (strcmp(argv[1], argv[3]) != 0) ? 0 : 1;
+        } else if (argc >= 4 && strcmp(argv[2], "-eq") == 0) {
+            last_exit_status = (atoi(argv[1]) == atoi(argv[3])) ? 0 : 1;
+        } else if (argc >= 4 && strcmp(argv[2], "-ne") == 0) {
+            last_exit_status = (atoi(argv[1]) != atoi(argv[3])) ? 0 : 1;
+        } else if (argc >= 4 && strcmp(argv[2], "-lt") == 0) {
+            last_exit_status = (atoi(argv[1]) < atoi(argv[3])) ? 0 : 1;
+        } else if (argc >= 4 && strcmp(argv[2], "-gt") == 0) {
+            last_exit_status = (atoi(argv[1]) > atoi(argv[3])) ? 0 : 1;
+        }
+        return 1;
     } else if (strcmp(name, "exit") == 0) {
         printf("Goodbye.\n");
         *should_exit = 1;
@@ -2057,10 +2103,192 @@ int main(int argc_init, char **argv_init) {
             sp++;
         }
 
-        /* Execute each semicolon-separated statement */
+        /* Execute each semicolon-separated statement with control flow */
         for (int si = 0; si < nstmts; si++) {
+            /* Skip leading whitespace */
+            char *stmt = stmts[si];
+            while (*stmt == ' ' || *stmt == '\t') stmt++;
+
+            /* Comments: skip lines starting with # */
+            if (*stmt == '#' || *stmt == '\0') continue;
+
+            /* --- if/then/else/fi --- */
+            if (strncmp(stmt, "if ", 3) == 0) {
+                /* Find then/else/fi in remaining statements */
+                int then_idx = -1, else_idx = -1, fi_idx = -1;
+                int depth = 1;  /* nesting depth */
+                for (int j = si + 1; j < nstmts && fi_idx < 0; j++) {
+                    char *s = stmts[j];
+                    while (*s == ' ' || *s == '\t') s++;
+                    if (strncmp(s, "if ", 3) == 0) depth++;
+                    else if (strcmp(s, "fi") == 0 || strncmp(s, "fi ", 3) == 0 ||
+                             strncmp(s, "fi;", 3) == 0) {
+                        depth--;
+                        if (depth == 0) fi_idx = j;
+                    }
+                    else if (depth == 1 && strcmp(s, "then") == 0) then_idx = j;
+                    else if (depth == 1 && strcmp(s, "else") == 0) else_idx = j;
+                }
+                if (then_idx < 0 || fi_idx < 0) {
+                    printf("sh: syntax error: if without then/fi\n");
+                    break;
+                }
+                /* Execute condition (everything after "if ") */
+                {
+                    command_t cmds[MAX_CMDS];
+                    int ncmds = parse_pipeline(stmt + 3, cmds, MAX_CMDS);
+                    if (ncmds > 0) execute_pipeline(cmds, ncmds);
+                }
+                int cond = (last_exit_status == 0);
+                /* Execute then-branch or else-branch */
+                int body_start = cond ? (then_idx + 1) : (else_idx >= 0 ? else_idx + 1 : fi_idx);
+                int body_end = cond ? (else_idx >= 0 ? else_idx : fi_idx) : fi_idx;
+                for (int j = body_start; j < body_end; j++) {
+                    char *s = stmts[j];
+                    while (*s == ' ' || *s == '\t') s++;
+                    if (*s == '#' || *s == '\0') continue;
+                    command_t cmds[MAX_CMDS];
+                    int ncmds = parse_pipeline(s, cmds, MAX_CMDS);
+                    if (ncmds > 0) execute_pipeline(cmds, ncmds);
+                }
+                si = fi_idx;  /* skip past fi */
+                continue;
+            }
+
+            /* --- for VAR in WORDS...; do BODY; done --- */
+            if (strncmp(stmt, "for ", 4) == 0) {
+                /* Parse: for VAR in word1 word2 ... */
+                char *p = stmt + 4;
+                while (*p == ' ') p++;
+                char varname[64];
+                int vi = 0;
+                while (*p && *p != ' ' && vi < 63) varname[vi++] = *p++;
+                varname[vi] = '\0';
+                while (*p == ' ') p++;
+                /* Skip "in" keyword */
+                if (strncmp(p, "in ", 3) == 0) p += 3;
+                while (*p == ' ') p++;
+                /* Collect words */
+                char *words[64];
+                int nwords = 0;
+                while (*p && nwords < 64) {
+                    while (*p == ' ') p++;
+                    if (!*p) break;
+                    words[nwords] = p;
+                    while (*p && *p != ' ') p++;
+                    if (*p) *p++ = '\0';
+                    /* Expand variables in each word */
+                    words[nwords] = expand_vars(words[nwords]);
+                    /* Copy since expand_vars uses static buffer */
+                    {
+                        static char word_bufs[64][64];
+                        int wl = 0;
+                        while (words[nwords][wl] && wl < 63) {
+                            word_bufs[nwords][wl] = words[nwords][wl];
+                            wl++;
+                        }
+                        word_bufs[nwords][wl] = '\0';
+                        words[nwords] = word_bufs[nwords];
+                    }
+                    nwords++;
+                }
+                /* Find do/done */
+                int do_idx = -1, done_idx = -1;
+                for (int j = si + 1; j < nstmts; j++) {
+                    char *s = stmts[j];
+                    while (*s == ' ' || *s == '\t') s++;
+                    if (strcmp(s, "do") == 0) do_idx = j;
+                    else if (strcmp(s, "done") == 0) { done_idx = j; break; }
+                }
+                if (do_idx < 0 || done_idx < 0) {
+                    printf("sh: syntax error: for without do/done\n");
+                    break;
+                }
+                /* Execute body for each word */
+                for (int w = 0; w < nwords; w++) {
+                    sys_setenv(varname, words[w]);
+                    for (int j = do_idx + 1; j < done_idx; j++) {
+                        char *s = stmts[j];
+                        while (*s == ' ' || *s == '\t') s++;
+                        if (*s == '#' || *s == '\0') continue;
+                        /* Re-expand because stmts may have been modified by previous iteration */
+                        command_t cmds[MAX_CMDS];
+                        /* Make a copy for re-parsing (parse_pipeline modifies the string) */
+                        char copy[MAX_LINE];
+                        int ci = 0;
+                        while (s[ci] && ci < MAX_LINE - 1) { copy[ci] = s[ci]; ci++; }
+                        copy[ci] = '\0';
+                        int ncmds = parse_pipeline(copy, cmds, MAX_CMDS);
+                        if (ncmds > 0) execute_pipeline(cmds, ncmds);
+                    }
+                }
+                si = done_idx;
+                continue;
+            }
+
+            /* --- while COND; do BODY; done --- */
+            if (strncmp(stmt, "while ", 6) == 0) {
+                int do_idx = -1, done_idx = -1;
+                for (int j = si + 1; j < nstmts; j++) {
+                    char *s = stmts[j];
+                    while (*s == ' ' || *s == '\t') s++;
+                    if (strcmp(s, "do") == 0) do_idx = j;
+                    else if (strcmp(s, "done") == 0) { done_idx = j; break; }
+                }
+                if (do_idx < 0 || done_idx < 0) {
+                    printf("sh: syntax error: while without do/done\n");
+                    break;
+                }
+                /* Save condition string */
+                char cond_str[MAX_LINE];
+                {
+                    const char *cs = stmt + 6;
+                    int ci = 0;
+                    while (cs[ci] && ci < MAX_LINE - 1) { cond_str[ci] = cs[ci]; ci++; }
+                    cond_str[ci] = '\0';
+                }
+                /* Loop */
+                int iterations = 0;
+                while (iterations < 1000) {  /* safety limit */
+                    /* Evaluate condition */
+                    char cond_copy[MAX_LINE];
+                    for (int ci = 0; cond_str[ci] || ci == 0; ci++)
+                        cond_copy[ci] = cond_str[ci];
+                    {
+                        int ci = 0;
+                        while (cond_str[ci]) { cond_copy[ci] = cond_str[ci]; ci++; }
+                        cond_copy[ci] = '\0';
+                    }
+                    command_t cmds[MAX_CMDS];
+                    int ncmds = parse_pipeline(cond_copy, cmds, MAX_CMDS);
+                    if (ncmds > 0) execute_pipeline(cmds, ncmds);
+                    if (last_exit_status != 0) break;
+                    /* Execute body */
+                    for (int j = do_idx + 1; j < done_idx; j++) {
+                        char *s = stmts[j];
+                        while (*s == ' ' || *s == '\t') s++;
+                        if (*s == '#' || *s == '\0') continue;
+                        char copy[MAX_LINE];
+                        int ci = 0;
+                        while (s[ci] && ci < MAX_LINE - 1) { copy[ci] = s[ci]; ci++; }
+                        copy[ci] = '\0';
+                        ncmds = parse_pipeline(copy, cmds, MAX_CMDS);
+                        if (ncmds > 0) execute_pipeline(cmds, ncmds);
+                    }
+                    iterations++;
+                }
+                si = done_idx;
+                continue;
+            }
+
+            /* Skip keywords that are part of control flow (handled above) */
+            if (strcmp(stmt, "then") == 0 || strcmp(stmt, "else") == 0 ||
+                strcmp(stmt, "fi") == 0 || strcmp(stmt, "do") == 0 ||
+                strcmp(stmt, "done") == 0) continue;
+
+            /* Regular command */
             command_t cmds[MAX_CMDS];
-            int ncmds = parse_pipeline(stmts[si], cmds, MAX_CMDS);
+            int ncmds = parse_pipeline(stmt, cmds, MAX_CMDS);
             if (ncmds == 0) continue;
 
             execute_pipeline(cmds, ncmds);
