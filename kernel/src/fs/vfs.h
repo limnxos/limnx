@@ -15,6 +15,7 @@
 
 /* Node flags */
 #define VFS_FLAG_WRITABLE    (1 << 0)
+#define VFS_FLAG_MOUNTPOINT  (1 << 1)
 
 /* Permission bits (UNIX-like) */
 #define VFS_PERM_READ   0x04
@@ -133,6 +134,10 @@ int  vfs_readlink(const char *path, char *buf, uint64_t bufsize);
 
 /* FIFO operations */
 int  vfs_mkfifo(const char *path);
+
+/* Mount/umount */
+int  vfs_mount(const char *path, const char *fstype);
+int  vfs_umount(const char *path);
 
 /* LimnFS mount — load disk tree into VFS */
 int  vfs_mount_limnfs(void);

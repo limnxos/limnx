@@ -975,6 +975,47 @@ int64_t sys_fsstat(uint64_t buf_ptr, uint64_t a2,
     return 0;
 }
 
+int64_t sys_mount(uint64_t path_ptr, uint64_t type_ptr,
+                           uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+
+    char raw_path[MAX_PATH], path[MAX_PATH], fstype[32];
+    if (copy_string_from_user((const char *)path_ptr, raw_path, MAX_PATH) != 0)
+        return -EFAULT;
+    if (copy_string_from_user((const char *)type_ptr, fstype, 32) != 0)
+        return -EFAULT;
+
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    /* Only root can mount */
+    if (proc->euid != 0)
+        return -EPERM;
+
+    resolve_user_path(proc, raw_path, path);
+    return vfs_mount(path, fstype);
+}
+
+int64_t sys_umount(uint64_t path_ptr, uint64_t a2,
+                            uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+
+    char raw_path[MAX_PATH], path[MAX_PATH];
+    if (copy_string_from_user((const char *)path_ptr, raw_path, MAX_PATH) != 0)
+        return -EFAULT;
+
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    if (proc->euid != 0)
+        return -EPERM;
+
+    resolve_user_path(proc, raw_path, path);
+    return vfs_umount(path);
+}
+
 int64_t sys_mkfifo(uint64_t path_ptr, uint64_t a2,
                             uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a2; (void)a3; (void)a4; (void)a5;

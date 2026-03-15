@@ -159,6 +159,8 @@
 #define SYS_TCSETPGRP     144
 #define SYS_TCGETPGRP     145
 #define SYS_MKFIFO        146
+#define SYS_MOUNT         147
+#define SYS_UMOUNT        148
 
 /* --- Syscall wrappers --- */
 
@@ -761,4 +763,12 @@ long sys_tcgetpgrp(long fd) {
 
 long sys_mkfifo(const char *path) {
     return __syscall1(SYS_MKFIFO, (long)path);
+}
+
+long sys_mount(const char *path, const char *fstype) {
+    return __syscall2(SYS_MOUNT, (long)path, (long)fstype);
+}
+
+long sys_umount(const char *path) {
+    return __syscall1(SYS_UMOUNT, (long)path);
 }

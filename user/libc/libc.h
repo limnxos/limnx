@@ -120,6 +120,8 @@ long sys_getsid(long pid);
 long sys_tcsetpgrp(long fd, long pgrp);
 long sys_tcgetpgrp(long fd);
 long sys_mkfifo(const char *path);
+long sys_mount(const char *path, const char *fstype);
+long sys_umount(const char *path);
 
 /* Signal constants */
 #define SIGTSTP  21

@@ -152,7 +152,9 @@
 #define SYS_TCSETPGRP      144
 #define SYS_TCGETPGRP      145
 #define SYS_MKFIFO         146
-#define SYS_NR             147
+#define SYS_MOUNT          147
+#define SYS_UMOUNT         148
+#define SYS_NR             149
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)

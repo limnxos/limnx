@@ -818,6 +818,76 @@ int vfs_readlink(const char *path, char *buf, uint64_t bufsize) {
     return (int)tlen;
 }
 
+/* --- Mount/umount --- */
+
+int vfs_mount(const char *path, const char *fstype) {
+    /* Only "tmpfs" supported for now */
+    if (!fstype || (str_len(fstype) != 5) ||
+        fstype[0] != 't' || fstype[1] != 'm' || fstype[2] != 'p' ||
+        fstype[3] != 'f' || fstype[4] != 's')
+        return -EINVAL;
+
+    /* Path must exist and be an empty directory */
+    int idx = vfs_resolve_path(path);
+    if (idx < 0)
+        return -ENOENT;
+    if (nodes[idx].type != VFS_DIRECTORY)
+        return -ENOTDIR;
+
+    /* Check directory is empty */
+    for (int i = 0; i < node_count; i++) {
+        if (nodes[i].name[0] != '\0' && nodes[i].parent == idx)
+            return -ENOTEMPTY;
+    }
+
+    /* Mark as mount point */
+    nodes[idx].flags |= VFS_FLAG_MOUNTPOINT | VFS_FLAG_WRITABLE;
+    pr_info("mounted tmpfs at %s\n", path);
+    return 0;
+}
+
+int vfs_umount(const char *path) {
+    int idx = vfs_resolve_path(path);
+    if (idx < 0)
+        return -ENOENT;
+    if (!(nodes[idx].flags & VFS_FLAG_MOUNTPOINT))
+        return -EINVAL;
+
+    /* Delete all children recursively */
+    int changed = 1;
+    while (changed) {
+        changed = 0;
+        for (int i = 0; i < node_count; i++) {
+            if (nodes[i].name[0] == '\0') continue;
+            if (nodes[i].parent != idx) continue;
+            /* Check if this is a directory with children — skip for now, process leaves first */
+            int has_children = 0;
+            for (int j = 0; j < node_count; j++) {
+                if (nodes[j].name[0] != '\0' && nodes[j].parent == i) {
+                    has_children = 1;
+                    break;
+                }
+            }
+            if (has_children) continue;
+            /* Leaf node — delete it */
+            if (nodes[i].data && (nodes[i].flags & VFS_FLAG_WRITABLE ||
+                nodes[i].type == VFS_SYMLINK))
+                kfree(nodes[i].data);
+            nodes[i].name[0] = '\0';
+            nodes[i].data = NULL;
+            nodes[i].size = 0;
+            nodes[i].capacity = 0;
+            nodes[i].parent = -1;
+            changed = 1;
+        }
+    }
+
+    /* Clear mount point flag */
+    nodes[idx].flags &= ~(VFS_FLAG_MOUNTPOINT | VFS_FLAG_WRITABLE);
+    pr_info("unmounted %s\n", path);
+    return 0;
+}
+
 /* --- FIFO operations --- */
 
 int vfs_mkfifo(const char *path) {

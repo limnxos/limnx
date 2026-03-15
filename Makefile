@@ -111,7 +111,9 @@ USER_C_PROGRAMS := build/user/programs/shell.elf build/user/programs/agent.elf \
                    build/user/programs/chowncmd.elf \
                    build/user/programs/env.elf \
                    build/user/programs/login.elf \
-                   build/user/programs/whoami.elf
+                   build/user/programs/whoami.elf \
+                   build/user/programs/mountcmd.elf \
+                   build/user/programs/umount.elf
 
 # Test programs
 USER_C_TESTS := build/user/tests/mathtest.elf build/user/tests/agenttest.elf \
@@ -154,7 +156,8 @@ USER_C_TESTS := build/user/tests/mathtest.elf build/user/tests/agenttest.elf \
                 build/user/tests/s110test.elf \
                 build/user/tests/s111test.elf \
                 build/user/tests/s112test.elf \
-                build/user/tests/s113test.elf
+                build/user/tests/s113test.elf \
+                build/user/tests/s114test.elf
 
 USER_C_ELFS := $(USER_C_PROGRAMS) $(USER_C_TESTS)
 
@@ -422,7 +425,9 @@ ARM64_USER_C_PROGRAMS := build/arm64/user/programs/shell.elf \
                           build/arm64/user/programs/chowncmd.elf \
                           build/arm64/user/programs/env.elf \
                           build/arm64/user/programs/login.elf \
-                          build/arm64/user/programs/whoami.elf
+                          build/arm64/user/programs/whoami.elf \
+                          build/arm64/user/programs/mountcmd.elf \
+                          build/arm64/user/programs/umount.elf
 ARM64_USER_C_TESTS := build/arm64/user/tests/s100test.elf \
                       build/arm64/user/tests/s107test.elf \
                       build/arm64/user/tests/s108test.elf \
@@ -430,7 +435,8 @@ ARM64_USER_C_TESTS := build/arm64/user/tests/s100test.elf \
                       build/arm64/user/tests/s110test.elf \
                       build/arm64/user/tests/s111test.elf \
                       build/arm64/user/tests/s112test.elf \
-                      build/arm64/user/tests/s113test.elf
+                      build/arm64/user/tests/s113test.elf \
+                      build/arm64/user/tests/s114test.elf
 ARM64_USER_C_ELFS := $(ARM64_USER_C_PROGRAMS) $(ARM64_USER_C_TESTS)
 
 # ARM64 initrd
