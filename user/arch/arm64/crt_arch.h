@@ -12,7 +12,7 @@ __asm__(
     "    and x2, x2, #-16\n"        /* 16-byte align */
     "    mov sp, x2\n"
     "    bl __libc_start\n"         /* __libc_start(argc=x0, argv=x1) */
-    "    mov x8, #2\n"             /* SYS_EXIT = 2 */
+    "    mov x8, #93\n"            /* SYS_EXIT = 93 (ARM64 generic) */
     "    svc #0\n"
     "    wfi\n"
     "    b .\n"

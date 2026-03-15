@@ -11,7 +11,7 @@ CFLAGS   := -ffreestanding -nostdinc -isystem $(GCC_INCL) \
             -mno-red-zone -mcmodel=kernel -mno-sse -mno-mmx -mno-sse2 \
             -fno-omit-frame-pointer \
             -Wall -Wextra -O2 -g -MMD -MP \
-            -Ikernel/deps -Ikernel/src $(EXTRA_CFLAGS)
+            -Ikernel/deps -Ikernel/src -Iinclude $(EXTRA_CFLAGS)
 LDFLAGS  := -nostdlib -static -T kernel/linker.ld
 NASMFLAGS := -f elf64 -g
 
@@ -20,7 +20,7 @@ USER_CFLAGS := -ffreestanding -nostdinc -isystem $(GCC_INCL) \
                -fno-stack-protector -fno-pic \
                -mno-red-zone -msse -msse2 \
                -Wall -Wextra -O2 -g -MMD -MP \
-               -Iuser
+               -Iuser -Iinclude
 
 KERNEL   := build/kernel
 ISO      := limnx.iso
@@ -337,7 +337,7 @@ ARM64_CFLAGS := -ffreestanding -nostdinc -isystem $(shell $(ARM64_CC) -print-fil
                 -fno-stack-protector -fno-pic -mno-outline-atomics \
                 -mgeneral-regs-only \
                 -Wall -Wextra -O2 -g -MMD -MP \
-                -Ikernel/src -Ikernel/deps
+                -Ikernel/src -Ikernel/deps -Iinclude
 ARM64_LDFLAGS := -nostdlib -static -T kernel/src/arch/arm64/linker.ld
 
 ARM64_KERNEL := build/arm64/kernel
@@ -398,7 +398,7 @@ ARM64_OBJS := $(ARM64_C_OBJS) $(ARM64_ASM_OBJS)
 # ARM64 user-space flags (NEON enabled for float math, no -mgeneral-regs-only)
 ARM64_USER_CFLAGS := -ffreestanding -nostdinc -isystem $(shell $(ARM64_CC) -print-file-name=include 2>/dev/null || echo /dev/null) \
                      -fno-stack-protector -fno-pic -mno-outline-atomics \
-                     -Wall -Wextra -O2 -g -MMD -MP -Iuser
+                     -Wall -Wextra -O2 -g -MMD -MP -Iuser -Iinclude
 
 # ARM64 user libc objects
 ARM64_LIBC_C_OBJS := $(patsubst user/libc/%.c,build/arm64/user/libc/%.o,$(LIBC_C_SRCS))

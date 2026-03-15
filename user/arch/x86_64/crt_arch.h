@@ -10,7 +10,7 @@ __asm__(
     "    and $-16, %rsp\n"          /* 16-byte align stack (ABI) */
     "    call __libc_start\n"       /* __libc_start(argc=rdi, argv=rsi) */
     "    mov %rax, %rdi\n"          /* exit code = return value */
-    "    mov $2, %rax\n"            /* SYS_EXIT = 2 */
+    "    mov $60, %rax\n"           /* SYS_EXIT = 60 (Linux x86_64) */
     "    syscall\n"
     "    cli\n"
     "    hlt\n"

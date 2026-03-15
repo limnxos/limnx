@@ -208,7 +208,7 @@ static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
     [SYS_FCHOWNAT]         = sys_chown,
 
     /* ---- x86_64 only: classic syscalls ---- */
-#ifdef SYS_OPEN
+#ifdef __NR_open
     [SYS_OPEN]             = sys_open,
     [SYS_STAT]             = sys_stat,
     [SYS_PIPE]             = sys_pipe,

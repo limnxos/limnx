@@ -11,236 +11,8 @@
 #include "arch/arm64/syscall_arch.h"
 #endif
 
-/*
- * Syscall numbers — Linux-compatible, per-architecture.
- * Must match kernel/src/arch/{x86_64,arm64}/syscall_nr.h.
- */
-
-#if defined(__x86_64__)
-/* x86_64 Linux syscall numbers */
-#define SYS_READ 0
-#define SYS_WRITE 1
-#define SYS_OPEN 2
-#define SYS_CLOSE 3
-#define SYS_STAT 4
-#define SYS_FSTAT 5
-#define SYS_LSEEK 6
-#define SYS_MMAP 9
-#define SYS_MUNMAP 11
-#define SYS_RT_SIGACTION 13
-#define SYS_RT_SIGPROCMASK 14
-#define SYS_RT_SIGRETURN 15
-#define SYS_IOCTL 16
-#define SYS_PIPE 22
-#define SYS_SELECT 23
-#define SYS_SCHED_YIELD 24
-#define SYS_DUP 32
-#define SYS_DUP2 33
-#define SYS_NANOSLEEP 35
-#define SYS_GETPID 39
-#define SYS_SOCKET 41
-#define SYS_SENDTO 44
-#define SYS_RECVFROM 45
-#define SYS_BIND 49
-#define SYS_FORK 57
-#define SYS_EXECVE 59
-#define SYS_EXIT 60
-#define SYS_WAIT4 61
-#define SYS_KILL 62
-#define SYS_FCNTL 72
-#define SYS_TRUNCATE 76
-#define SYS_GETCWD 79
-#define SYS_CHDIR 80
-#define SYS_RENAME 82
-#define SYS_MKDIR 83
-#define SYS_CREAT 85
-#define SYS_UNLINK 87
-#define SYS_SYMLINK 88
-#define SYS_READLINK 89
-#define SYS_CHMOD 90
-#define SYS_CHOWN 92
-#define SYS_FCHOWN 93
-#define SYS_UMASK 95
-#define SYS_GETRLIMIT 97
-#define SYS_GETUID 102
-#define SYS_GETGID 104
-#define SYS_SETUID 105
-#define SYS_SETGID 106
-#define SYS_GETEUID 107
-#define SYS_GETEGID 108
-#define SYS_SETPGID 109
-#define SYS_SETSID 112
-#define SYS_GETGROUPS 115
-#define SYS_SETGROUPS 116
-#define SYS_GETSID 124
-#define SYS_ARCH_PRCTL 158
-#define SYS_SETRLIMIT 160
-#define SYS_MOUNT 165
-#define SYS_UMOUNT 166
-#define SYS_CLOCK_GETTIME 228
-#define SYS_EPOLL_CTL 233
-#define SYS_EPOLL_CREATE 291
-#define SYS_EVENTFD 284
-#define SYS_PIPE2 293
-#define SYS_SECCOMP 317
-
-#elif defined(__aarch64__)
-/* ARM64 generic Linux syscall numbers */
-#define SYS_GETCWD 17
-#define SYS_EVENTFD 19
-#define SYS_EPOLL_CREATE 20
-#define SYS_EPOLL_CTL 21
-#define SYS_FCNTL 25
-#define SYS_IOCTL 29
-#define SYS_MOUNT 40
-#define SYS_UMOUNT 39
-#define SYS_TRUNCATE 45
-#define SYS_CHDIR 49
-#define SYS_FCHOWN 55
-#define SYS_CLOSE 57
-#define SYS_PIPE2 59
-#define SYS_LSEEK 62
-#define SYS_READ 63
-#define SYS_WRITE 64
-#define SYS_FSTAT 80
-#define SYS_EXIT 93
-#define SYS_NANOSLEEP 101
-#define SYS_CLOCK_GETTIME 113
-#define SYS_SCHED_YIELD 124
-#define SYS_KILL 129
-#define SYS_RT_SIGACTION 134
-#define SYS_RT_SIGPROCMASK 135
-#define SYS_RT_SIGRETURN 139
-#define SYS_SETGID 144
-#define SYS_SETUID 146
-#define SYS_SETPGID 154
-#define SYS_SETSID 157
-#define SYS_GETGROUPS 158
-#define SYS_SETGROUPS 159
-#define SYS_GETRLIMIT 163
-#define SYS_SETRLIMIT 164
-#define SYS_UMASK 166
-#define SYS_GETPID 172
-#define SYS_GETUID 174
-#define SYS_GETEUID 175
-#define SYS_GETGID 176
-#define SYS_GETEGID 177
-#define SYS_GETSID 156
-#define SYS_SOCKET 198
-#define SYS_BIND 200
-#define SYS_SENDTO 206
-#define SYS_RECVFROM 207
-#define SYS_MUNMAP 215
-#define SYS_FORK 220      /* clone on ARM64 */
-#define SYS_EXECVE 221
-#define SYS_MMAP 222
-#define SYS_MPROTECT 226
-#define SYS_WAIT4 260
-#define SYS_SECCOMP 277
-/* Classic syscalls mapped to *at() variants */
-#define SYS_OPEN 56        /* openat */
-#define SYS_STAT 79        /* fstatat */
-#define SYS_MKDIR 34       /* mkdirat */
-#define SYS_UNLINK 35      /* unlinkat */
-#define SYS_SYMLINK 36     /* symlinkat */
-#define SYS_READLINK 78    /* readlinkat */
-#define SYS_CHMOD 53       /* fchmodat */
-#define SYS_CHOWN 54       /* fchownat */
-#define SYS_RENAME 276     /* renameat2 */
-#define SYS_CREAT 56       /* openat */
-#define SYS_PIPE 59        /* pipe2 */
-#define SYS_DUP 24         /* dup3 */
-#define SYS_DUP2 24        /* dup3 */
-#define SYS_SELECT 72      /* pselect6 */
-#define SYS_POLL 73         /* ppoll */
-#define SYS_EPOLL_WAIT 22  /* epoll_pwait */
-#define SYS_ARCH_PRCTL 0   /* not available on ARM64 — stub */
-#endif
-
-/* Shared defines for both archs */
-#define SYS_OPENPTY        594
-#define SYS_URING_SETUP    425
-#define SYS_URING_ENTER    426
-
-/* Limnx-specific (512+) */
-#define SYS_PUTS           512
-#define SYS_EXEC_OLD       513
-#define SYS_GETCHAR        514
-#define SYS_READDIR        515
-#define SYS_FMMAP          516
-#define SYS_MMAP2          517
-#define SYS_SHMGET         520
-#define SYS_SHMAT          521
-#define SYS_SHMDT          522
-#define SYS_GETENV         523
-#define SYS_SETENV         524
-#define SYS_ENVIRON        525
-#define SYS_MMAP_FILE      518
-#define SYS_MMAP_GUARD     519
-#define SYS_AGENT_REGISTER 530
-#define SYS_AGENT_LOOKUP   531
-#define SYS_AGENT_SEND     532
-#define SYS_AGENT_RECV     533
-#define SYS_TOKEN_CREATE   534
-#define SYS_TOKEN_REVOKE   535
-#define SYS_TOKEN_LIST     536
-#define SYS_TOKEN_DELEGATE 537
-#define SYS_NS_CREATE      538
-#define SYS_NS_JOIN        539
-#define SYS_NS_SETQUOTA    540
-#define SYS_INFER_REGISTER 541
-#define SYS_INFER_REQUEST  542
-#define SYS_INFER_HEALTH   543
-#define SYS_INFER_ROUTE    544
-#define SYS_INFER_SET_POLICY 545
-#define SYS_INFER_QUEUE_STAT 546
-#define SYS_INFER_CACHE_CTRL 547
-#define SYS_INFER_SUBMIT   548
-#define SYS_INFER_POLL     549
-#define SYS_INFER_RESULT   550
-#define SYS_INFER_SWAP     551
-#define SYS_TASK_CREATE    552
-#define SYS_TASK_DEPEND    553
-#define SYS_TASK_START     554
-#define SYS_TASK_COMPLETE  555
-#define SYS_TASK_STATUS    556
-#define SYS_TASK_WAIT      557
-#define SYS_SUPER_CREATE   558
-#define SYS_SUPER_ADD      559
-#define SYS_SUPER_SET_POLICY 560
-#define SYS_SUPER_START    561
-#define SYS_SUPER_LIST     562
-#define SYS_SUPER_STOP     563
-#define SYS_TOPIC_CREATE   564
-#define SYS_TOPIC_SUB      565
-#define SYS_TOPIC_PUB      566
-#define SYS_TOPIC_RECV     567
-#define SYS_UNIX_SOCKET    568
-#define SYS_UNIX_BIND      569
-#define SYS_UNIX_LISTEN    570
-#define SYS_UNIX_ACCEPT    571
-#define SYS_UNIX_CONNECT   572
-#define SYS_TCP_SOCKET     573
-#define SYS_TCP_CONNECT    574
-#define SYS_TCP_LISTEN     575
-#define SYS_TCP_ACCEPT     576
-#define SYS_TCP_SEND       577
-#define SYS_TCP_RECV       578
-#define SYS_TCP_CLOSE      579
-#define SYS_TCP_SETOPT     580
-#define SYS_TCP_TO_FD      581
-#define SYS_PROCINFO       582
-#define SYS_FSSTAT         583
-#define SYS_SWAP_STAT      584
-#define SYS_SETAUDIT       585
-#define SYS_GETCAP         586
-#define SYS_SETCAP         587
-#define SYS_FUTEX_WAIT     588
-#define SYS_FUTEX_WAKE     589
-#define SYS_MKFIFO         590
-#define SYS_TCSETPGRP      591
-#define SYS_TCGETPGRP      592
-#define SYS_GETPGID        593
+/* Syscall numbers — single source of truth */
+#include "limnx/syscall_nr.h"
 
 /* --- Syscall wrappers --- */
 
@@ -564,11 +336,11 @@ long sys_agent_lookup(const char *name, long *pid_out) {
 }
 
 long sys_eventfd(long flags) {
-    return __syscall1(SYS_EVENTFD, flags);
+    return __syscall1(SYS_EVENTFD2, flags);
 }
 
 long sys_epoll_create(long flags) {
-    return __syscall1(SYS_EPOLL_CREATE, flags);
+    return __syscall1(SYS_EPOLL_CREATE1, flags);
 }
 
 long sys_epoll_ctl(long epfd, long op, long fd, void *event) {
@@ -629,11 +401,11 @@ long sys_infer_swap(const char *name, const char *new_sock_path) {
 }
 
 long sys_uring_setup(long entries, void *params) {
-    return __syscall2(SYS_URING_SETUP, entries, (long)params);
+    return __syscall2(SYS_IO_URING_SETUP, entries, (long)params);
 }
 
 long sys_uring_enter(long uring_fd, void *sqe_ptr, long count, void *cqe_ptr) {
-    return __syscall4(SYS_URING_ENTER, uring_fd, (long)sqe_ptr, count, (long)cqe_ptr);
+    return __syscall4(SYS_IO_URING_ENTER, uring_fd, (long)sqe_ptr, count, (long)cqe_ptr);
 }
 
 long sys_mmap2(long num_pages, long flags) {
@@ -729,9 +501,11 @@ long sys_mmap_guard(long num_pages) {
     return __syscall1(SYS_MMAP_GUARD, num_pages);
 }
 
+#ifdef __NR_arch_prctl
 long sys_arch_prctl(long code, long addr) {
     return __syscall2(SYS_ARCH_PRCTL, code, addr);
 }
+#endif
 
 long sys_select(long nfds, void *readfds, void *writefds, long timeout_us) {
     return __syscall4(SYS_SELECT, nfds, (long)readfds, (long)writefds, timeout_us);
@@ -850,5 +624,5 @@ long sys_mount(const char *path, const char *fstype) {
 }
 
 long sys_umount(const char *path) {
-    return __syscall1(SYS_UMOUNT, (long)path);
+    return __syscall1(SYS_UMOUNT2, (long)path);
 }
