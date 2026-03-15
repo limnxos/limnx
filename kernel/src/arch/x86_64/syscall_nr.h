@@ -1,0 +1,102 @@
+/*
+ * x86_64 Linux syscall numbers
+ * Matches arch/x86/entry/syscalls/syscall_64.tbl
+ */
+#ifndef LIMNX_X86_64_SYSCALL_NR_H
+#define LIMNX_X86_64_SYSCALL_NR_H
+
+#define __NR_read             0
+#define __NR_write            1
+#define __NR_open             2
+#define __NR_close            3
+#define __NR_stat             4
+#define __NR_fstat            5
+#define __NR_lseek            6
+#define __NR_poll             7
+#define __NR_mmap             9
+#define __NR_mprotect        10
+#define __NR_munmap          11
+#define __NR_brk             12
+#define __NR_rt_sigaction    13
+#define __NR_rt_sigprocmask  14
+#define __NR_rt_sigreturn    15
+#define __NR_ioctl           16
+#define __NR_access          21
+#define __NR_pipe            22
+#define __NR_select          23
+#define __NR_sched_yield     24
+#define __NR_dup             32
+#define __NR_dup2            33
+#define __NR_nanosleep       35
+#define __NR_getpid          39
+#define __NR_socket          41
+#define __NR_connect         42
+#define __NR_accept          43
+#define __NR_sendto          44
+#define __NR_recvfrom        45
+#define __NR_shutdown        48
+#define __NR_bind            49
+#define __NR_listen          50
+#define __NR_fork            57
+#define __NR_execve          59
+#define __NR_exit            60
+#define __NR_wait4           61
+#define __NR_kill            62
+#define __NR_fcntl           72
+#define __NR_truncate        76
+#define __NR_getdents        78
+#define __NR_getcwd          79
+#define __NR_chdir           80
+#define __NR_rename          82
+#define __NR_mkdir           83
+#define __NR_rmdir           84
+#define __NR_creat           85
+#define __NR_unlink          87
+#define __NR_symlink         88
+#define __NR_readlink        89
+#define __NR_chmod           90
+#define __NR_chown           92
+#define __NR_fchown          93
+#define __NR_umask           95
+#define __NR_getrlimit       97
+#define __NR_getuid         102
+#define __NR_getgid         104
+#define __NR_setuid         105
+#define __NR_setgid         106
+#define __NR_geteuid        107
+#define __NR_getegid        108
+#define __NR_setpgid        109
+#define __NR_getppid        110
+#define __NR_getpgrp        111
+#define __NR_setsid         112
+#define __NR_getgroups      115
+#define __NR_setgroups      116
+#define __NR_getsid         124
+#define __NR_arch_prctl     158
+#define __NR_setrlimit      160
+#define __NR_mount          165
+#define __NR_umount2        166
+#define __NR_futex          202
+#define __NR_getdents64     217
+#define __NR_set_tid_address 218
+#define __NR_clock_gettime  228
+#define __NR_exit_group     231
+#define __NR_epoll_wait     232
+#define __NR_epoll_ctl      233
+#define __NR_openat         257
+#define __NR_mkdirat        258
+#define __NR_fstatat        262
+#define __NR_unlinkat       263
+#define __NR_renameat       264
+#define __NR_faccessat      269
+#define __NR_eventfd2       284
+#define __NR_epoll_create1  291
+#define __NR_pipe2          293
+#define __NR_prlimit64      302
+#define __NR_seccomp        317
+#define __NR_getrandom      318
+#define __NR_io_uring_setup 425
+#define __NR_io_uring_enter 426
+#define __NR_clone3         435
+
+#endif

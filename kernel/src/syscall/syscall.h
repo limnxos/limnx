@@ -5,136 +5,139 @@
 #include "errno.h"
 
 /*
- * Syscall numbers — Linux x86_64 compatible
+ * Syscall numbers — Linux-compatible, per-architecture.
  *
- * Core POSIX syscalls use Linux numbers (0-300) for musl/busybox compatibility.
- * Limnx-specific syscalls use 512+ range.
+ * x86_64 uses the legacy Linux x86_64 table.
+ * ARM64 uses the generic Linux table (shared with RISC-V etc).
+ * Limnx-specific syscalls use 512+ (same on both archs).
+ *
+ * SYS_* names map to __NR_* from the arch-specific header.
  */
 
-/* === Linux-compatible syscall numbers === */
+/* Include arch-specific Linux syscall numbers */
+#if defined(__x86_64__)
+#include "arch/x86_64/syscall_nr.h"
+#elif defined(__aarch64__)
+#include "arch/arm64/syscall_nr.h"
+#endif
 
-/* File I/O */
-#define SYS_READ            0
-#define SYS_WRITE           1   /* write(fd, buf, len) — POSIX */
-#define SYS_OPEN            2
-#define SYS_CLOSE           3
-#define SYS_STAT            4
-#define SYS_FSTAT           5
-#define SYS_LSEEK           6   /* was SYS_SEEK */
-#define SYS_POLL            7
-#define SYS_MMAP            9   /* mmap(addr, len, prot, flags, fd, offset) */
-#define SYS_MPROTECT       10
-#define SYS_MUNMAP         11
-#define SYS_BRK            12   /* stub — returns current break */
-#define SYS_IOCTL          16
-#define SYS_ACCESS         21   /* stub — check file accessibility */
-#define SYS_PIPE           22
-#define SYS_SELECT         23
-#define SYS_SCHED_YIELD    24
-#define SYS_DUP            32
-#define SYS_DUP2           33
-#define SYS_NANOSLEEP      35
-#define SYS_GETPID         39
-#define SYS_SOCKET         41   /* socket(domain, type, protocol) → fd */
-#define SYS_CONNECT        42
-#define SYS_ACCEPT         43
-#define SYS_SENDTO         44
-#define SYS_RECVFROM       45
-#define SYS_SHUTDOWN       48
-#define SYS_BIND           49
-#define SYS_LISTEN         50
-#define SYS_FORK           57
-#define SYS_EXECVE         59
-#define SYS_EXIT           60
-#define SYS_WAIT4          61
-#define SYS_KILL           62
-#define SYS_FCNTL          72
-#define SYS_TRUNCATE       76
-#define SYS_GETDENTS       78   /* stub — directory entries */
-#define SYS_GETCWD         79
-#define SYS_CHDIR          80
-#define SYS_RENAME         82
-#define SYS_MKDIR          83
-#define SYS_RMDIR          84
-#define SYS_CREAT          85
-#define SYS_UNLINK         87
-#define SYS_SYMLINK        88
-#define SYS_READLINK       89
-#define SYS_CHMOD          90
-#define SYS_CHOWN          92
-#define SYS_FCHOWN         93
-#define SYS_UMASK          95
-#define SYS_GETRLIMIT      97
-#define SYS_GETUID        102
-#define SYS_GETGID        104
-#define SYS_SETUID        105
-#define SYS_SETGID        106
-#define SYS_GETEUID       107
-#define SYS_GETEGID       108
-#define SYS_SETPGID       109
-#define SYS_GETPGRP       111
-#define SYS_SETSID        112
-#define SYS_GETGROUPS     115
-#define SYS_SETGROUPS     116
-#define SYS_GETSID        124
-#define SYS_RT_SIGACTION  13    /* Linux rt_sigaction */
-#define SYS_RT_SIGPROCMASK 14
-#define SYS_RT_SIGRETURN  15
-#define SYS_ARCH_PRCTL    158
-#define SYS_SETRLIMIT     160
-#define SYS_MOUNT         165
-#define SYS_UMOUNT2       166
-#define SYS_CLOCK_GETTIME 228
-#define SYS_EPOLL_WAIT    232
-#define SYS_EPOLL_CTL     233
-#define SYS_OPENPTY       236   /* not standard Linux but close to posix_openpt area */
-#define SYS_EVENTFD2      284
-#define SYS_EPOLL_CREATE1 291
-#define SYS_PIPE2         293
-#define SYS_SECCOMP       317
-#define SYS_IO_URING_SETUP 425
-#define SYS_IO_URING_ENTER 426
+/* === Map SYS_* to __NR_* (arch-independent API names) === */
 
-/* === Limnx-specific syscalls (512+) === */
+#define SYS_READ            __NR_read
+#define SYS_WRITE           __NR_write
+#define SYS_OPEN            __NR_open        /* x86_64 only; ARM64 uses openat */
+#define SYS_CLOSE           __NR_close
+#define SYS_STAT            __NR_stat        /* x86_64 only; ARM64 uses fstatat */
+#define SYS_FSTAT           __NR_fstat
+#define SYS_LSEEK           __NR_lseek
+#define SYS_POLL            __NR_poll
+#define SYS_MMAP            __NR_mmap
+#define SYS_MPROTECT        __NR_mprotect
+#define SYS_MUNMAP          __NR_munmap
+#define SYS_BRK             __NR_brk
+#define SYS_RT_SIGACTION    __NR_rt_sigaction
+#define SYS_RT_SIGPROCMASK  __NR_rt_sigprocmask
+#define SYS_RT_SIGRETURN    __NR_rt_sigreturn
+#define SYS_IOCTL           __NR_ioctl
+#define SYS_PIPE            __NR_pipe        /* x86_64 only; ARM64 uses pipe2 */
+#define SYS_PIPE2           __NR_pipe2
+#define SYS_SELECT          __NR_select      /* x86_64 only */
+#define SYS_SCHED_YIELD     __NR_sched_yield
+#define SYS_DUP             __NR_dup         /* x86_64 only */
+#define SYS_DUP2            __NR_dup2        /* x86_64 only */
+#define SYS_NANOSLEEP       __NR_nanosleep
+#define SYS_GETPID          __NR_getpid
+#define SYS_SOCKET          __NR_socket
+#define SYS_CONNECT         __NR_connect
+#define SYS_ACCEPT          __NR_accept
+#define SYS_SENDTO          __NR_sendto
+#define SYS_RECVFROM        __NR_recvfrom
+#define SYS_SHUTDOWN        __NR_shutdown
+#define SYS_BIND            __NR_bind
+#define SYS_LISTEN          __NR_listen
+#define SYS_FORK            __NR_fork        /* x86_64 only; ARM64 uses clone */
+#define SYS_EXECVE          __NR_execve
+#define SYS_EXIT            __NR_exit
+#define SYS_EXIT_GROUP      __NR_exit_group
+#define SYS_WAIT4           __NR_wait4
+#define SYS_KILL            __NR_kill
+#define SYS_FCNTL           __NR_fcntl
+#define SYS_TRUNCATE        __NR_truncate
+#define SYS_GETCWD          __NR_getcwd
+#define SYS_CHDIR           __NR_chdir
+#define SYS_RENAME          __NR_rename      /* x86_64 only */
+#define SYS_MKDIR           __NR_mkdir       /* x86_64 only */
+#define SYS_RMDIR           __NR_rmdir       /* x86_64 only */
+#define SYS_CREAT           __NR_creat       /* x86_64 only */
+#define SYS_UNLINK          __NR_unlink      /* x86_64 only */
+#define SYS_SYMLINK         __NR_symlink     /* x86_64 only */
+#define SYS_READLINK        __NR_readlink    /* x86_64 only */
+#define SYS_CHMOD           __NR_chmod       /* x86_64 only */
+#define SYS_CHOWN           __NR_chown       /* x86_64 only */
+#define SYS_FCHOWN          __NR_fchown
+#define SYS_UMASK           __NR_umask
+#define SYS_GETRLIMIT       __NR_getrlimit
+#define SYS_SETRLIMIT       __NR_setrlimit
+#define SYS_GETUID          __NR_getuid
+#define SYS_GETGID          __NR_getgid
+#define SYS_SETUID          __NR_setuid
+#define SYS_SETGID          __NR_setgid
+#define SYS_GETEUID         __NR_geteuid
+#define SYS_GETEGID         __NR_getegid
+#define SYS_SETPGID         __NR_setpgid
+#define SYS_GETPPID         __NR_getppid
+#define SYS_SETSID          __NR_setsid
+#define SYS_GETSID          __NR_getsid
+#define SYS_GETGROUPS       __NR_getgroups
+#define SYS_SETGROUPS       __NR_setgroups
+#define SYS_ARCH_PRCTL      __NR_arch_prctl  /* x86_64 only */
+#define SYS_MOUNT           __NR_mount
+#define SYS_UMOUNT2         __NR_umount2
+#define SYS_FUTEX           __NR_futex
+#define SYS_CLOCK_GETTIME   __NR_clock_gettime
+#define SYS_EPOLL_WAIT      __NR_epoll_wait
+#define SYS_EPOLL_CTL       __NR_epoll_ctl
+#define SYS_EPOLL_CREATE1   __NR_epoll_create1
+#define SYS_EVENTFD2        __NR_eventfd2
+#define SYS_SECCOMP         __NR_seccomp
+#define SYS_OPENAT          __NR_openat
+#define SYS_MKDIRAT         __NR_mkdirat
+#define SYS_FSTATAT         __NR_fstatat
+#define SYS_UNLINKAT        __NR_unlinkat
+#define SYS_SYMLINKAT       __NR_symlinkat
+#define SYS_READLINKAT      __NR_readlinkat
+#define SYS_FCHMODAT        __NR_fchmodat
+#define SYS_FCHOWNAT        __NR_fchownat
+#define SYS_IO_URING_SETUP  __NR_io_uring_setup
+#define SYS_IO_URING_ENTER  __NR_io_uring_enter
 
-/* Legacy/convenience (kept for backward compat, may be removed later) */
-#define SYS_PUTS           512  /* write to stdout: puts(buf, len) — old SYS_WRITE */
-#define SYS_EXEC_OLD       513  /* fork+exec combo — old SYS_EXEC */
+/* === Limnx-specific syscalls (512+, same on all archs) === */
+
+#define SYS_PUTS           512
+#define SYS_EXEC_OLD       513
 #define SYS_GETCHAR        514
-#define SYS_READDIR        515  /* our custom readdir(path, index, dirent) */
-#define SYS_FMMAP          516  /* mmap a file by fd */
-#define SYS_MMAP2          517  /* mmap with flags (demand paging) */
+#define SYS_READDIR        515
+#define SYS_FMMAP          516
+#define SYS_MMAP2          517
 #define SYS_MMAP_FILE      518
 #define SYS_MMAP_GUARD     519
-
-/* Shared memory (SysV-style) */
 #define SYS_SHMGET         520
 #define SYS_SHMAT          521
 #define SYS_SHMDT          522
-
-/* Environment (kernel-managed per-process env) */
 #define SYS_GETENV         523
 #define SYS_SETENV         524
 #define SYS_ENVIRON        525
-
-/* Agent infrastructure */
 #define SYS_AGENT_REGISTER 530
 #define SYS_AGENT_LOOKUP   531
 #define SYS_AGENT_SEND     532
 #define SYS_AGENT_RECV     533
-
-/* Capability tokens */
 #define SYS_TOKEN_CREATE   534
 #define SYS_TOKEN_REVOKE   535
 #define SYS_TOKEN_LIST     536
 #define SYS_TOKEN_DELEGATE 537
-
-/* Agent namespaces */
 #define SYS_NS_CREATE      538
 #define SYS_NS_JOIN        539
 #define SYS_NS_SETQUOTA    540
-
-/* Inference service */
 #define SYS_INFER_REGISTER 541
 #define SYS_INFER_REQUEST  542
 #define SYS_INFER_HEALTH   543
@@ -146,37 +149,27 @@
 #define SYS_INFER_POLL     549
 #define SYS_INFER_RESULT   550
 #define SYS_INFER_SWAP     551
-
-/* Task graph (DAG workflows) */
 #define SYS_TASK_CREATE    552
 #define SYS_TASK_DEPEND    553
 #define SYS_TASK_START     554
 #define SYS_TASK_COMPLETE  555
 #define SYS_TASK_STATUS    556
 #define SYS_TASK_WAIT      557
-
-/* Supervisor trees */
 #define SYS_SUPER_CREATE   558
 #define SYS_SUPER_ADD      559
 #define SYS_SUPER_SET_POLICY 560
 #define SYS_SUPER_START    561
 #define SYS_SUPER_LIST     562
 #define SYS_SUPER_STOP     563
-
-/* Pub/sub messaging */
 #define SYS_TOPIC_CREATE   564
 #define SYS_TOPIC_SUB      565
 #define SYS_TOPIC_PUB      566
 #define SYS_TOPIC_RECV     567
-
-/* Unix domain sockets */
 #define SYS_UNIX_SOCKET    568
 #define SYS_UNIX_BIND      569
 #define SYS_UNIX_LISTEN    570
 #define SYS_UNIX_ACCEPT    571
 #define SYS_UNIX_CONNECT   572
-
-/* TCP legacy (kept until socket API fully unified) */
 #define SYS_TCP_SOCKET     573
 #define SYS_TCP_CONNECT    574
 #define SYS_TCP_LISTEN     575
@@ -186,8 +179,6 @@
 #define SYS_TCP_CLOSE      579
 #define SYS_TCP_SETOPT     580
 #define SYS_TCP_TO_FD      581
-
-/* Misc */
 #define SYS_PROCINFO       582
 #define SYS_FSSTAT         583
 #define SYS_SWAP_STAT      584
@@ -200,9 +191,10 @@
 #define SYS_TCSETPGRP      591
 #define SYS_TCGETPGRP      592
 #define SYS_GETPGID        593
+#define SYS_OPENPTY        594
 
 /* Maximum syscall number + 1 */
-#define SYS_NR             594
+#define SYS_NR             600
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)
@@ -225,7 +217,6 @@
 #define RLIMIT_CPU   1
 #define RLIMIT_NFDS  2
 
-/* Resource limit structure */
 typedef struct rlimit {
     uint64_t current;
     uint64_t max;
@@ -243,7 +234,6 @@ typedef struct rlimit {
 /* Clock IDs */
 #define CLOCK_MONOTONIC 1
 
-/* Time structures */
 typedef struct timespec {
     int64_t  tv_sec;
     int64_t  tv_nsec;
@@ -276,31 +266,23 @@ typedef struct pollfd {
 #define IORING_OP_WRITE     2
 #define IORING_OP_POLL_ADD  3
 
-/* mmap2 flags */
+/* mmap flags */
 #define MMAP_DEMAND  1
-
-/* mprotect protection flags */
 #define PROT_NONE   0
 #define PROT_READ   1
 #define PROT_WRITE  2
 #define PROT_EXEC   4
-
-/* mmap flags (Linux-compatible) */
 #define MAP_SHARED    0x01
 #define MAP_PRIVATE   0x02
 #define MAP_FIXED     0x10
 #define MAP_ANONYMOUS 0x20
 
-/* Maximum user-space address (canonical lower-half boundary) */
+/* Maximum user-space address */
 #define USER_ADDR_MAX 0x0000800000000000ULL
 
 void syscall_init(void);
-
-/* Called from syscall_entry.asm */
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
                           uint64_t arg3, uint64_t arg4, uint64_t arg5);
-
-/* Set the kernel stack for SYSCALL entry (called on context switch) */
 void syscall_set_kernel_stack(uint64_t rsp);
 
 #endif
