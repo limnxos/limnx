@@ -790,21 +790,18 @@ static void cmd_test(int argc, char **argv) {
 }
 
 static int is_builtin(const char *cmd) {
-    return strcmp(cmd, "help") == 0 || strcmp(cmd, "echo") == 0 ||
-           strcmp(cmd, "ls") == 0 || strcmp(cmd, "cd") == 0 ||
-           strcmp(cmd, "pwd") == 0 || strcmp(cmd, "mv") == 0 ||
-           strcmp(cmd, "mkdir") == 0 || strcmp(cmd, "cat") == 0 ||
-           strcmp(cmd, "pid") == 0 || strcmp(cmd, "exit") == 0 ||
-           strcmp(cmd, "export") == 0 || strcmp(cmd, "env") == 0 ||
-           strcmp(cmd, "history") == 0 || strcmp(cmd, "rm") == 0 ||
-           strcmp(cmd, "touch") == 0 || strcmp(cmd, "stat") == 0 ||
-           strcmp(cmd, "kill") == 0 || strcmp(cmd, "jobs") == 0 ||
-           strcmp(cmd, "write") == 0 || strcmp(cmd, "ps") == 0 ||
-           strcmp(cmd, "df") == 0 || strcmp(cmd, "mount") == 0 ||
-           strcmp(cmd, "test") == 0 || strcmp(cmd, "cp") == 0 ||
-           strcmp(cmd, "head") == 0 || strcmp(cmd, "tail") == 0 ||
-           strcmp(cmd, "wc") == 0 || strcmp(cmd, "wait") == 0 ||
-           strcmp(cmd, "fg") == 0 || strcmp(cmd, "bg") == 0 ||
+    /* Only commands that MUST be shell-internal.
+     * External programs (ls, cat, cp, mv, rm, mkdir, echo, ps, kill, grep,
+     * head, tail, wc, env, chmod, chown, mount, umount, whoami) are handled
+     * as standalone .elf binaries — this allows proper flag handling. */
+    return strcmp(cmd, "help") == 0 || strcmp(cmd, "cd") == 0 ||
+           strcmp(cmd, "pwd") == 0 || strcmp(cmd, "pid") == 0 ||
+           strcmp(cmd, "exit") == 0 || strcmp(cmd, "export") == 0 ||
+           strcmp(cmd, "history") == 0 || strcmp(cmd, "touch") == 0 ||
+           strcmp(cmd, "stat") == 0 || strcmp(cmd, "write") == 0 ||
+           strcmp(cmd, "df") == 0 || strcmp(cmd, "jobs") == 0 ||
+           strcmp(cmd, "wait") == 0 || strcmp(cmd, "fg") == 0 ||
+           strcmp(cmd, "bg") == 0 || strcmp(cmd, "test") == 0 ||
            strcmp(cmd, "service") == 0 || strcmp(cmd, "[") == 0 ||
            strcmp(cmd, "true") == 0 || strcmp(cmd, "false") == 0;
 }
@@ -1653,14 +1650,6 @@ static int run_builtin(command_t *cmd, int *should_exit) {
 
     if (strcmp(name, "help") == 0) {
         cmd_help();
-    } else if (strcmp(name, "echo") == 0) {
-        for (int i = 1; i < argc; i++) {
-            if (i > 1) printf(" ");
-            printf("%s", argv[i]);
-        }
-        printf("\n");
-    } else if (strcmp(name, "ls") == 0) {
-        cmd_ls(argc > 1 ? argv[1] : ".");
     } else if (strcmp(name, "cd") == 0) {
         if (argc < 2)
             printf("usage: cd <dir>\n");
@@ -1670,17 +1659,6 @@ static int run_builtin(command_t *cmd, int *should_exit) {
         char cwdbuf[256];
         sys_getcwd(cwdbuf, sizeof(cwdbuf));
         printf("%s\n", cwdbuf);
-    } else if (strcmp(name, "mv") == 0) {
-        if (argc < 3) printf("usage: mv <src> <dst>\n");
-        else if (sys_rename(argv[1], argv[2]) < 0)
-            printf("mv: failed\n");
-    } else if (strcmp(name, "mkdir") == 0) {
-        if (argc < 2) printf("usage: mkdir <dir>\n");
-        else if (sys_mkdir(argv[1]) < 0)
-            printf("mkdir: failed to create '%s'\n", argv[1]);
-    } else if (strcmp(name, "cat") == 0) {
-        if (argc < 2) printf("usage: cat <file>\n");
-        else cmd_cat(argv[1]);
     } else if (strcmp(name, "write") == 0) {
         if (argc < 3) printf("usage: write <file> <text...>\n");
         else cmd_write(argv[1], argc - 2, &argv[2]);
@@ -1691,10 +1669,6 @@ static int run_builtin(command_t *cmd, int *should_exit) {
             if (fd >= 0) sys_close(fd);
             else printf("touch: failed to create '%s'\n", argv[1]);
         }
-    } else if (strcmp(name, "rm") == 0) {
-        if (argc < 2) printf("usage: rm <file>\n");
-        else if (sys_unlink(argv[1]) < 0)
-            printf("rm: cannot remove '%s'\n", argv[1]);
     } else if (strcmp(name, "stat") == 0) {
         if (argc < 2) printf("usage: stat <path>\n");
         else cmd_stat(argv[1]);
@@ -1713,33 +1687,6 @@ static int run_builtin(command_t *cmd, int *should_exit) {
                 printf("export: expected VAR=value\n");
             }
         }
-    } else if (strcmp(name, "env") == 0) {
-        char envbuf[1024];
-        long len = sys_environ(envbuf, sizeof(envbuf));
-        if (len > 0) {
-            int pos = 0;
-            while (pos < len) {
-                printf("%s\n", &envbuf[pos]);
-                while (pos < len && envbuf[pos] != '\0') pos++;
-                pos++;  /* skip NUL */
-            }
-        }
-    } else if (strcmp(name, "kill") == 0) {
-        if (argc < 2) {
-            printf("usage: kill <pid> [signal]\n");
-        } else {
-            long pid = 0;
-            for (int i = 0; argv[1][i]; i++)
-                pid = pid * 10 + (argv[1][i] - '0');
-            long sig = SIGTERM;
-            if (argc >= 3) {
-                sig = 0;
-                for (int i = 0; argv[2][i]; i++)
-                    sig = sig * 10 + (argv[2][i] - '0');
-            }
-            if (sys_kill(pid, sig) < 0)
-                printf("kill: failed\n");
-        }
     } else if (strcmp(name, "history") == 0) {
         for (int i = 0; i < history_count; i++) {
             const char *h = history_get(i);
@@ -1755,22 +1702,8 @@ static int run_builtin(command_t *cmd, int *should_exit) {
         cmd_fg(argc, argv);
     } else if (strcmp(name, "service") == 0) {
         cmd_service(argc, argv);
-    } else if (strcmp(name, "ps") == 0) {
-        cmd_ps();
     } else if (strcmp(name, "df") == 0) {
         cmd_df();
-    } else if (strcmp(name, "mount") == 0) {
-        cmd_mount();
-    } else if (strcmp(name, "cp") == 0) {
-        if (argc < 3) printf("usage: cp <src> <dst>\n");
-        else cmd_cp(argv[1], argv[2]);
-    } else if (strcmp(name, "head") == 0) {
-        cmd_head(argc, argv);
-    } else if (strcmp(name, "tail") == 0) {
-        cmd_tail(argc, argv);
-    } else if (strcmp(name, "wc") == 0) {
-        if (argc < 2) printf("usage: wc <file>\n");
-        else cmd_wc(argv[1]);
     } else if (strcmp(name, "test") == 0) {
         cmd_test(argc, argv);
     } else if (strcmp(name, "true") == 0) {
