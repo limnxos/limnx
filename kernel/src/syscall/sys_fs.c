@@ -109,14 +109,70 @@ int64_t sys_open(uint64_t path_ptr, uint64_t flags,
         vfs_truncate_node(node_idx, 0);
     }
 
-    /* Store access mode + append flag as low byte */
+    /* FIFO: connect to pipe */
+    vfs_node_t *fnode = vfs_get_node(node_idx);
+    if (fnode && fnode->type == VFS_FIFO) {
+        extern pipe_t pipes[];
+        extern void pipe_lock_acquire(uint64_t *);
+        extern void pipe_unlock_release(uint64_t);
+
+        pipe_t *pp = (pipe_t *)fnode->data;
+        if (!pp) {
+            /* First opener: allocate a pipe */
+            uint64_t pflags;
+            pipe_lock_acquire(&pflags);
+            int slot = -1;
+            for (int i = 0; i < 8; i++) {
+                if (!pipes[i].used) { slot = i; break; }
+            }
+            if (slot < 0) { pipe_unlock_release(pflags); return -ENOMEM; }
+            pp = &pipes[slot];
+            pp->read_pos = 0;
+            pp->write_pos = 0;
+            pp->count = 0;
+            pp->closed_read = 0;
+            pp->closed_write = 0;
+            pp->used = 1;
+            pp->read_refs = 0;
+            pp->write_refs = 0;
+            fnode->data = (uint8_t *)pp;
+            pipe_unlock_release(pflags);
+        }
+
+        uint8_t acc = (uint8_t)(flags & O_ACCMODE);
+        int is_write = (acc == O_WRONLY || acc == O_RDWR);
+        int is_read = (acc == O_RDONLY || acc == O_RDWR);
+
+        for (int fd = 0; fd < MAX_FDS; fd++) {
+            if (fd_is_free(&proc->fd_table[fd])) {
+                proc->fd_table[fd].node = fnode;
+                proc->fd_table[fd].offset = 0;
+                proc->fd_table[fd].pipe = (void *)pp;
+                proc->fd_table[fd].pipe_write = is_write ? 1 : 0;
+                proc->fd_table[fd].pty = NULL;
+                proc->fd_table[fd].pty_is_master = 0;
+                proc->fd_table[fd].unix_sock = NULL;
+                proc->fd_table[fd].eventfd = NULL;
+                proc->fd_table[fd].epoll = NULL;
+                proc->fd_table[fd].uring = NULL;
+                proc->fd_table[fd].open_flags = (uint8_t)(flags & O_ACCMODE);
+                proc->fd_table[fd].fd_flags = 0;
+                if (is_read) pp->read_refs++;
+                if (is_write) pp->write_refs++;
+                return fd;
+            }
+        }
+        return -1;
+    }
+
+    /* Regular file: store access mode + append flag as low byte */
     uint8_t stored_flags = (uint8_t)(flags & O_ACCMODE);
     if (flags & O_APPEND)
         stored_flags |= 0x04;  /* bit 2 = append */
 
     for (int fd = 0; fd < MAX_FDS; fd++) {
         if (fd_is_free(&proc->fd_table[fd])) {
-            proc->fd_table[fd].node = vfs_get_node(node_idx);
+            proc->fd_table[fd].node = fnode;
             proc->fd_table[fd].offset = 0;
             proc->fd_table[fd].pipe = NULL;
             proc->fd_table[fd].pipe_write = 0;
@@ -917,4 +973,24 @@ int64_t sys_fsstat(uint64_t buf_ptr, uint64_t a2,
         for (int i = 0; i < 6; i++) out[i] = 0;
     }
     return 0;
+}
+
+int64_t sys_mkfifo(uint64_t path_ptr, uint64_t a2,
+                            uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a2; (void)a3; (void)a4; (void)a5;
+
+    char raw_path[MAX_PATH], path[MAX_PATH];
+    if (copy_string_from_user((const char *)path_ptr, raw_path, MAX_PATH) != 0)
+        return -EFAULT;
+
+    thread_t *t = thread_get_current();
+    process_t *proc = t->process;
+    if (!proc) return -1;
+
+    if (!(proc->capabilities & CAP_FS_WRITE))
+        return -EACCES;
+
+    resolve_user_path(proc, raw_path, path);
+    int ret = vfs_mkfifo(path);
+    return ret < 0 ? ret : 0;
 }

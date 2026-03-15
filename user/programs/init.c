@@ -140,7 +140,7 @@ int main(void) {
     printf("[init] Limnx init (pid %ld)\n", sys_getpid());
 
     /* Set up environment */
-    sys_setenv("LIMNX_VERSION", "0.112");
+    sys_setenv("LIMNX_VERSION", "0.113");
     sys_setenv("PATH", "/");
 
     /* Read config */

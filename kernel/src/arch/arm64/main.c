@@ -347,7 +347,20 @@ void kmain(uint64_t dtb_addr) {
             vfs_write(tab_node, 0, (const uint8_t *)inittab, len);
             pr_info("Created /etc/inittab\n");
         }
+
+        int pw_node = vfs_create("/etc/passwd");
+        if (pw_node >= 0) {
+            const char *passwd =
+                "root:x:0:0:root:/:/shell.elf\n"
+                "nobody:x:65534:65534:nobody:/:/shell.elf\n";
+            int len = 0;
+            while (passwd[len]) len++;
+            vfs_write(pw_node, 0, (const uint8_t *)passwd, len);
+            pr_info("Created /etc/passwd\n");
+        }
     }
+
+    vfs_mkdir("/root");
 
     /* Launch init (pid 1) — Unix standard */
     pr_info("\nLaunching init...\n");

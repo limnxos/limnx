@@ -158,6 +158,7 @@
 #define SYS_GETSID        143
 #define SYS_TCSETPGRP     144
 #define SYS_TCGETPGRP     145
+#define SYS_MKFIFO        146
 
 /* --- Syscall wrappers --- */
 
@@ -756,4 +757,8 @@ long sys_tcsetpgrp(long fd, long pgrp) {
 
 long sys_tcgetpgrp(long fd) {
     return __syscall1(SYS_TCGETPGRP, fd);
+}
+
+long sys_mkfifo(const char *path) {
+    return __syscall1(SYS_MKFIFO, (long)path);
 }

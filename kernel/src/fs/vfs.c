@@ -818,6 +818,31 @@ int vfs_readlink(const char *path, char *buf, uint64_t bufsize) {
     return (int)tlen;
 }
 
+/* --- FIFO operations --- */
+
+int vfs_mkfifo(const char *path) {
+    if (vfs_resolve_path(path) >= 0)
+        return -EEXIST;
+
+    char parent_path[MAX_PATH], basename[MAX_PATH];
+    vfs_path_split(path, parent_path, basename);
+    if (basename[0] == '\0')
+        return -EINVAL;
+
+    int parent_idx = vfs_resolve_path(parent_path);
+    if (parent_idx < 0)
+        return -ENOENT;
+    if (nodes[parent_idx].type != VFS_DIRECTORY)
+        return -ENOTDIR;
+
+    int idx = vfs_register_node(parent_idx, basename, VFS_FIFO, 0, NULL);
+    if (idx < 0)
+        return -ENOSPC;
+    nodes[idx].mode = 0666;
+    nodes[idx].flags = VFS_FLAG_WRITABLE;  /* FIFOs are always writable */
+    return idx;
+}
+
 /* --- /proc filesystem --- */
 
 /* Forward-declare process access to avoid circular include (process.h includes vfs.h) */

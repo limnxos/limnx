@@ -285,6 +285,7 @@ static syscall_fn_t syscall_table[SYS_NR] = {
     [SYS_GETSID]           = sys_getsid,
     [SYS_TCSETPGRP]        = sys_tcsetpgrp,
     [SYS_TCGETPGRP]        = sys_tcgetpgrp,
+    [SYS_MKFIFO]           = sys_mkfifo,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).

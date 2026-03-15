@@ -151,7 +151,8 @@
 #define SYS_GETSID         143
 #define SYS_TCSETPGRP      144
 #define SYS_TCGETPGRP      145
-#define SYS_NR             146
+#define SYS_MKFIFO         146
+#define SYS_NR             147
 
 /* Capability bits */
 #define CAP_NET_BIND  (1 << 0)
