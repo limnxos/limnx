@@ -12,83 +12,155 @@
 #endif
 
 /*
- * Syscall numbers — Linux x86_64 compatible.
- * Must match kernel/src/syscall/syscall.h.
+ * Syscall numbers — Linux-compatible, per-architecture.
+ * Must match kernel/src/arch/{x86_64,arm64}/syscall_nr.h.
  */
 
-/* Linux-compatible (0-450) */
-#define SYS_READ            0
-#define SYS_WRITE           1    /* write(fd, buf, len) */
-#define SYS_OPEN            2
-#define SYS_CLOSE           3
-#define SYS_STAT            4
-#define SYS_FSTAT           5
-#define SYS_LSEEK           6
-#define SYS_POLL            7
-#define SYS_MMAP            9
-#define SYS_MPROTECT       10
-#define SYS_MUNMAP         11
-#define SYS_RT_SIGACTION   13
+#if defined(__x86_64__)
+/* x86_64 Linux syscall numbers */
+#define SYS_READ 0
+#define SYS_WRITE 1
+#define SYS_OPEN 2
+#define SYS_CLOSE 3
+#define SYS_STAT 4
+#define SYS_FSTAT 5
+#define SYS_LSEEK 6
+#define SYS_MMAP 9
+#define SYS_MUNMAP 11
+#define SYS_RT_SIGACTION 13
 #define SYS_RT_SIGPROCMASK 14
-#define SYS_RT_SIGRETURN   15
-#define SYS_IOCTL          16
-#define SYS_PIPE           22
-#define SYS_SELECT         23
-#define SYS_SCHED_YIELD    24
-#define SYS_DUP            32
-#define SYS_DUP2           33
-#define SYS_NANOSLEEP      35
-#define SYS_GETPID         39
-#define SYS_SOCKET         41
-#define SYS_SENDTO         44
-#define SYS_RECVFROM       45
-#define SYS_BIND           49
-#define SYS_LISTEN         50
-#define SYS_FORK           57
-#define SYS_EXECVE         59
-#define SYS_EXIT           60
-#define SYS_WAIT4          61
-#define SYS_KILL           62
-#define SYS_FCNTL          72
-#define SYS_TRUNCATE       76
-#define SYS_GETCWD         79
-#define SYS_CHDIR          80
-#define SYS_RENAME         82
-#define SYS_MKDIR          83
-#define SYS_CREAT          85
-#define SYS_UNLINK         87
-#define SYS_SYMLINK        88
-#define SYS_READLINK       89
-#define SYS_CHMOD          90
-#define SYS_CHOWN          92
-#define SYS_FCHOWN         93
-#define SYS_UMASK          95
-#define SYS_GETRLIMIT      97
-#define SYS_GETUID        102
-#define SYS_GETGID        104
-#define SYS_SETUID        105
-#define SYS_SETGID        106
-#define SYS_GETEUID       107
-#define SYS_GETEGID       108
-#define SYS_SETPGID       109
-#define SYS_SETSID        112
-#define SYS_GETGROUPS     115
-#define SYS_SETGROUPS     116
-#define SYS_GETSID        124
-#define SYS_ARCH_PRCTL    158
-#define SYS_SETRLIMIT     160
-#define SYS_MOUNT         165
-#define SYS_UMOUNT        166
+#define SYS_RT_SIGRETURN 15
+#define SYS_IOCTL 16
+#define SYS_PIPE 22
+#define SYS_SELECT 23
+#define SYS_SCHED_YIELD 24
+#define SYS_DUP 32
+#define SYS_DUP2 33
+#define SYS_NANOSLEEP 35
+#define SYS_GETPID 39
+#define SYS_SOCKET 41
+#define SYS_SENDTO 44
+#define SYS_RECVFROM 45
+#define SYS_BIND 49
+#define SYS_FORK 57
+#define SYS_EXECVE 59
+#define SYS_EXIT 60
+#define SYS_WAIT4 61
+#define SYS_KILL 62
+#define SYS_FCNTL 72
+#define SYS_TRUNCATE 76
+#define SYS_GETCWD 79
+#define SYS_CHDIR 80
+#define SYS_RENAME 82
+#define SYS_MKDIR 83
+#define SYS_CREAT 85
+#define SYS_UNLINK 87
+#define SYS_SYMLINK 88
+#define SYS_READLINK 89
+#define SYS_CHMOD 90
+#define SYS_CHOWN 92
+#define SYS_FCHOWN 93
+#define SYS_UMASK 95
+#define SYS_GETRLIMIT 97
+#define SYS_GETUID 102
+#define SYS_GETGID 104
+#define SYS_SETUID 105
+#define SYS_SETGID 106
+#define SYS_GETEUID 107
+#define SYS_GETEGID 108
+#define SYS_SETPGID 109
+#define SYS_SETSID 112
+#define SYS_GETGROUPS 115
+#define SYS_SETGROUPS 116
+#define SYS_GETSID 124
+#define SYS_ARCH_PRCTL 158
+#define SYS_SETRLIMIT 160
+#define SYS_MOUNT 165
+#define SYS_UMOUNT 166
 #define SYS_CLOCK_GETTIME 228
-#define SYS_EPOLL_WAIT    232
-#define SYS_EPOLL_CTL     233
-#define SYS_OPENPTY       236
-#define SYS_EVENTFD       284
-#define SYS_EPOLL_CREATE  291
-#define SYS_PIPE2         293
-#define SYS_SECCOMP       317
-#define SYS_URING_SETUP   425
-#define SYS_URING_ENTER   426
+#define SYS_EPOLL_CTL 233
+#define SYS_EPOLL_CREATE 291
+#define SYS_EVENTFD 284
+#define SYS_PIPE2 293
+#define SYS_SECCOMP 317
+
+#elif defined(__aarch64__)
+/* ARM64 generic Linux syscall numbers */
+#define SYS_GETCWD 17
+#define SYS_EVENTFD 19
+#define SYS_EPOLL_CREATE 20
+#define SYS_EPOLL_CTL 21
+#define SYS_FCNTL 25
+#define SYS_IOCTL 29
+#define SYS_MOUNT 40
+#define SYS_UMOUNT 39
+#define SYS_TRUNCATE 45
+#define SYS_CHDIR 49
+#define SYS_FCHOWN 55
+#define SYS_CLOSE 57
+#define SYS_PIPE2 59
+#define SYS_LSEEK 62
+#define SYS_READ 63
+#define SYS_WRITE 64
+#define SYS_FSTAT 80
+#define SYS_EXIT 93
+#define SYS_NANOSLEEP 101
+#define SYS_CLOCK_GETTIME 113
+#define SYS_SCHED_YIELD 124
+#define SYS_KILL 129
+#define SYS_RT_SIGACTION 134
+#define SYS_RT_SIGPROCMASK 135
+#define SYS_RT_SIGRETURN 139
+#define SYS_SETGID 144
+#define SYS_SETUID 146
+#define SYS_SETPGID 154
+#define SYS_SETSID 157
+#define SYS_GETGROUPS 158
+#define SYS_SETGROUPS 159
+#define SYS_GETRLIMIT 163
+#define SYS_SETRLIMIT 164
+#define SYS_UMASK 166
+#define SYS_GETPID 172
+#define SYS_GETUID 174
+#define SYS_GETEUID 175
+#define SYS_GETGID 176
+#define SYS_GETEGID 177
+#define SYS_GETSID 156
+#define SYS_SOCKET 198
+#define SYS_BIND 200
+#define SYS_SENDTO 206
+#define SYS_RECVFROM 207
+#define SYS_MUNMAP 215
+#define SYS_FORK 220      /* clone on ARM64 */
+#define SYS_EXECVE 221
+#define SYS_MMAP 222
+#define SYS_MPROTECT 226
+#define SYS_WAIT4 260
+#define SYS_SECCOMP 277
+/* Classic syscalls mapped to *at() variants */
+#define SYS_OPEN 56        /* openat */
+#define SYS_STAT 79        /* fstatat */
+#define SYS_MKDIR 34       /* mkdirat */
+#define SYS_UNLINK 35      /* unlinkat */
+#define SYS_SYMLINK 36     /* symlinkat */
+#define SYS_READLINK 78    /* readlinkat */
+#define SYS_CHMOD 53       /* fchmodat */
+#define SYS_CHOWN 54       /* fchownat */
+#define SYS_RENAME 276     /* renameat2 */
+#define SYS_CREAT 56       /* openat */
+#define SYS_PIPE 59        /* pipe2 */
+#define SYS_DUP 24         /* dup3 */
+#define SYS_DUP2 24        /* dup3 */
+#define SYS_SELECT 72      /* pselect6 */
+#define SYS_POLL 73         /* ppoll */
+#define SYS_EPOLL_WAIT 22  /* epoll_pwait */
+#define SYS_ARCH_PRCTL 0   /* not available on ARM64 — stub */
+#endif
+
+/* Shared defines for both archs */
+#define SYS_OPENPTY        594
+#define SYS_URING_SETUP    425
+#define SYS_URING_ENTER    426
 
 /* Limnx-specific (512+) */
 #define SYS_PUTS           512

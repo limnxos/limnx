@@ -88,7 +88,11 @@
 #define __NR_fstatat        262
 #define __NR_unlinkat       263
 #define __NR_renameat       264
+#define __NR_symlinkat      265
+#define __NR_readlinkat     267
+#define __NR_fchmodat       268
 #define __NR_faccessat      269
+#define __NR_fchownat       260
 #define __NR_eventfd2       284
 #define __NR_epoll_create1  291
 #define __NR_pipe2          293

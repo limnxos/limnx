@@ -139,54 +139,43 @@ int count_open_fds(process_t *proc) {
 /* --- Dispatch table --- */
 
 static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
-    /* === Linux-compatible numbers (0-450) === */
-    /* File I/O */
+
+    /* ---- Both architectures ---- */
     [SYS_READ]             = sys_read,
-    [SYS_WRITE]            = sys_fwrite,        /* Linux write(fd,buf,len) = our fwrite */
-    [SYS_OPEN]             = sys_open,
+    [SYS_WRITE]            = sys_fwrite,
     [SYS_CLOSE]            = sys_close,
-    [SYS_STAT]             = sys_stat,
     [SYS_FSTAT]            = sys_fstat,
     [SYS_LSEEK]            = sys_seek,
-    [SYS_POLL]             = sys_poll,
-    [SYS_MMAP]             = sys_mmap,           /* TODO: expand to 6-arg Linux API */
+    [SYS_MMAP]             = sys_mmap,
     [SYS_MPROTECT]         = sys_mprotect,
     [SYS_MUNMAP]           = sys_munmap,
     [SYS_RT_SIGACTION]     = sys_sigaction,
     [SYS_RT_SIGPROCMASK]   = sys_sigprocmask,
     [SYS_RT_SIGRETURN]     = sys_sigreturn,
     [SYS_IOCTL]            = sys_ioctl,
-    [SYS_PIPE]             = sys_pipe,
-    [SYS_SELECT]           = sys_select,
+    [SYS_PIPE2]            = sys_pipe2,
     [SYS_SCHED_YIELD]      = sys_yield,
-    [SYS_DUP]              = sys_dup,
-    [SYS_DUP2]             = sys_dup2,
     [SYS_NANOSLEEP]        = sys_nanosleep,
     [SYS_GETPID]           = sys_getpid,
-    [SYS_SOCKET]           = sys_socket,          /* TODO: unified socket API */
+    [SYS_SOCKET]           = sys_socket,
+    [SYS_CONNECT]          = sys_tcp_connect,
+    [SYS_ACCEPT]           = sys_tcp_accept,
     [SYS_SENDTO]           = sys_sendto,
     [SYS_RECVFROM]         = sys_recvfrom,
     [SYS_BIND]             = sys_bind,
-    [SYS_FORK]             = sys_fork,
+    [SYS_LISTEN]           = sys_tcp_listen,
     [SYS_EXECVE]           = sys_execve,
     [SYS_EXIT]             = sys_exit,
-    [SYS_WAIT4]            = sys_waitpid,         /* TODO: expand to wait4 API */
+    [SYS_WAIT4]            = sys_waitpid,
     [SYS_KILL]             = sys_kill,
     [SYS_FCNTL]            = sys_fcntl,
     [SYS_TRUNCATE]         = sys_truncate,
     [SYS_GETCWD]           = sys_getcwd,
     [SYS_CHDIR]            = sys_chdir,
-    [SYS_RENAME]           = sys_rename,
-    [SYS_MKDIR]            = sys_mkdir,
-    [SYS_CREAT]            = sys_create,
-    [SYS_UNLINK]           = sys_unlink,
-    [SYS_SYMLINK]          = sys_symlink,
-    [SYS_READLINK]         = sys_readlink,
-    [SYS_CHMOD]            = sys_chmod,
-    [SYS_CHOWN]            = sys_chown,
     [SYS_FCHOWN]           = sys_fchown,
     [SYS_UMASK]            = sys_umask,
     [SYS_GETRLIMIT]        = sys_getrlimit,
+    [SYS_SETRLIMIT]        = sys_setrlimit,
     [SYS_GETUID]           = sys_getuid,
     [SYS_GETGID]           = sys_getgid,
     [SYS_SETUID]           = sys_setuid,
@@ -195,23 +184,54 @@ static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
     [SYS_GETEGID]          = sys_getegid,
     [SYS_SETPGID]          = sys_setpgid,
     [SYS_SETSID]           = sys_setsid,
+    [SYS_GETSID]           = sys_getsid,
     [SYS_GETGROUPS]        = sys_getgroups,
     [SYS_SETGROUPS]        = sys_setgroups,
-    [SYS_GETSID]           = sys_getsid,
-    [SYS_ARCH_PRCTL]       = sys_arch_prctl,
-    [SYS_SETRLIMIT]        = sys_setrlimit,
     [SYS_MOUNT]            = sys_mount,
     [SYS_UMOUNT2]          = sys_umount,
+    [SYS_FUTEX]            = sys_futex_wait,
     [SYS_CLOCK_GETTIME]    = sys_clock_gettime,
-    [SYS_EPOLL_WAIT]       = sys_epoll_wait,
     [SYS_EPOLL_CTL]        = sys_epoll_ctl,
-    [SYS_OPENPTY]          = sys_openpty,
-    [SYS_EVENTFD2]         = sys_eventfd,
     [SYS_EPOLL_CREATE1]    = sys_epoll_create,
-    [SYS_PIPE2]            = sys_pipe2,
+    [SYS_EVENTFD2]         = sys_eventfd,
     [SYS_SECCOMP]          = sys_seccomp,
     [SYS_IO_URING_SETUP]   = sys_uring_setup,
     [SYS_IO_URING_ENTER]   = sys_uring_enter,
+    /* *at() variants — same handler as classic, both archs */
+    [SYS_OPENAT]           = sys_open,
+    [SYS_MKDIRAT]          = sys_mkdir,
+    [SYS_FSTATAT]          = sys_stat,
+    [SYS_UNLINKAT]         = sys_unlink,
+    [SYS_SYMLINKAT]        = sys_symlink,
+    [SYS_READLINKAT]       = sys_readlink,
+    [SYS_FCHMODAT]         = sys_chmod,
+    [SYS_FCHOWNAT]         = sys_chown,
+
+    /* ---- x86_64 only: classic syscalls ---- */
+#ifdef SYS_OPEN
+    [SYS_OPEN]             = sys_open,
+    [SYS_STAT]             = sys_stat,
+    [SYS_PIPE]             = sys_pipe,
+    [SYS_SELECT]           = sys_select,
+    [SYS_DUP]              = sys_dup,
+    [SYS_DUP2]             = sys_dup2,
+    [SYS_FORK]             = sys_fork,
+    [SYS_RENAME]           = sys_rename,
+    [SYS_MKDIR]            = sys_mkdir,
+    [SYS_CREAT]            = sys_create,
+    [SYS_UNLINK]           = sys_unlink,
+    [SYS_SYMLINK]          = sys_symlink,
+    [SYS_READLINK]         = sys_readlink,
+    [SYS_CHMOD]            = sys_chmod,
+    [SYS_CHOWN]            = sys_chown,
+    [SYS_ARCH_PRCTL]       = sys_arch_prctl,
+    [SYS_EPOLL_WAIT]       = sys_epoll_wait,
+#endif
+
+    /* ---- ARM64 only: clone instead of fork ---- */
+#ifdef __aarch64__
+    [__NR_clone]           = sys_fork,  /* clone with default flags = fork */
+#endif
 
     /* === Limnx-specific (512+) === */
     /* Legacy/convenience */
@@ -317,6 +337,7 @@ static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
     [SYS_TCSETPGRP]        = sys_tcsetpgrp,
     [SYS_TCGETPGRP]        = sys_tcgetpgrp,
     [SYS_GETPGID]          = sys_getpgid,
+    [SYS_OPENPTY]          = sys_openpty,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).
@@ -362,13 +383,12 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
             serial_printf("[AUDIT pid=%lu uid=%u] DENIED syscall %lu = %ld\n",
                           ap->pid, ap->uid, num, result);
         if ((ap->audit_flags & AUDIT_EXEC) &&
-            (num == SYS_EXECVE || num == SYS_FORK || num == SYS_EXIT))
+            (num == SYS_EXECVE || num == SYS_EXIT))
             serial_printf("[AUDIT pid=%lu uid=%u] %s = %ld\n",
                           ap->pid, ap->uid,
-                          num == SYS_EXECVE ? "exec" : num == SYS_FORK ? "fork" : "exit",
-                          result);
+                          num == SYS_EXECVE ? "exec" : "exit", result);
         if ((ap->audit_flags & AUDIT_FILE) &&
-            (num == SYS_OPEN || num == SYS_CREAT || num == SYS_UNLINK))
+            (num == SYS_OPENAT || num == SYS_UNLINKAT))
             serial_printf("[AUDIT pid=%lu uid=%u] file_op %lu = %ld\n",
                           ap->pid, ap->uid, num, result);
     }

@@ -23,14 +23,12 @@
 
 /* === Map SYS_* to __NR_* (arch-independent API names) === */
 
+/* Both architectures */
 #define SYS_READ            __NR_read
 #define SYS_WRITE           __NR_write
-#define SYS_OPEN            __NR_open        /* x86_64 only; ARM64 uses openat */
 #define SYS_CLOSE           __NR_close
-#define SYS_STAT            __NR_stat        /* x86_64 only; ARM64 uses fstatat */
 #define SYS_FSTAT           __NR_fstat
 #define SYS_LSEEK           __NR_lseek
-#define SYS_POLL            __NR_poll
 #define SYS_MMAP            __NR_mmap
 #define SYS_MPROTECT        __NR_mprotect
 #define SYS_MUNMAP          __NR_munmap
@@ -39,12 +37,8 @@
 #define SYS_RT_SIGPROCMASK  __NR_rt_sigprocmask
 #define SYS_RT_SIGRETURN    __NR_rt_sigreturn
 #define SYS_IOCTL           __NR_ioctl
-#define SYS_PIPE            __NR_pipe        /* x86_64 only; ARM64 uses pipe2 */
 #define SYS_PIPE2           __NR_pipe2
-#define SYS_SELECT          __NR_select      /* x86_64 only */
 #define SYS_SCHED_YIELD     __NR_sched_yield
-#define SYS_DUP             __NR_dup         /* x86_64 only */
-#define SYS_DUP2            __NR_dup2        /* x86_64 only */
 #define SYS_NANOSLEEP       __NR_nanosleep
 #define SYS_GETPID          __NR_getpid
 #define SYS_SOCKET          __NR_socket
@@ -55,7 +49,6 @@
 #define SYS_SHUTDOWN        __NR_shutdown
 #define SYS_BIND            __NR_bind
 #define SYS_LISTEN          __NR_listen
-#define SYS_FORK            __NR_fork        /* x86_64 only; ARM64 uses clone */
 #define SYS_EXECVE          __NR_execve
 #define SYS_EXIT            __NR_exit
 #define SYS_EXIT_GROUP      __NR_exit_group
@@ -65,15 +58,6 @@
 #define SYS_TRUNCATE        __NR_truncate
 #define SYS_GETCWD          __NR_getcwd
 #define SYS_CHDIR           __NR_chdir
-#define SYS_RENAME          __NR_rename      /* x86_64 only */
-#define SYS_MKDIR           __NR_mkdir       /* x86_64 only */
-#define SYS_RMDIR           __NR_rmdir       /* x86_64 only */
-#define SYS_CREAT           __NR_creat       /* x86_64 only */
-#define SYS_UNLINK          __NR_unlink      /* x86_64 only */
-#define SYS_SYMLINK         __NR_symlink     /* x86_64 only */
-#define SYS_READLINK        __NR_readlink    /* x86_64 only */
-#define SYS_CHMOD           __NR_chmod       /* x86_64 only */
-#define SYS_CHOWN           __NR_chown       /* x86_64 only */
 #define SYS_FCHOWN          __NR_fchown
 #define SYS_UMASK           __NR_umask
 #define SYS_GETRLIMIT       __NR_getrlimit
@@ -90,12 +74,10 @@
 #define SYS_GETSID          __NR_getsid
 #define SYS_GETGROUPS       __NR_getgroups
 #define SYS_SETGROUPS       __NR_setgroups
-#define SYS_ARCH_PRCTL      __NR_arch_prctl  /* x86_64 only */
 #define SYS_MOUNT           __NR_mount
 #define SYS_UMOUNT2         __NR_umount2
 #define SYS_FUTEX           __NR_futex
 #define SYS_CLOCK_GETTIME   __NR_clock_gettime
-#define SYS_EPOLL_WAIT      __NR_epoll_wait
 #define SYS_EPOLL_CTL       __NR_epoll_ctl
 #define SYS_EPOLL_CREATE1   __NR_epoll_create1
 #define SYS_EVENTFD2        __NR_eventfd2
@@ -110,6 +92,28 @@
 #define SYS_FCHOWNAT        __NR_fchownat
 #define SYS_IO_URING_SETUP  __NR_io_uring_setup
 #define SYS_IO_URING_ENTER  __NR_io_uring_enter
+
+/* x86_64 only — classic syscalls not in ARM64 generic table */
+#ifdef __NR_open
+#define SYS_OPEN            __NR_open
+#define SYS_STAT            __NR_stat
+#define SYS_PIPE            __NR_pipe
+#define SYS_SELECT          __NR_select
+#define SYS_DUP             __NR_dup
+#define SYS_DUP2            __NR_dup2
+#define SYS_FORK            __NR_fork
+#define SYS_RENAME          __NR_rename
+#define SYS_MKDIR           __NR_mkdir
+#define SYS_RMDIR           __NR_rmdir
+#define SYS_CREAT           __NR_creat
+#define SYS_UNLINK          __NR_unlink
+#define SYS_SYMLINK         __NR_symlink
+#define SYS_READLINK        __NR_readlink
+#define SYS_CHMOD           __NR_chmod
+#define SYS_CHOWN           __NR_chown
+#define SYS_ARCH_PRCTL      __NR_arch_prctl
+#define SYS_EPOLL_WAIT      __NR_epoll_wait
+#endif
 
 /* === Limnx-specific syscalls (512+, same on all archs) === */
 
