@@ -699,7 +699,6 @@ void kmain(void) {
         serial_puts("\n[test] Virtio-blk smoke test...\n");
 
         uint8_t blk_buf[512];
-
         /* Read sector 0 */
         if (virtio_blk_read(0, blk_buf) == 0) {
             serial_printf("[test] Read sector 0: first bytes = %x %x %x %x\n",

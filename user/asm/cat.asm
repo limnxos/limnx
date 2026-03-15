@@ -7,7 +7,7 @@ section .text
 global _start
 
 _start:
-    ; sys_open("/hello.txt", 0)
+    ; open("/hello.txt", 0)
     mov rax, SYS_OPEN
     lea rdi, [rel path]
     xor rsi, rsi
@@ -18,7 +18,7 @@ _start:
     js .fail
     mov r12, rax
 
-    ; sys_read(fd, buf, 256)
+    ; read(fd, buf, 256)
     mov rax, SYS_READ
     mov rdi, r12
     lea rsi, [rel buf]
@@ -29,20 +29,20 @@ _start:
     test rax, rax
     jle .fail
 
-    ; sys_write(buf, bytes_read)
-    mov rsi, rax
+    ; write(fd=1, buf, bytes_read)
+    mov rdx, rax            ; len = bytes read
     mov rax, SYS_WRITE
-    lea rdi, [rel buf]
+    mov rdi, 1              ; fd = stdout
+    lea rsi, [rel buf]
     syscall
 
-    ; sys_exit(0)
+    ; exit(0)
     mov rax, SYS_EXIT
     xor rdi, rdi
     syscall
     jmp $
 
 .fail:
-    ; sys_exit(1) on error
     mov rax, SYS_EXIT
     mov rdi, 1
     syscall

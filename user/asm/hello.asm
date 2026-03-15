@@ -1,5 +1,5 @@
 ; Limnx — User-space test program (ELF64)
-; Prints a message via sys_write, then exits via sys_exit
+; Prints a message via write(fd, buf, len), then exits
 
 %include "syscall.inc"
 
@@ -7,18 +7,17 @@ section .text
 global _start
 
 _start:
-    ; sys_write(msg, msg_len)
+    ; write(fd=1, msg, msg_len)
     mov rax, SYS_WRITE
-    lea rdi, [rel msg]
-    mov rsi, msg_len
+    mov rdi, 1              ; fd = stdout
+    lea rsi, [rel msg]
+    mov rdx, msg_len
     syscall
 
-    ; sys_exit(0)
+    ; exit(0)
     mov rax, SYS_EXIT
     xor rdi, rdi
     syscall
-
-    ; Should never reach here
     jmp $
 
 section .rodata

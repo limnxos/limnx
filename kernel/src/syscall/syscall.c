@@ -138,156 +138,185 @@ int count_open_fds(process_t *proc) {
 
 /* --- Dispatch table --- */
 
-static syscall_fn_t syscall_table[SYS_NR] = {
-    [SYS_WRITE]    = sys_write,
-    [SYS_YIELD]    = sys_yield,
-    [SYS_EXIT]     = sys_exit,
-    [SYS_OPEN]     = sys_open,
-    [SYS_READ]     = sys_read,
-    [SYS_CLOSE]    = sys_close,
-    [SYS_STAT]     = sys_stat,
-    [SYS_EXEC]     = sys_exec,
-    [SYS_SOCKET]   = sys_socket,
-    [SYS_BIND]     = sys_bind,
-    [SYS_SENDTO]   = sys_sendto,
-    [SYS_RECVFROM] = sys_recvfrom,
-    [SYS_FWRITE]   = sys_fwrite,
-    [SYS_CREATE]   = sys_create,
-    [SYS_UNLINK]   = sys_unlink,
-    [SYS_MMAP]     = sys_mmap,
-    [SYS_MUNMAP]   = sys_munmap,
-    [SYS_GETCHAR]  = sys_getchar,
-    [SYS_WAITPID]  = sys_waitpid,
-    [SYS_PIPE]     = sys_pipe,
-    [SYS_GETPID]   = sys_getpid,
-    [SYS_FMMAP]    = sys_fmmap,
-    [SYS_READDIR]  = sys_readdir,
-    [SYS_MKDIR]    = sys_mkdir,
-    [SYS_SEEK]     = sys_seek,
-    [SYS_TRUNCATE] = sys_truncate,
-    [SYS_CHDIR]    = sys_chdir,
-    [SYS_GETCWD]   = sys_getcwd,
-    [SYS_FSTAT]    = sys_fstat,
-    [SYS_RENAME]   = sys_rename,
-    [SYS_DUP]      = sys_dup,
-    [SYS_DUP2]     = sys_dup2,
-    [SYS_KILL]     = sys_kill,
-    [SYS_FCNTL]    = sys_fcntl,
-    [SYS_SETPGID]  = sys_setpgid,
-    [SYS_GETPGID]  = sys_getpgid,
-    [SYS_CHMOD]    = sys_chmod,
-    [SYS_SHMGET]   = sys_shmget,
-    [SYS_SHMAT]    = sys_shmat,
-    [SYS_SHMDT]    = sys_shmdt,
-    [SYS_FORK]     = sys_fork,
-    [SYS_SIGACTION]  = sys_sigaction,
-    [SYS_SIGRETURN]  = sys_sigreturn,
-    [SYS_OPENPTY]    = sys_openpty,
-    [SYS_TCP_SOCKET] = sys_tcp_socket,
-    [SYS_TCP_CONNECT]= sys_tcp_connect,
-    [SYS_TCP_LISTEN] = sys_tcp_listen,
-    [SYS_TCP_ACCEPT] = sys_tcp_accept,
-    [SYS_TCP_SEND]   = sys_tcp_send,
-    [SYS_TCP_RECV]   = sys_tcp_recv,
-    [SYS_TCP_CLOSE]  = sys_tcp_close,
-    [SYS_IOCTL]      = sys_ioctl,
-    [SYS_CLOCK_GETTIME] = sys_clock_gettime,
-    [SYS_NANOSLEEP]  = sys_nanosleep,
-    [SYS_GETENV]     = sys_getenv,
-    [SYS_SETENV]     = sys_setenv,
-    [SYS_POLL]       = sys_poll,
-    [SYS_GETUID]     = sys_getuid,
-    [SYS_SETUID]     = sys_setuid,
-    [SYS_GETGID]     = sys_getgid,
-    [SYS_SETGID]     = sys_setgid,
-    [SYS_GETCAP]     = sys_getcap,
-    [SYS_SETCAP]     = sys_setcap,
-    [SYS_GETRLIMIT]  = sys_getrlimit,
-    [SYS_SETRLIMIT]  = sys_setrlimit,
-    [SYS_SECCOMP]    = sys_seccomp,
-    [SYS_SETAUDIT]   = sys_setaudit,
-    [SYS_UNIX_SOCKET]  = sys_unix_socket,
-    [SYS_UNIX_BIND]    = sys_unix_bind,
-    [SYS_UNIX_LISTEN]  = sys_unix_listen,
-    [SYS_UNIX_ACCEPT]  = sys_unix_accept,
-    [SYS_UNIX_CONNECT] = sys_unix_connect,
-    [SYS_AGENT_REGISTER] = sys_agent_register,
-    [SYS_AGENT_LOOKUP] = sys_agent_lookup,
-    [SYS_EVENTFD]      = sys_eventfd,
-    [SYS_EPOLL_CREATE]   = sys_epoll_create,
-    [SYS_EPOLL_CTL]      = sys_epoll_ctl,
-    [SYS_EPOLL_WAIT]     = sys_epoll_wait,
-    [SYS_SWAP_STAT]      = sys_swap_stat,
-    [SYS_INFER_REGISTER] = sys_infer_register,
-    [SYS_INFER_REQUEST]  = sys_infer_request,
-    [SYS_URING_SETUP]    = sys_uring_setup,
-    [SYS_URING_ENTER]    = sys_uring_enter,
-    [SYS_MMAP2]          = sys_mmap2,
-    [SYS_TOKEN_CREATE]   = sys_token_create,
-    [SYS_TOKEN_REVOKE]   = sys_token_revoke,
-    [SYS_TOKEN_LIST]     = sys_token_list,
-    [SYS_NS_CREATE]      = sys_ns_create,
-    [SYS_NS_JOIN]        = sys_ns_join,
-    [SYS_PROCINFO]       = sys_procinfo,
-    [SYS_FSSTAT]         = sys_fsstat,
-    [SYS_TASK_CREATE]    = sys_task_create,
-    [SYS_TASK_DEPEND]    = sys_task_depend,
-    [SYS_TASK_START]     = sys_task_start,
-    [SYS_TASK_COMPLETE]  = sys_task_complete,
-    [SYS_TASK_STATUS]    = sys_task_status,
-    [SYS_TASK_WAIT]      = sys_task_wait,
-    [SYS_TOKEN_DELEGATE] = sys_token_delegate,
-    [SYS_NS_SETQUOTA]    = sys_ns_setquota,
-    [SYS_INFER_HEALTH]   = sys_infer_health,
-    [SYS_INFER_ROUTE]    = sys_infer_route,
-    [SYS_AGENT_SEND]     = sys_agent_send,
-    [SYS_AGENT_RECV]     = sys_agent_recv,
-    [SYS_FUTEX_WAIT]     = sys_futex_wait,
-    [SYS_FUTEX_WAKE]     = sys_futex_wake,
-    [SYS_MMAP_FILE]      = sys_mmap_file,
-    [SYS_MPROTECT]       = sys_mprotect,
-    [SYS_MMAP_GUARD]     = sys_mmap_guard,
-    [SYS_SIGPROCMASK]    = sys_sigprocmask,
-    [SYS_ARCH_PRCTL]     = sys_arch_prctl,
-    [SYS_SELECT]         = sys_select,
-    [SYS_SUPER_CREATE]   = sys_super_create,
-    [SYS_SUPER_ADD]      = sys_super_add,
-    [SYS_SUPER_SET_POLICY] = sys_super_set_policy,
+static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
+    /* === Linux-compatible numbers (0-450) === */
+    /* File I/O */
+    [SYS_READ]             = sys_read,
+    [SYS_WRITE]            = sys_fwrite,        /* Linux write(fd,buf,len) = our fwrite */
+    [SYS_OPEN]             = sys_open,
+    [SYS_CLOSE]            = sys_close,
+    [SYS_STAT]             = sys_stat,
+    [SYS_FSTAT]            = sys_fstat,
+    [SYS_LSEEK]            = sys_seek,
+    [SYS_POLL]             = sys_poll,
+    [SYS_MMAP]             = sys_mmap,           /* TODO: expand to 6-arg Linux API */
+    [SYS_MPROTECT]         = sys_mprotect,
+    [SYS_MUNMAP]           = sys_munmap,
+    [SYS_RT_SIGACTION]     = sys_sigaction,
+    [SYS_RT_SIGPROCMASK]   = sys_sigprocmask,
+    [SYS_RT_SIGRETURN]     = sys_sigreturn,
+    [SYS_IOCTL]            = sys_ioctl,
+    [SYS_PIPE]             = sys_pipe,
+    [SYS_SELECT]           = sys_select,
+    [SYS_SCHED_YIELD]      = sys_yield,
+    [SYS_DUP]              = sys_dup,
+    [SYS_DUP2]             = sys_dup2,
+    [SYS_NANOSLEEP]        = sys_nanosleep,
+    [SYS_GETPID]           = sys_getpid,
+    [SYS_SOCKET]           = sys_socket,          /* TODO: unified socket API */
+    [SYS_SENDTO]           = sys_sendto,
+    [SYS_RECVFROM]         = sys_recvfrom,
+    [SYS_BIND]             = sys_bind,
+    [SYS_FORK]             = sys_fork,
+    [SYS_EXECVE]           = sys_execve,
+    [SYS_EXIT]             = sys_exit,
+    [SYS_WAIT4]            = sys_waitpid,         /* TODO: expand to wait4 API */
+    [SYS_KILL]             = sys_kill,
+    [SYS_FCNTL]            = sys_fcntl,
+    [SYS_TRUNCATE]         = sys_truncate,
+    [SYS_GETCWD]           = sys_getcwd,
+    [SYS_CHDIR]            = sys_chdir,
+    [SYS_RENAME]           = sys_rename,
+    [SYS_MKDIR]            = sys_mkdir,
+    [SYS_CREAT]            = sys_create,
+    [SYS_UNLINK]           = sys_unlink,
+    [SYS_SYMLINK]          = sys_symlink,
+    [SYS_READLINK]         = sys_readlink,
+    [SYS_CHMOD]            = sys_chmod,
+    [SYS_CHOWN]            = sys_chown,
+    [SYS_FCHOWN]           = sys_fchown,
+    [SYS_UMASK]            = sys_umask,
+    [SYS_GETRLIMIT]        = sys_getrlimit,
+    [SYS_GETUID]           = sys_getuid,
+    [SYS_GETGID]           = sys_getgid,
+    [SYS_SETUID]           = sys_setuid,
+    [SYS_SETGID]           = sys_setgid,
+    [SYS_GETEUID]          = sys_geteuid,
+    [SYS_GETEGID]          = sys_getegid,
+    [SYS_SETPGID]          = sys_setpgid,
+    [SYS_SETSID]           = sys_setsid,
+    [SYS_GETGROUPS]        = sys_getgroups,
+    [SYS_SETGROUPS]        = sys_setgroups,
+    [SYS_GETSID]           = sys_getsid,
+    [SYS_ARCH_PRCTL]       = sys_arch_prctl,
+    [SYS_SETRLIMIT]        = sys_setrlimit,
+    [SYS_MOUNT]            = sys_mount,
+    [SYS_UMOUNT2]          = sys_umount,
+    [SYS_CLOCK_GETTIME]    = sys_clock_gettime,
+    [SYS_EPOLL_WAIT]       = sys_epoll_wait,
+    [SYS_EPOLL_CTL]        = sys_epoll_ctl,
+    [SYS_OPENPTY]          = sys_openpty,
+    [SYS_EVENTFD2]         = sys_eventfd,
+    [SYS_EPOLL_CREATE1]    = sys_epoll_create,
     [SYS_PIPE2]            = sys_pipe2,
-    [SYS_SUPER_START]      = sys_super_start,
-    [SYS_TCP_SETOPT]       = sys_tcp_setopt,
-    [SYS_TCP_TO_FD]        = sys_tcp_to_fd,
+    [SYS_SECCOMP]          = sys_seccomp,
+    [SYS_IO_URING_SETUP]   = sys_uring_setup,
+    [SYS_IO_URING_ENTER]   = sys_uring_enter,
+
+    /* === Limnx-specific (512+) === */
+    /* Legacy/convenience */
+    [SYS_PUTS]             = sys_write,           /* old stdout-only write */
+    [SYS_EXEC_OLD]         = sys_exec,            /* old fork+exec combo */
+    [SYS_GETCHAR]          = sys_getchar,
+    [SYS_READDIR]          = sys_readdir,
+    [SYS_FMMAP]            = sys_fmmap,
+    [SYS_MMAP2]            = sys_mmap2,
+    [SYS_MMAP_FILE]        = sys_mmap_file,
+    [SYS_MMAP_GUARD]       = sys_mmap_guard,
+
+    /* Shared memory */
+    [SYS_SHMGET]           = sys_shmget,
+    [SYS_SHMAT]            = sys_shmat,
+    [SYS_SHMDT]            = sys_shmdt,
+
+    /* Environment */
+    [SYS_GETENV]           = sys_getenv,
+    [SYS_SETENV]           = sys_setenv,
+    [SYS_ENVIRON]          = sys_environ,
+
+    /* Agent infrastructure */
+    [SYS_AGENT_REGISTER]   = sys_agent_register,
+    [SYS_AGENT_LOOKUP]     = sys_agent_lookup,
+    [SYS_AGENT_SEND]       = sys_agent_send,
+    [SYS_AGENT_RECV]       = sys_agent_recv,
+
+    /* Capability tokens */
+    [SYS_TOKEN_CREATE]     = sys_token_create,
+    [SYS_TOKEN_REVOKE]     = sys_token_revoke,
+    [SYS_TOKEN_LIST]       = sys_token_list,
+    [SYS_TOKEN_DELEGATE]   = sys_token_delegate,
+
+    /* Agent namespaces */
+    [SYS_NS_CREATE]        = sys_ns_create,
+    [SYS_NS_JOIN]          = sys_ns_join,
+    [SYS_NS_SETQUOTA]      = sys_ns_setquota,
+
+    /* Inference service */
+    [SYS_INFER_REGISTER]   = sys_infer_register,
+    [SYS_INFER_REQUEST]    = sys_infer_request,
+    [SYS_INFER_HEALTH]     = sys_infer_health,
+    [SYS_INFER_ROUTE]      = sys_infer_route,
     [SYS_INFER_SET_POLICY] = sys_infer_set_policy,
     [SYS_INFER_QUEUE_STAT] = sys_infer_queue_stat,
     [SYS_INFER_CACHE_CTRL] = sys_infer_cache_ctrl,
     [SYS_INFER_SUBMIT]     = sys_infer_submit,
     [SYS_INFER_POLL]       = sys_infer_poll,
     [SYS_INFER_RESULT]     = sys_infer_result,
-    [SYS_EXECVE]           = sys_execve,
+    [SYS_INFER_SWAP]       = sys_infer_swap,
+
+    /* Task graph */
+    [SYS_TASK_CREATE]      = sys_task_create,
+    [SYS_TASK_DEPEND]      = sys_task_depend,
+    [SYS_TASK_START]       = sys_task_start,
+    [SYS_TASK_COMPLETE]    = sys_task_complete,
+    [SYS_TASK_STATUS]      = sys_task_status,
+    [SYS_TASK_WAIT]        = sys_task_wait,
+
+    /* Supervisor trees */
+    [SYS_SUPER_CREATE]     = sys_super_create,
+    [SYS_SUPER_ADD]        = sys_super_add,
+    [SYS_SUPER_SET_POLICY] = sys_super_set_policy,
+    [SYS_SUPER_START]      = sys_super_start,
+    [SYS_SUPER_LIST]       = sys_super_list,
+    [SYS_SUPER_STOP]       = sys_super_stop,
+
+    /* Pub/sub messaging */
     [SYS_TOPIC_CREATE]     = sys_topic_create,
     [SYS_TOPIC_SUB]        = sys_topic_subscribe,
     [SYS_TOPIC_PUB]        = sys_topic_publish,
     [SYS_TOPIC_RECV]       = sys_topic_recv,
-    [SYS_INFER_SWAP]       = sys_infer_swap,
-    [SYS_ENVIRON]          = sys_environ,
-    [SYS_SUPER_LIST]       = sys_super_list,
-    [SYS_SUPER_STOP]       = sys_super_stop,
-    [SYS_CHOWN]            = sys_chown,
-    [SYS_FCHOWN]           = sys_fchown,
-    [SYS_UMASK]            = sys_umask,
-    [SYS_GETEUID]          = sys_geteuid,
-    [SYS_GETEGID]          = sys_getegid,
-    [SYS_GETGROUPS]        = sys_getgroups,
-    [SYS_SETGROUPS]        = sys_setgroups,
-    [SYS_SYMLINK]          = sys_symlink,
-    [SYS_READLINK]         = sys_readlink,
-    [SYS_SETSID]           = sys_setsid,
-    [SYS_GETSID]           = sys_getsid,
+
+    /* Unix domain sockets */
+    [SYS_UNIX_SOCKET]      = sys_unix_socket,
+    [SYS_UNIX_BIND]        = sys_unix_bind,
+    [SYS_UNIX_LISTEN]      = sys_unix_listen,
+    [SYS_UNIX_ACCEPT]      = sys_unix_accept,
+    [SYS_UNIX_CONNECT]     = sys_unix_connect,
+
+    /* TCP legacy */
+    [SYS_TCP_SOCKET]       = sys_tcp_socket,
+    [SYS_TCP_CONNECT]      = sys_tcp_connect,
+    [SYS_TCP_LISTEN]       = sys_tcp_listen,
+    [SYS_TCP_ACCEPT]       = sys_tcp_accept,
+    [SYS_TCP_SEND]         = sys_tcp_send,
+    [SYS_TCP_RECV]         = sys_tcp_recv,
+    [SYS_TCP_CLOSE]        = sys_tcp_close,
+    [SYS_TCP_SETOPT]       = sys_tcp_setopt,
+    [SYS_TCP_TO_FD]        = sys_tcp_to_fd,
+
+    /* Misc */
+    [SYS_PROCINFO]         = sys_procinfo,
+    [SYS_FSSTAT]           = sys_fsstat,
+    [SYS_SWAP_STAT]        = sys_swap_stat,
+    [SYS_SETAUDIT]         = sys_setaudit,
+    [SYS_GETCAP]           = sys_getcap,
+    [SYS_SETCAP]           = sys_setcap,
+    [SYS_FUTEX_WAIT]       = sys_futex_wait,
+    [SYS_FUTEX_WAKE]       = sys_futex_wake,
+    [SYS_MKFIFO]           = sys_mkfifo,
     [SYS_TCSETPGRP]        = sys_tcsetpgrp,
     [SYS_TCGETPGRP]        = sys_tcgetpgrp,
-    [SYS_MKFIFO]           = sys_mkfifo,
-    [SYS_MOUNT]            = sys_mount,
-    [SYS_UMOUNT]           = sys_umount,
+    [SYS_GETPGID]          = sys_getpgid,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).
@@ -295,21 +324,22 @@ static syscall_fn_t syscall_table[SYS_NR] = {
 
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
                           uint64_t arg3, uint64_t arg4, uint64_t arg5) {
-    if (num >= SYS_NR)
-        return -1;
+    if (num >= SYS_NR || !syscall_table[num])
+        return -ENOSYS;
 
-    /* Seccomp filtering (covers syscalls 0-127) */
+    /* Seccomp filtering — bitmask covers syscalls 0-127.
+     * Syscalls >= 128 (including Limnx custom 512+) are allowed if
+     * any seccomp mask bit is set (we don't have enough bits for all). */
     thread_t *st = thread_get_current();
     if (st && st->process &&
         (st->process->seccomp_mask != 0 || st->process->seccomp_mask_hi != 0) &&
-        num != SYS_EXIT && num != SYS_SIGRETURN) {
+        num != SYS_EXIT && num != SYS_RT_SIGRETURN) {
         int allowed = 1;
         if (num < 64)
             allowed = !!(st->process->seccomp_mask & (1ULL << num));
         else if (num < 128)
             allowed = !!(st->process->seccomp_mask_hi & (1ULL << (num - 64)));
-        else
-            allowed = 0;
+        /* num >= 128: allowed by default (can't bitmap-filter high numbers) */
         if (!allowed) {
             if (st->process->seccomp_strict) {
                 process_deliver_signal(st->process, SIGKILL);
@@ -332,13 +362,13 @@ int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
             serial_printf("[AUDIT pid=%lu uid=%u] DENIED syscall %lu = %ld\n",
                           ap->pid, ap->uid, num, result);
         if ((ap->audit_flags & AUDIT_EXEC) &&
-            (num == SYS_EXEC || num == SYS_FORK || num == SYS_EXIT))
+            (num == SYS_EXECVE || num == SYS_FORK || num == SYS_EXIT))
             serial_printf("[AUDIT pid=%lu uid=%u] %s = %ld\n",
                           ap->pid, ap->uid,
-                          num == SYS_EXEC ? "exec" : num == SYS_FORK ? "fork" : "exit",
+                          num == SYS_EXECVE ? "exec" : num == SYS_FORK ? "fork" : "exit",
                           result);
         if ((ap->audit_flags & AUDIT_FILE) &&
-            (num == SYS_OPEN || num == SYS_CREATE || num == SYS_UNLINK))
+            (num == SYS_OPEN || num == SYS_CREAT || num == SYS_UNLINK))
             serial_printf("[AUDIT pid=%lu uid=%u] file_op %lu = %ld\n",
                           ap->pid, ap->uid, num, result);
     }

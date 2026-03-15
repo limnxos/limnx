@@ -11,165 +11,173 @@
 #include "arch/arm64/syscall_arch.h"
 #endif
 
-/* Syscall numbers (must match kernel syscall table and user/syscall.inc) */
-#define SYS_WRITE           0
-#define SYS_YIELD           1
-#define SYS_EXIT            2
-#define SYS_OPEN            3
-#define SYS_READ            4
-#define SYS_CLOSE           5
-#define SYS_STAT            6
-#define SYS_EXEC            7
-#define SYS_SOCKET          8
-#define SYS_BIND            9
-#define SYS_SENDTO         10
-#define SYS_RECVFROM       11
-#define SYS_FWRITE         12
-#define SYS_CREATE         13
-#define SYS_UNLINK         14
-#define SYS_MMAP           15
-#define SYS_MUNMAP         16
-#define SYS_GETCHAR        17
-#define SYS_WAITPID        18
-#define SYS_PIPE           19
-#define SYS_GETPID         20
-#define SYS_FMMAP          21
-#define SYS_READDIR        22
-#define SYS_MKDIR          23
-#define SYS_SEEK           24
-#define SYS_TRUNCATE       25
-#define SYS_CHDIR          26
-#define SYS_GETCWD         27
-#define SYS_FSTAT          28
-#define SYS_RENAME         29
-#define SYS_DUP            30
-#define SYS_DUP2           31
-#define SYS_KILL           32
-#define SYS_FCNTL          33
-#define SYS_SETPGID        34
-#define SYS_GETPGID        35
-#define SYS_CHMOD          36
-#define SYS_SHMGET         37
-#define SYS_SHMAT          38
-#define SYS_SHMDT          39
-#define SYS_FORK           40
-#define SYS_SIGACTION      41
-#define SYS_SIGRETURN      42
-#define SYS_OPENPTY        43
-#define SYS_TCP_SOCKET     44
-#define SYS_TCP_CONNECT    45
-#define SYS_TCP_LISTEN     46
-#define SYS_TCP_ACCEPT     47
-#define SYS_TCP_SEND       48
-#define SYS_TCP_RECV       49
-#define SYS_TCP_CLOSE      50
-#define SYS_IOCTL          51
-#define SYS_CLOCK_GETTIME  52
-#define SYS_NANOSLEEP      53
-#define SYS_GETENV         54
-#define SYS_SETENV         55
-#define SYS_POLL           56
-#define SYS_GETUID         57
-#define SYS_SETUID         58
-#define SYS_GETGID         59
-#define SYS_SETGID         60
-#define SYS_GETCAP         61
-#define SYS_SETCAP         62
-#define SYS_GETRLIMIT      63
-#define SYS_SETRLIMIT      64
-#define SYS_SECCOMP        65
-#define SYS_SETAUDIT       66
-#define SYS_UNIX_SOCKET    67
-#define SYS_UNIX_BIND      68
-#define SYS_UNIX_LISTEN    69
-#define SYS_UNIX_ACCEPT    70
-#define SYS_UNIX_CONNECT   71
-#define SYS_AGENT_REGISTER 72
-#define SYS_AGENT_LOOKUP   73
-#define SYS_EVENTFD        74
-#define SYS_EPOLL_CREATE   75
-#define SYS_EPOLL_CTL      76
-#define SYS_EPOLL_WAIT     77
-#define SYS_SWAP_STAT      78
-#define SYS_INFER_REGISTER 79
-#define SYS_INFER_REQUEST  80
-#define SYS_URING_SETUP    81
-#define SYS_URING_ENTER    82
-#define SYS_MMAP2          83
-#define SYS_TOKEN_CREATE   84
-#define SYS_TOKEN_REVOKE   85
-#define SYS_TOKEN_LIST     86
-#define SYS_NS_CREATE      87
-#define SYS_NS_JOIN        88
-#define SYS_PROCINFO       89
-#define SYS_FSSTAT         90
-#define SYS_TASK_CREATE    91
-#define SYS_TASK_DEPEND    92
-#define SYS_TASK_START     93
-#define SYS_TASK_COMPLETE  94
-#define SYS_TASK_STATUS    95
-#define SYS_TASK_WAIT      96
-#define SYS_TOKEN_DELEGATE 97
-#define SYS_NS_SETQUOTA   98
-#define SYS_INFER_HEALTH   99
-#define SYS_INFER_ROUTE   100
-#define SYS_AGENT_SEND    101
-#define SYS_AGENT_RECV    102
-#define SYS_FUTEX_WAIT    103
-#define SYS_FUTEX_WAKE    104
-#define SYS_MMAP_FILE     105
-#define SYS_MPROTECT      106
-#define SYS_MMAP_GUARD    107
-#define SYS_SIGPROCMASK   108
-#define SYS_ARCH_PRCTL    109
-#define SYS_SELECT        110
-#define SYS_SUPER_CREATE  111
-#define SYS_SUPER_ADD     112
-#define SYS_SUPER_SET_POLICY 113
-#define SYS_PIPE2         114
-#define SYS_SUPER_START   115
-#define SYS_TCP_SETOPT    116
-#define SYS_TCP_TO_FD     117
-#define SYS_INFER_SET_POLICY 118
-#define SYS_INFER_QUEUE_STAT 119
-#define SYS_INFER_CACHE_CTRL 120
-#define SYS_INFER_SUBMIT  121
-#define SYS_INFER_POLL    122
-#define SYS_INFER_RESULT  123
-#define SYS_EXECVE        124
-#define SYS_TOPIC_CREATE  125
-#define SYS_TOPIC_SUB     126
-#define SYS_TOPIC_PUB     127
-#define SYS_TOPIC_RECV    128
-#define SYS_INFER_SWAP    129
-#define SYS_ENVIRON       130
-#define SYS_SUPER_LIST    131
-#define SYS_SUPER_STOP    132
-#define SYS_CHOWN         133
-#define SYS_FCHOWN        134
-#define SYS_UMASK         135
-#define SYS_GETEUID       136
-#define SYS_GETEGID       137
-#define SYS_GETGROUPS     138
-#define SYS_SETGROUPS     139
-#define SYS_SYMLINK       140
-#define SYS_READLINK      141
-#define SYS_SETSID        142
-#define SYS_GETSID        143
-#define SYS_TCSETPGRP     144
-#define SYS_TCGETPGRP     145
-#define SYS_MKFIFO        146
-#define SYS_MOUNT         147
-#define SYS_UMOUNT        148
+/*
+ * Syscall numbers — Linux x86_64 compatible.
+ * Must match kernel/src/syscall/syscall.h.
+ */
+
+/* Linux-compatible (0-450) */
+#define SYS_READ            0
+#define SYS_WRITE           1    /* write(fd, buf, len) */
+#define SYS_OPEN            2
+#define SYS_CLOSE           3
+#define SYS_STAT            4
+#define SYS_FSTAT           5
+#define SYS_LSEEK           6
+#define SYS_POLL            7
+#define SYS_MMAP            9
+#define SYS_MPROTECT       10
+#define SYS_MUNMAP         11
+#define SYS_RT_SIGACTION   13
+#define SYS_RT_SIGPROCMASK 14
+#define SYS_RT_SIGRETURN   15
+#define SYS_IOCTL          16
+#define SYS_PIPE           22
+#define SYS_SELECT         23
+#define SYS_SCHED_YIELD    24
+#define SYS_DUP            32
+#define SYS_DUP2           33
+#define SYS_NANOSLEEP      35
+#define SYS_GETPID         39
+#define SYS_SOCKET         41
+#define SYS_SENDTO         44
+#define SYS_RECVFROM       45
+#define SYS_BIND           49
+#define SYS_LISTEN         50
+#define SYS_FORK           57
+#define SYS_EXECVE         59
+#define SYS_EXIT           60
+#define SYS_WAIT4          61
+#define SYS_KILL           62
+#define SYS_FCNTL          72
+#define SYS_TRUNCATE       76
+#define SYS_GETCWD         79
+#define SYS_CHDIR          80
+#define SYS_RENAME         82
+#define SYS_MKDIR          83
+#define SYS_CREAT          85
+#define SYS_UNLINK         87
+#define SYS_SYMLINK        88
+#define SYS_READLINK       89
+#define SYS_CHMOD          90
+#define SYS_CHOWN          92
+#define SYS_FCHOWN         93
+#define SYS_UMASK          95
+#define SYS_GETRLIMIT      97
+#define SYS_GETUID        102
+#define SYS_GETGID        104
+#define SYS_SETUID        105
+#define SYS_SETGID        106
+#define SYS_GETEUID       107
+#define SYS_GETEGID       108
+#define SYS_SETPGID       109
+#define SYS_SETSID        112
+#define SYS_GETGROUPS     115
+#define SYS_SETGROUPS     116
+#define SYS_GETSID        124
+#define SYS_ARCH_PRCTL    158
+#define SYS_SETRLIMIT     160
+#define SYS_MOUNT         165
+#define SYS_UMOUNT        166
+#define SYS_CLOCK_GETTIME 228
+#define SYS_EPOLL_WAIT    232
+#define SYS_EPOLL_CTL     233
+#define SYS_OPENPTY       236
+#define SYS_EVENTFD       284
+#define SYS_EPOLL_CREATE  291
+#define SYS_PIPE2         293
+#define SYS_SECCOMP       317
+#define SYS_URING_SETUP   425
+#define SYS_URING_ENTER   426
+
+/* Limnx-specific (512+) */
+#define SYS_PUTS           512
+#define SYS_EXEC_OLD       513
+#define SYS_GETCHAR        514
+#define SYS_READDIR        515
+#define SYS_FMMAP          516
+#define SYS_MMAP2          517
+#define SYS_SHMGET         520
+#define SYS_SHMAT          521
+#define SYS_SHMDT          522
+#define SYS_GETENV         523
+#define SYS_SETENV         524
+#define SYS_ENVIRON        525
+#define SYS_MMAP_FILE      518
+#define SYS_MMAP_GUARD     519
+#define SYS_AGENT_REGISTER 530
+#define SYS_AGENT_LOOKUP   531
+#define SYS_AGENT_SEND     532
+#define SYS_AGENT_RECV     533
+#define SYS_TOKEN_CREATE   534
+#define SYS_TOKEN_REVOKE   535
+#define SYS_TOKEN_LIST     536
+#define SYS_TOKEN_DELEGATE 537
+#define SYS_NS_CREATE      538
+#define SYS_NS_JOIN        539
+#define SYS_NS_SETQUOTA    540
+#define SYS_INFER_REGISTER 541
+#define SYS_INFER_REQUEST  542
+#define SYS_INFER_HEALTH   543
+#define SYS_INFER_ROUTE    544
+#define SYS_INFER_SET_POLICY 545
+#define SYS_INFER_QUEUE_STAT 546
+#define SYS_INFER_CACHE_CTRL 547
+#define SYS_INFER_SUBMIT   548
+#define SYS_INFER_POLL     549
+#define SYS_INFER_RESULT   550
+#define SYS_INFER_SWAP     551
+#define SYS_TASK_CREATE    552
+#define SYS_TASK_DEPEND    553
+#define SYS_TASK_START     554
+#define SYS_TASK_COMPLETE  555
+#define SYS_TASK_STATUS    556
+#define SYS_TASK_WAIT      557
+#define SYS_SUPER_CREATE   558
+#define SYS_SUPER_ADD      559
+#define SYS_SUPER_SET_POLICY 560
+#define SYS_SUPER_START    561
+#define SYS_SUPER_LIST     562
+#define SYS_SUPER_STOP     563
+#define SYS_TOPIC_CREATE   564
+#define SYS_TOPIC_SUB      565
+#define SYS_TOPIC_PUB      566
+#define SYS_TOPIC_RECV     567
+#define SYS_UNIX_SOCKET    568
+#define SYS_UNIX_BIND      569
+#define SYS_UNIX_LISTEN    570
+#define SYS_UNIX_ACCEPT    571
+#define SYS_UNIX_CONNECT   572
+#define SYS_TCP_SOCKET     573
+#define SYS_TCP_CONNECT    574
+#define SYS_TCP_LISTEN     575
+#define SYS_TCP_ACCEPT     576
+#define SYS_TCP_SEND       577
+#define SYS_TCP_RECV       578
+#define SYS_TCP_CLOSE      579
+#define SYS_TCP_SETOPT     580
+#define SYS_TCP_TO_FD      581
+#define SYS_PROCINFO       582
+#define SYS_FSSTAT         583
+#define SYS_SWAP_STAT      584
+#define SYS_SETAUDIT       585
+#define SYS_GETCAP         586
+#define SYS_SETCAP         587
+#define SYS_FUTEX_WAIT     588
+#define SYS_FUTEX_WAKE     589
+#define SYS_MKFIFO         590
+#define SYS_TCSETPGRP      591
+#define SYS_TCGETPGRP      592
+#define SYS_GETPGID        593
 
 /* --- Syscall wrappers --- */
 
 long sys_write(const void *buf, unsigned long len) {
-    return __syscall2(SYS_WRITE, (long)buf, (long)len);
+    return __syscall3(SYS_WRITE, 1, (long)buf, (long)len);  /* fd=1 (stdout) */
 }
 
 long sys_yield(void) {
-    return __syscall0(SYS_YIELD);
+    return __syscall0(SYS_SCHED_YIELD);
 }
 
 void __attribute__((noreturn)) sys_exit(long status) {
@@ -194,7 +202,7 @@ long sys_stat(const char *path, void *stat_buf) {
 }
 
 long sys_exec(const char *path, const char **argv) {
-    return __syscall2(SYS_EXEC, (long)path, (long)argv);
+    return __syscall2(SYS_EXEC_OLD, (long)path, (long)argv);
 }
 
 long sys_socket(void) {
@@ -216,11 +224,11 @@ long sys_recvfrom(long sockfd, void *buf, unsigned long len,
 }
 
 long sys_fwrite(long fd, const void *buf, unsigned long len) {
-    return __syscall3(SYS_FWRITE, fd, (long)buf, (long)len);
+    return __syscall3(SYS_WRITE, fd, (long)buf, (long)len);
 }
 
 long sys_create(const char *path) {
-    return __syscall1(SYS_CREATE, (long)path);
+    return __syscall1(SYS_CREAT, (long)path);
 }
 
 long sys_unlink(const char *path) {
@@ -240,11 +248,11 @@ long sys_getchar(void) {
 }
 
 long sys_waitpid(long pid) {
-    return __syscall2(SYS_WAITPID, pid, 0);
+    return __syscall2(SYS_WAIT4, pid, 0);
 }
 
 long sys_waitpid_flags(long pid, long flags) {
-    return __syscall2(SYS_WAITPID, pid, flags);
+    return __syscall2(SYS_WAIT4, pid, flags);
 }
 
 long sys_pipe(long *rfd_ptr, long *wfd_ptr) {
@@ -268,7 +276,7 @@ long sys_mkdir(const char *path) {
 }
 
 long sys_seek(long fd, long offset, int whence) {
-    return __syscall3(SYS_SEEK, fd, offset, (long)whence);
+    return __syscall3(SYS_LSEEK, fd, offset, (long)whence);
 }
 
 long sys_truncate(const char *path, unsigned long new_size) {
@@ -336,19 +344,19 @@ long sys_fork(void) {
 }
 
 long sys_sigaction(int signum, void (*handler)(int)) {
-    return __syscall2(SYS_SIGACTION, (long)signum, (long)handler);
+    return __syscall2(SYS_RT_SIGACTION, (long)signum, (long)handler);
 }
 
 long sys_sigaction3(int signum, void (*handler)(int), int flags) {
-    return __syscall3(SYS_SIGACTION, (long)signum, (long)handler, (long)flags);
+    return __syscall3(SYS_RT_SIGACTION, (long)signum, (long)handler, (long)flags);
 }
 
 void sys_sigreturn(void) {
-    __syscall0(SYS_SIGRETURN);
+    __syscall0(SYS_RT_SIGRETURN);
 }
 
 long sys_sigprocmask(int how, unsigned int new_mask, unsigned int *old_mask) {
-    return __syscall3(SYS_SIGPROCMASK, (long)how, (long)new_mask, (long)old_mask);
+    return __syscall3(SYS_RT_SIGPROCMASK, (long)how, (long)new_mask, (long)old_mask);
 }
 
 long sys_openpty(long *master_fd, long *slave_fd) {
