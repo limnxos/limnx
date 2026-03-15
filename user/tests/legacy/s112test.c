@@ -8,7 +8,7 @@
  * Portable — no arch-specific code.
  */
 
-#include "../libc/libc.h"
+#include "../../libc/libc.h"
 
 static int tests_passed = 0;
 static int tests_failed = 0;

@@ -115,51 +115,21 @@ USER_C_PROGRAMS := build/user/programs/shell.elf build/user/programs/agent.elf \
                    build/user/programs/mountcmd.elf \
                    build/user/programs/umount.elf
 
-# Test programs
-USER_C_TESTS := build/user/tests/mathtest.elf build/user/tests/agenttest.elf \
-                build/user/tests/agenttest2.elf build/user/tests/infertest.elf \
-                build/user/tests/pipetest.elf build/user/tests/memtest.elf \
-                build/user/tests/ragtest.elf build/user/tests/fstest.elf \
-                build/user/tests/fstest2.elf build/user/tests/lmstest.elf \
-                build/user/tests/gguftest.elf build/user/tests/gguf2test.elf \
-                build/user/tests/ostest.elf \
-                build/user/tests/s25test.elf build/user/tests/s26test.elf \
-                build/user/tests/s27test.elf build/user/tests/s28test.elf \
-                build/user/tests/s29test.elf build/user/tests/s30test.elf \
-                build/user/tests/s31test.elf build/user/tests/s32test.elf \
-                build/user/tests/s33test.elf build/user/tests/s34test.elf \
-                build/user/tests/s35test.elf build/user/tests/s36test.elf \
-                build/user/tests/s37test.elf build/user/tests/s38test.elf \
-                build/user/tests/s39test.elf build/user/tests/s41test.elf \
-                build/user/tests/s42test.elf build/user/tests/s44test.elf \
-                build/user/tests/s45test.elf build/user/tests/s47test.elf \
-                build/user/tests/s48test.elf build/user/tests/s49test.elf \
-                build/user/tests/s50test.elf build/user/tests/s51test.elf \
-                build/user/tests/s52test.elf build/user/tests/s53test.elf \
-                build/user/tests/s54test.elf build/user/tests/s55test.elf \
-                build/user/tests/s56test.elf build/user/tests/s57test.elf \
-                build/user/tests/s58test.elf build/user/tests/s59test.elf \
-                build/user/tests/s61test.elf build/user/tests/s63test.elf \
-                build/user/tests/s64test.elf build/user/tests/s65test.elf \
-                build/user/tests/s66test.elf build/user/tests/s67test.elf \
-                build/user/tests/s68test.elf build/user/tests/s69test.elf \
-                build/user/tests/s70test.elf build/user/tests/s71test.elf \
-                build/user/tests/s72test.elf build/user/tests/s73test.elf \
-                build/user/tests/s74test.elf build/user/tests/s75test.elf \
-                build/user/tests/s76test.elf build/user/tests/s77test.elf \
-                build/user/tests/s78test.elf \
-                build/user/tests/s96test.elf \
-                build/user/tests/s100test.elf \
-                build/user/tests/s107test.elf \
-                build/user/tests/s108test.elf \
-                build/user/tests/s109test.elf \
-                build/user/tests/s110test.elf \
-                build/user/tests/s111test.elf \
-                build/user/tests/s112test.elf \
-                build/user/tests/s113test.elf \
-                build/user/tests/s114test.elf
+# Test programs — organized by subsystem (Linux kselftest model)
+USER_C_TESTS := build/user/tests/fs/fs_test.elf \
+                build/user/tests/proc/proc_test.elf \
+                build/user/tests/mm/mm_test.elf \
+                build/user/tests/ipc/ipc_test.elf \
+                build/user/tests/net/net_test.elf \
+                build/user/tests/security/security_test.elf \
+                build/user/tests/system/system_test.elf \
+                build/user/tests/arch/x86_64/x86_test.elf
 
-USER_C_ELFS := $(USER_C_PROGRAMS) $(USER_C_TESTS)
+# Legacy tests (still compile, kept for regression coverage)
+USER_C_LEGACY := $(patsubst user/tests/legacy/%.c,build/user/tests/legacy/%.elf,\
+                   $(wildcard user/tests/legacy/*.c))
+
+USER_C_ELFS := $(USER_C_PROGRAMS) $(USER_C_TESTS) $(USER_C_LEGACY)
 
 USER_ELFS := $(USER_ASM_ELFS) $(USER_C_ELFS)
 
@@ -428,15 +398,14 @@ ARM64_USER_C_PROGRAMS := build/arm64/user/programs/shell.elf \
                           build/arm64/user/programs/whoami.elf \
                           build/arm64/user/programs/mountcmd.elf \
                           build/arm64/user/programs/umount.elf
-ARM64_USER_C_TESTS := build/arm64/user/tests/s100test.elf \
-                      build/arm64/user/tests/s107test.elf \
-                      build/arm64/user/tests/s108test.elf \
-                      build/arm64/user/tests/s109test.elf \
-                      build/arm64/user/tests/s110test.elf \
-                      build/arm64/user/tests/s111test.elf \
-                      build/arm64/user/tests/s112test.elf \
-                      build/arm64/user/tests/s113test.elf \
-                      build/arm64/user/tests/s114test.elf
+ARM64_USER_C_TESTS := build/arm64/user/tests/fs/fs_test.elf \
+                      build/arm64/user/tests/proc/proc_test.elf \
+                      build/arm64/user/tests/mm/mm_test.elf \
+                      build/arm64/user/tests/ipc/ipc_test.elf \
+                      build/arm64/user/tests/net/net_test.elf \
+                      build/arm64/user/tests/security/security_test.elf \
+                      build/arm64/user/tests/system/system_test.elf \
+                      build/arm64/user/tests/arch/arm64/arm64_test.elf
 ARM64_USER_C_ELFS := $(ARM64_USER_C_PROGRAMS) $(ARM64_USER_C_TESTS)
 
 # ARM64 initrd
