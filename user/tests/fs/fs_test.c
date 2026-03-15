@@ -116,7 +116,15 @@ static void test_seek_truncate(void) {
 }
 
 static void test_rename(void) {
-    sys_open("/fs_rename_src.txt", 0x100 | 2);
+    long cfd = sys_open("/fs_rename_src.txt", 0x100 | 2);
+    if (cfd < 0) {
+        lt_diag("create failed for rename src — skipping");
+        lt_skip("rename succeeds", "file create failed");
+        lt_skip("old name gone after rename", "file create failed");
+        lt_skip("new name exists after rename", "file create failed");
+        return;
+    }
+    sys_close(cfd);
     long ret = sys_rename("/fs_rename_src.txt", "/fs_rename_dst.txt");
     lt_ok(ret == 0, "rename succeeds");
     long fd = sys_open("/fs_rename_src.txt", 0);
