@@ -605,41 +605,24 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
     /* Align to 16 bytes */
     sp &= ~0xFULL;
 
-    /* 3. Build the stack layout:
-     *   auxv: AT_NULL (0, 0) — minimal auxiliary vector
-     *   envp: env[0], env[1], ..., NULL
-     *   argv: argv[0], argv[1], ..., NULL
-     *   argc: nargs
-     */
-
-    /* Auxv: AT_NULL = (0, 0) */
-    sp -= 16;
-    ((uint64_t *)sp)[0] = 0;  /* AT_NULL */
-    ((uint64_t *)sp)[1] = 0;
-
-    /* envp array + NULL */
-    sp -= (uint64_t)(nenv + 1) * 8;
-    uint64_t *envp_arr = (uint64_t *)sp;
-    for (int j = 0; j < nenv; j++)
-        envp_arr[j] = env_addrs[j];
-    envp_arr[nenv] = 0;
-
-    /* argv array + NULL */
-    sp -= (uint64_t)(nargs + 1) * 8;
-    uint64_t *argv_arr = (uint64_t *)sp;
-    for (int j = 0; j < nargs; j++)
-        argv_arr[j] = str_addrs[j];
-    argv_arr[nargs] = 0;
-
-    /* argc */
-    sp -= 8;
-    *(uint64_t *)sp = (uint64_t)nargs;
-
-    /* 16-byte align final SP */
+    /* 3. Build stack: calculate total, align, then write.
+     * argc must be exactly at sp[0] after alignment. */
+    uint64_t total_slots = 1 + (nargs + 1) + (nenv + 1) + 2;
+    sp -= total_slots * 8;
     sp &= ~0xFULL;
 
-    /* Enter usermode: rdi=argc (for our libc), rsi=argv (for our libc)
-     * musl reads from RSP directly, so the stack layout is what matters. */
+    uint64_t *slot = (uint64_t *)sp;
+    int si = 0;
+    slot[si++] = (uint64_t)nargs;
+    uint64_t *argv_arr = &slot[si];
+    for (int j = 0; j < nargs; j++) slot[si++] = str_addrs[j];
+    slot[si++] = 0;
+    for (int j = 0; j < nenv; j++) slot[si++] = env_addrs[j];
+    slot[si++] = 0;
+    slot[si++] = 0;  /* AT_NULL key */
+    slot[si++] = 0;  /* AT_NULL value */
+
+    /* Enter usermode */
     arch_prepare_usermode_return();
     arch_enter_usermode(proc->user_entry, sp, (uint64_t)nargs, (uint64_t)argv_arr);
     /* Never reached */

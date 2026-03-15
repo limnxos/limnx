@@ -155,27 +155,41 @@ static void process_enter_usermode(void) {
 
     sp &= ~0xFULL;
 
-    /* 3. Build Linux stack layout: auxv, envp, argv, argc */
-    sp -= 16;
-    ((uint64_t *)sp)[0] = 0;  /* AT_NULL */
-    ((uint64_t *)sp)[1] = 0;
+    /* 3. Build Linux stack layout: auxv, envp, argv, argc
+     * Calculate total size and align sp BEFORE writing,
+     * so argc is exactly at sp[0] after alignment. */
+    uint64_t total_slots = 1                   /* argc */
+                         + (nargs + 1)         /* argv[] + NULL */
+                         + (nenv + 1)          /* envp[] + NULL */
+                         + 2;                  /* auxv AT_NULL (key, value) */
+    uint64_t total_bytes = total_slots * 8;
 
-    sp -= (uint64_t)(nenv + 1) * 8;
-    uint64_t *envp_arr = (uint64_t *)sp;
-    for (int j = 0; j < nenv; j++)
-        envp_arr[j] = env_addrs[j];
-    envp_arr[nenv] = 0;
-
-    sp -= (uint64_t)(nargs + 1) * 8;
-    uint64_t *argv_arr = (uint64_t *)sp;
-    for (int j = 0; j < nargs; j++)
-        argv_arr[j] = str_addrs[j];
-    argv_arr[nargs] = 0;
-
-    sp -= 8;
-    *(uint64_t *)sp = (uint64_t)nargs;
-
+    /* Align: sp must be 16-byte aligned at entry.
+     * On x86_64, the ABI says sp % 16 == 0 at _start. */
+    sp -= total_bytes;
     sp &= ~0xFULL;
+
+    /* Now write from sp upward */
+    uint64_t *slot = (uint64_t *)sp;
+    int si = 0;
+
+    /* argc */
+    slot[si++] = (uint64_t)nargs;
+
+    /* argv[] + NULL */
+    uint64_t *argv_arr = &slot[si];
+    for (int j = 0; j < nargs; j++)
+        slot[si++] = str_addrs[j];
+    slot[si++] = 0;  /* argv NULL terminator */
+
+    /* envp[] + NULL */
+    for (int j = 0; j < nenv; j++)
+        slot[si++] = env_addrs[j];
+    slot[si++] = 0;  /* envp NULL terminator */
+
+    /* auxv: AT_NULL (0, 0) */
+    slot[si++] = 0;
+    slot[si++] = 0;
 
     uint64_t user_rsp = sp;
     uint64_t user_rdi = (uint64_t)nargs;
