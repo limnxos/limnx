@@ -11,9 +11,15 @@ make arm64-clean
 make arm64
 
 echo "=== Booting ARM64 ==="
-stty raw -echo 2>/dev/null
-trap 'stty sane 2>/dev/null' EXIT
-exec qemu-system-aarch64 \
+
+# Save terminal state, set raw mode (no local echo), restore on exit
+saved_stty=$(stty -g 2>/dev/null || true)
+cleanup() { stty "$saved_stty" 2>/dev/null || true; }
+trap cleanup EXIT INT TERM
+
+stty raw -echo 2>/dev/null || true
+
+qemu-system-aarch64 \
     -M virt \
     -cpu cortex-a57 \
     -m 256M \

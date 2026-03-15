@@ -134,20 +134,28 @@ typedef struct {
     unsigned int c_oflag;
     unsigned int c_cflag;
     unsigned int c_lflag;
+    unsigned char c_line;
+    unsigned char c_cc[32];
+    unsigned int c_ispeed;
+    unsigned int c_ospeed;
 } termios_t;
 
 typedef struct {
     unsigned short ws_row;
     unsigned short ws_col;
+    unsigned short ws_xpixel;
+    unsigned short ws_ypixel;
 } winsize_t;
 
-/* termios c_lflag bits */
-#define TERMIOS_ECHO   (1 << 0)
-#define TERMIOS_ICANON (1 << 1)
+/* termios c_lflag bits — must match kernel (Linux values) */
+#define TERMIOS_ISIG    0x0001
+#define TERMIOS_ICANON  0x0002
+#define TERMIOS_ECHO    0x0008
 
 /* ioctl commands */
 #define TCGETS     0x5401
 #define TCSETS     0x5402
+#define TCSETSW    0x5403
 #define TIOCGWINSZ 0x5413
 #define TIOCSWINSZ 0x5414
 #define TIOCSPGRP  0x5410

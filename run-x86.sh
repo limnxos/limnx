@@ -12,10 +12,15 @@ make
 make disk
 
 echo "=== Booting x86_64 ==="
-# Disable host terminal echo to prevent double-echo with PTY
-stty raw -echo 2>/dev/null
-trap 'stty sane 2>/dev/null' EXIT
-exec qemu-system-x86_64 \
+
+# Save terminal state, set raw mode (no local echo), restore on exit
+saved_stty=$(stty -g 2>/dev/null || true)
+cleanup() { stty "$saved_stty" 2>/dev/null || true; }
+trap cleanup EXIT INT TERM
+
+stty raw -echo 2>/dev/null || true
+
+qemu-system-x86_64 \
     -M q35 \
     -cdrom limnx.iso \
     -m 4G \
