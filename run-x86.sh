@@ -12,6 +12,9 @@ make
 make disk
 
 echo "=== Booting x86_64 ==="
+# Disable host terminal echo to prevent double-echo with PTY
+stty raw -echo 2>/dev/null
+trap 'stty sane 2>/dev/null' EXIT
 exec qemu-system-x86_64 \
     -M q35 \
     -cdrom limnx.iso \

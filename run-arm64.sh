@@ -11,6 +11,8 @@ make arm64-clean
 make arm64
 
 echo "=== Booting ARM64 ==="
+stty raw -echo 2>/dev/null
+trap 'stty sane 2>/dev/null' EXIT
 exec qemu-system-aarch64 \
     -M virt \
     -cpu cortex-a57 \
