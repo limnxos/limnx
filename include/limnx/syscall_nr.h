@@ -93,6 +93,7 @@
 #define SYS_READLINKAT      __NR_readlinkat
 #define SYS_FCHMODAT        __NR_fchmodat
 #define SYS_FCHOWNAT        __NR_fchownat
+#define SYS_FACCESSAT       __NR_faccessat
 
 /* x86_64 only — classic syscalls (undefined on ARM64) */
 #ifdef __NR_open

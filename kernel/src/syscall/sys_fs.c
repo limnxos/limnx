@@ -11,6 +11,7 @@
 #include "ipc/cap_token.h"
 #include "blk/limnfs.h"
 #include "net/tcp.h"
+#include "arch/serial.h"
 #include "limnx/stat.h"
 
 /* Fill a Linux-compatible struct stat from a VFS node */
@@ -390,6 +391,132 @@ int64_t sys_close(uint64_t fd, uint64_t a2,
 
     fd_close(entry);
     return 0;
+}
+
+/*
+ * Linux *at() syscall wrappers — take (dirfd, path, ...) instead of (path, ...).
+ * We ignore dirfd (assume AT_FDCWD) since we always resolve from cwd.
+ * These are needed because ARM64 generic table only has *at() variants,
+ * and musl on x86_64 also prefers *at() for newer programs.
+ */
+int64_t sys_fstatat(uint64_t dirfd, uint64_t path_ptr,
+                             uint64_t stat_ptr, uint64_t flags, uint64_t a5) {
+    (void)flags; (void)a5;
+
+    char raw_path[MAX_PATH];
+    if (copy_string_from_user((const char *)path_ptr, raw_path, MAX_PATH) != 0)
+        return -EFAULT;
+    if (validate_user_ptr(stat_ptr, sizeof(struct linux_stat)) != 0)
+        return -EFAULT;
+
+    thread_t *t = thread_get_current();
+    process_t *proc = t ? t->process : NULL;
+    if (!proc) return -1;
+
+    char path[MAX_PATH];
+    if (raw_path[0] == '/') {
+        /* Absolute path — use as-is */
+        int i = 0;
+        while (raw_path[i] && i < MAX_PATH - 1) { path[i] = raw_path[i]; i++; }
+        path[i] = '\0';
+    } else if ((int64_t)dirfd == -100) {
+        /* AT_FDCWD (-100) — resolve relative to cwd */
+        resolve_user_path(proc, raw_path, path);
+    } else if (dirfd < MAX_FDS && proc->fd_table[dirfd].node) {
+        /* Resolve relative to directory fd */
+        vfs_node_t *dir = proc->fd_table[dirfd].node;
+        int dir_idx = vfs_node_index(dir);
+        /* Build absolute path: walk dir node to root + append raw_path */
+        int chain[64];
+        int depth = 0;
+        for (int n = dir_idx; n > 0 && depth < 64; n = vfs_get_node(n)->parent)
+            chain[depth++] = n;
+        int pos = 0;
+        for (int d = depth - 1; d >= 0 && pos < MAX_PATH - 2; d--) {
+            path[pos++] = '/';
+            const char *nm = vfs_get_node(chain[d])->name;
+            for (int j = 0; nm[j] && pos < MAX_PATH - 1; j++)
+                path[pos++] = nm[j];
+        }
+        if (pos == 0) path[pos++] = '/';
+        /* Append / + relative path */
+        if (pos < MAX_PATH - 1 && path[pos - 1] != '/') path[pos++] = '/';
+        for (int j = 0; raw_path[j] && pos < MAX_PATH - 1; j++)
+            path[pos++] = raw_path[j];
+        path[pos] = '\0';
+    } else {
+        return -EBADF;
+    }
+
+    int idx = vfs_resolve_path(path);
+    if (idx < 0) return -ENOENT;
+    vfs_node_t *node = vfs_get_node(idx);
+    if (!node) return -ENOENT;
+
+    struct linux_stat ls;
+    fill_linux_stat(&ls, node, idx);
+    uint8_t *dst = (uint8_t *)stat_ptr;
+    const uint8_t *src = (const uint8_t *)&ls;
+    for (uint64_t i = 0; i < sizeof(struct linux_stat); i++)
+        dst[i] = src[i];
+    return 0;
+}
+
+int64_t sys_openat(uint64_t dirfd, uint64_t path_ptr,
+                            uint64_t flags, uint64_t mode, uint64_t a5) {
+    (void)dirfd; (void)mode; (void)a5;
+    return sys_open(path_ptr, flags, 0, 0, 0);
+}
+
+int64_t sys_mkdirat(uint64_t dirfd, uint64_t path_ptr,
+                             uint64_t mode, uint64_t a4, uint64_t a5) {
+    (void)dirfd; (void)mode; (void)a4; (void)a5;
+    return sys_mkdir(path_ptr, 0, 0, 0, 0);
+}
+
+int64_t sys_unlinkat(uint64_t dirfd, uint64_t path_ptr,
+                              uint64_t flags, uint64_t a4, uint64_t a5) {
+    (void)dirfd; (void)flags; (void)a4; (void)a5;
+    return sys_unlink(path_ptr, 0, 0, 0, 0);
+}
+
+int64_t sys_symlinkat(uint64_t target_ptr, uint64_t dirfd,
+                               uint64_t path_ptr, uint64_t a4, uint64_t a5) {
+    (void)dirfd; (void)a4; (void)a5;
+    return sys_symlink(target_ptr, path_ptr, 0, 0, 0);
+}
+
+int64_t sys_readlinkat(uint64_t dirfd, uint64_t path_ptr,
+                                uint64_t buf_ptr, uint64_t bufsize, uint64_t a5) {
+    (void)dirfd; (void)a5;
+    return sys_readlink(path_ptr, buf_ptr, bufsize, 0, 0);
+}
+
+int64_t sys_fchmodat(uint64_t dirfd, uint64_t path_ptr,
+                              uint64_t mode, uint64_t a4, uint64_t a5) {
+    (void)dirfd; (void)a4; (void)a5;
+    return sys_chmod(path_ptr, mode, 0, 0, 0);
+}
+
+int64_t sys_fchownat(uint64_t dirfd, uint64_t path_ptr,
+                              uint64_t uid, uint64_t gid, uint64_t flags) {
+    (void)dirfd; (void)flags;
+    return sys_chown(path_ptr, uid, gid, 0, 0);
+}
+
+int64_t sys_faccessat(uint64_t dirfd, uint64_t path_ptr,
+                               uint64_t mode, uint64_t flags, uint64_t a5) {
+    (void)dirfd; (void)mode; (void)flags; (void)a5;
+    /* access check: just verify file exists */
+    char raw_path[MAX_PATH], path[MAX_PATH];
+    if (copy_string_from_user((const char *)path_ptr, raw_path, MAX_PATH) != 0)
+        return -EFAULT;
+    thread_t *t = thread_get_current();
+    process_t *proc = t ? t->process : NULL;
+    if (!proc) return -1;
+    resolve_user_path(proc, raw_path, path);
+    int idx = vfs_resolve_path(path);
+    return idx >= 0 ? 0 : -ENOENT;
 }
 
 int64_t sys_stat(uint64_t path_ptr, uint64_t stat_ptr,

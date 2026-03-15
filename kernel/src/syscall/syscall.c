@@ -203,16 +203,17 @@ static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
     [SYS_SECCOMP]          = sys_seccomp,
     [SYS_IO_URING_SETUP]   = sys_uring_setup,
     [SYS_IO_URING_ENTER]   = sys_uring_enter,
-    /* *at() variants — same handler as classic, both archs */
-    [SYS_OPENAT]           = sys_open,
-    [SYS_MKDIRAT]          = sys_mkdir,
-    [SYS_FSTATAT]          = sys_stat,
-    [SYS_UNLINKAT]         = sys_unlink,
+    /* *at() variants — wrappers that skip dirfd arg, both archs */
+    [SYS_OPENAT]           = sys_openat,
+    [SYS_MKDIRAT]          = sys_mkdirat,
+    [SYS_FSTATAT]          = sys_fstatat,
+    [SYS_UNLINKAT]         = sys_unlinkat,
     [SYS_RENAME]           = sys_rename,
-    [SYS_SYMLINKAT]        = sys_symlink,
-    [SYS_READLINKAT]       = sys_readlink,
-    [SYS_FCHMODAT]         = sys_chmod,
-    [SYS_FCHOWNAT]         = sys_chown,
+    [SYS_SYMLINKAT]        = sys_symlinkat,
+    [SYS_READLINKAT]       = sys_readlinkat,
+    [SYS_FCHMODAT]         = sys_fchmodat,
+    [SYS_FCHOWNAT]         = sys_fchownat,
+    [SYS_FACCESSAT]        = sys_faccessat,
 
     /* ---- x86_64 only: classic syscalls ---- */
 #ifdef __NR_open
