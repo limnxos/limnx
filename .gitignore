@@ -27,3 +27,5 @@ debug/
 # docs
 MILESTONE.md
 docs/
+third_party/musl/
+third_party/musl-install/
