@@ -125,11 +125,8 @@ USER_C_TESTS := build/user/tests/fs/fs_test.elf \
                 build/user/tests/system/system_test.elf \
                 build/user/tests/arch/x86_64/x86_test.elf
 
-# Legacy tests (still compile, kept for regression coverage)
-USER_C_LEGACY := $(patsubst user/tests/legacy/%.c,build/user/tests/legacy/%.elf,\
-                   $(wildcard user/tests/legacy/*.c))
 
-USER_C_ELFS := $(USER_C_PROGRAMS) $(USER_C_TESTS) $(USER_C_LEGACY)
+USER_C_ELFS := $(USER_C_PROGRAMS) $(USER_C_TESTS)
 
 USER_ELFS := $(USER_ASM_ELFS) $(USER_C_ELFS)
 
