@@ -69,11 +69,40 @@ static void test_cow_fork(void) {
     free((void *)shared);
 }
 
+static void test_large_mmap(void) {
+    long addr = sys_mmap(16);  /* 16 pages = 64KB */
+    lt_ok(addr > 0 && addr != -1, "mmap 16 pages");
+    if (addr > 0 && addr != -1) {
+        volatile char *p = (volatile char *)addr;
+        p[0] = 'X';
+        p[65535] = 'Y';
+        lt_ok(p[0] == 'X' && p[65535] == 'Y', "large mmap read/write");
+        sys_munmap(addr);
+    } else {
+        lt_ok(0, "large mmap read/write");
+    }
+}
+
+static void test_malloc_stress(void) {
+    int ok = 1;
+    void *ptrs[32];
+    for (int i = 0; i < 32; i++) {
+        ptrs[i] = malloc(64 + i * 16);
+        if (!ptrs[i]) { ok = 0; break; }
+        memset(ptrs[i], (unsigned char)i, 64 + i * 16);
+    }
+    lt_ok(ok, "malloc 32 allocations");
+    for (int i = 0; i < 32; i++)
+        if (ptrs[i]) free(ptrs[i]);
+}
+
 int main(void) {
     lt_suite("mm");
     test_mmap_munmap();
     test_shm();
     test_malloc_free();
     test_cow_fork();
+    test_large_mmap();
+    test_malloc_stress();
     return lt_done();
 }

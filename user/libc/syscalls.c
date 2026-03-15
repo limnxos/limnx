@@ -80,7 +80,8 @@ long sys_unlink(const char *path) {
 }
 
 long sys_mmap(unsigned long num_pages) {
-    return __syscall1(SYS_MMAP, (long)num_pages);
+    /* Linux mmap(addr=0, len=bytes, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANON, fd=-1, off=0) */
+    return __syscall6(SYS_MMAP, 0, (long)(num_pages * 4096), 3, 0x22, -1, 0);
 }
 
 long sys_munmap(unsigned long virt_addr) {

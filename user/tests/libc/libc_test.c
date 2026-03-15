@@ -1,0 +1,70 @@
+/*
+ * libc_test.c — libc primitives tests
+ * Tests: malloc, printf formatting, string, math
+ * Portable — no arch-specific code.
+ */
+#include "../limntest.h"
+
+static void test_malloc_free(void) {
+    void *p = malloc(128);
+    lt_ok(p != (void *)0, "malloc(128)");
+    if (p) {
+        memset(p, 0x55, 128);
+        lt_ok(((unsigned char *)p)[0] == 0x55, "malloc writable");
+        free(p);
+    } else {
+        lt_ok(0, "malloc writable");
+    }
+
+    /* Allocate and free many small blocks */
+    int ok = 1;
+    for (int i = 0; i < 50; i++) {
+        void *q = malloc(32);
+        if (!q) { ok = 0; break; }
+        free(q);
+    }
+    lt_ok(ok, "malloc+free 50 cycles");
+}
+
+static void test_string_functions(void) {
+    lt_ok(strlen("") == 0, "strlen empty");
+    lt_ok(strlen("abcde") == 5, "strlen 5");
+
+    char buf[64];
+    strcpy(buf, "test");
+    lt_ok(strcmp(buf, "test") == 0, "strcpy+strcmp");
+
+    memset(buf, 0, 64);
+    memcpy(buf, "hello", 5);
+    lt_ok(buf[0] == 'h' && buf[4] == 'o', "memcpy");
+
+    lt_ok(strncmp("abc", "abd", 2) == 0, "strncmp match");
+    lt_ok(strncmp("abc", "abd", 3) != 0, "strncmp differ");
+}
+
+static void test_math(void) {
+    float pi_approx = 3.14159f;
+    lt_ok(sinf(0.0f) < 0.01f && sinf(0.0f) > -0.01f, "sinf(0) ≈ 0");
+    lt_ok(cosf(0.0f) > 0.99f && cosf(0.0f) < 1.01f, "cosf(0) ≈ 1");
+    lt_ok(sqrtf(9.0f) > 2.99f && sqrtf(9.0f) < 3.01f, "sqrtf(9) ≈ 3");
+    lt_ok(expf(1.0f) > 2.71f && expf(1.0f) < 2.72f, "expf(1) ≈ e");
+    lt_ok(logf(expf(1.0f)) > 0.99f && logf(expf(1.0f)) < 1.01f, "logf(e) ≈ 1");
+    (void)pi_approx;
+}
+
+static void test_atoi(void) {
+    lt_ok(atoi("123") == 123, "atoi positive");
+    lt_ok(atoi("-42") == -42, "atoi negative");
+    lt_ok(atoi("0") == 0, "atoi zero");
+    lt_ok(strtoul("100", (void *)0, 10) == 100, "strtoul decimal");
+    lt_ok(strtoul("ff", (void *)0, 16) == 255, "strtoul hex");
+}
+
+int main(void) {
+    lt_suite("libc");
+    test_malloc_free();
+    test_string_functions();
+    test_math();
+    test_atoi();
+    return lt_done();
+}

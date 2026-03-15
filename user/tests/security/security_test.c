@@ -36,10 +36,34 @@ static void test_umask(void) {
     sys_umask(old);  /* restore */
 }
 
+static void test_chmod_chown(void) {
+    sys_open("/sec_test_file.txt", 0x100 | 2);
+    long ret = sys_chmod("/sec_test_file.txt", 0755);
+    lt_ok(ret == 0, "chmod succeeds");
+    ret = sys_chown("/sec_test_file.txt", 0, 0);
+    lt_ok(ret == 0, "chown succeeds");
+}
+
+static void test_capabilities(void) {
+    long caps = sys_getcap();
+    lt_ok(caps != 0, "process has capabilities");
+}
+
+static void test_setuid_setgid(void) {
+    /* We're running as root — verify we can set uid/gid */
+    long ret = sys_setuid(0);
+    lt_ok(ret == 0, "setuid(0) succeeds as root");
+    ret = sys_setgid(0);
+    lt_ok(ret == 0, "setgid(0) succeeds as root");
+}
+
 int main(void) {
     lt_suite("security");
     test_uid_gid();
     test_passwd();
     test_umask();
+    test_chmod_chown();
+    test_capabilities();
+    test_setuid_setgid();
     return lt_done();
 }

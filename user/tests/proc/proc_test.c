@@ -98,6 +98,33 @@ static void test_getpid_getppid(void) {
     lt_ok(pid > 0, "getpid > 0");
 }
 
+static void test_multi_fork(void) {
+    int count = 4;
+    long pids[4];
+    for (int i = 0; i < count; i++) {
+        pids[i] = sys_fork();
+        if (pids[i] == 0) sys_exit(i + 10);
+    }
+    int all_ok = 1;
+    for (int i = 0; i < count; i++) {
+        long st = sys_waitpid(pids[i]);
+        if (st != i + 10) all_ok = 0;
+    }
+    lt_ok(all_ok, "multi-fork: 4 children exit with correct status");
+}
+
+static void test_env_inherit(void) {
+    sys_setenv("TEST_INHERIT", "hello");
+    long child = sys_fork();
+    if (child == 0) {
+        char val[32];
+        long ret = sys_getenv("TEST_INHERIT", val, 32);
+        sys_exit(ret >= 0 && strcmp(val, "hello") == 0 ? 0 : 1);
+    }
+    long st = sys_waitpid(child);
+    lt_ok(st == 0, "env inherited across fork");
+}
+
 int main(void) {
     lt_suite("proc");
     test_fork_waitpid();
@@ -107,5 +134,7 @@ int main(void) {
     test_session();
     test_sigtstp_sigcont();
     test_getpid_getppid();
+    test_multi_fork();
+    test_env_inherit();
     return lt_done();
 }

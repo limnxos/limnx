@@ -123,6 +123,9 @@ USER_C_TESTS := build/user/tests/fs/fs_test.elf \
                 build/user/tests/net/net_test.elf \
                 build/user/tests/security/security_test.elf \
                 build/user/tests/system/system_test.elf \
+                build/user/tests/infer/infer_test.elf \
+                build/user/tests/libc/libc_test.elf \
+                build/user/tests/sched/sched_test.elf \
                 build/user/tests/arch/x86_64/x86_test.elf
 
 
@@ -402,6 +405,9 @@ ARM64_USER_C_TESTS := build/arm64/user/tests/fs/fs_test.elf \
                       build/arm64/user/tests/net/net_test.elf \
                       build/arm64/user/tests/security/security_test.elf \
                       build/arm64/user/tests/system/system_test.elf \
+                      build/arm64/user/tests/infer/infer_test.elf \
+                      build/arm64/user/tests/libc/libc_test.elf \
+                      build/arm64/user/tests/sched/sched_test.elf \
                       build/arm64/user/tests/arch/arm64/arm64_test.elf
 ARM64_USER_C_ELFS := $(ARM64_USER_C_PROGRAMS) $(ARM64_USER_C_TESTS)
 
