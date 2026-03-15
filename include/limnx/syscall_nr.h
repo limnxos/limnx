@@ -99,6 +99,7 @@
 #ifdef __NR_open
 #define SYS_OPEN            __NR_open
 #define SYS_STAT            __NR_stat
+#define SYS_LSTAT           __NR_lstat
 #define SYS_PIPE            __NR_pipe
 #define SYS_SELECT          __NR_select
 #define SYS_DUP             __NR_dup

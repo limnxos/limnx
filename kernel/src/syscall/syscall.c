@@ -219,6 +219,7 @@ static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
 #ifdef __NR_open
     [SYS_OPEN]             = sys_open,
     [SYS_STAT]             = sys_stat,
+    [SYS_LSTAT]            = sys_stat,  /* lstat = stat for now (no hardlink distinction) */
     [SYS_PIPE]             = sys_pipe,
     [SYS_SELECT]           = sys_select,
     [SYS_DUP]              = sys_dup,
