@@ -146,10 +146,28 @@ static void test_cwd(void) {
 }
 
 static void test_stat(void) {
-    char st[16];  /* vfs_stat_t: size(8) + type(1) + pad(1) + mode(2) + uid(2) + gid(2) */
+    /* Linux stat struct is 144 bytes */
+    char st[144];
+    memset(st, 0, 144);
     long ret = sys_stat("/etc", st);
     lt_ok(ret == 0, "stat /etc");
-    lt_ok(st[8] == 1, "stat reports directory type");
+
+    /* st_mode at offset 24 (uint32_t): should have S_IFDIR (0040000) */
+    uint32_t mode = *(uint32_t *)(st + 24);
+    lt_ok((mode & 0170000) == 0040000, "stat mode has S_IFDIR");
+
+    /* st_size at offset 48 (int64_t) */
+    int64_t size = *(int64_t *)(st + 48);
+    lt_ok(size >= 0, "stat size non-negative");
+
+    /* Test stat on a regular file */
+    memset(st, 0, 144);
+    ret = sys_stat("/etc/inittab", st);
+    lt_ok(ret == 0, "stat /etc/inittab");
+    mode = *(uint32_t *)(st + 24);
+    lt_ok((mode & 0170000) == 0100000, "stat mode has S_IFREG");
+    size = *(int64_t *)(st + 48);
+    lt_ok(size > 0, "stat file size > 0");
 }
 
 int main(void) {

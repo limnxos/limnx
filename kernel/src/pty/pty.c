@@ -329,15 +329,31 @@ int pty_ioctl(int idx, uint64_t cmd, uint64_t arg) {
     case TCGETS: {
         termios_t *t = (termios_t *)arg;
         if (!t) return -1;
-        t->c_iflag = 0;
-        t->c_oflag = 0;
+        /* Zero all fields first */
+        uint8_t *tp = (uint8_t *)t;
+        for (unsigned i = 0; i < sizeof(termios_t); i++) tp[i] = 0;
+        /* Set flags based on PTY state */
+        t->c_iflag = TERMIOS_ICRNL;
+        t->c_oflag = TERMIOS_OPOST | TERMIOS_ONLCR;
         t->c_cflag = 0;
-        t->c_lflag = 0;
+        t->c_lflag = TERMIOS_ISIG;
         if (p->flags & PTY_ECHO)   t->c_lflag |= TERMIOS_ECHO;
         if (p->flags & PTY_ICANON) t->c_lflag |= TERMIOS_ICANON;
+        /* Default control characters */
+        t->c_cc[VINTR] = 3;    /* ^C */
+        t->c_cc[VQUIT] = 28;   /* ^\ */
+        t->c_cc[VERASE] = 127; /* DEL */
+        t->c_cc[VKILL] = 21;   /* ^U */
+        t->c_cc[VEOF] = 4;     /* ^D */
+        t->c_cc[VSUSP] = 26;   /* ^Z */
+        t->c_cc[VMIN] = 1;
+        t->c_ispeed = 38400;
+        t->c_ospeed = 38400;
         return 0;
     }
-    case TCSETS: {
+    case TCSETS:
+    case TCSETSW:
+    case TCSETSF: {
         const termios_t *t = (const termios_t *)arg;
         if (!t) return -1;
         p->flags = 0;

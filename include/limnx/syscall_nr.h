@@ -81,6 +81,7 @@
 #define SYS_EPOLL_CREATE1   __NR_epoll_create1
 #define SYS_EVENTFD2        __NR_eventfd2
 #define SYS_SECCOMP         __NR_seccomp
+#define SYS_GETDENTS64      __NR_getdents64
 #define SYS_IO_URING_SETUP  __NR_io_uring_setup
 #define SYS_IO_URING_ENTER  __NR_io_uring_enter
 /* *at() variants — both archs */

@@ -214,6 +214,7 @@ int64_t sys_mkfifo(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_mount(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_umount(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_setsid(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_getdents64(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_brk(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_set_tid_address(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_exit_group(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);

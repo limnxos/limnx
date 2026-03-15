@@ -199,6 +199,7 @@ static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
     [SYS_GETPPID]          = sys_getppid,
     [SYS_SET_TID_ADDRESS]  = sys_set_tid_address,
     [SYS_EXIT_GROUP]       = sys_exit_group,
+    [SYS_GETDENTS64]       = sys_getdents64,
     [SYS_SECCOMP]          = sys_seccomp,
     [SYS_IO_URING_SETUP]   = sys_uring_setup,
     [SYS_IO_URING_ENTER]   = sys_uring_enter,

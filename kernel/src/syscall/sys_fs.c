@@ -11,6 +11,33 @@
 #include "ipc/cap_token.h"
 #include "blk/limnfs.h"
 #include "net/tcp.h"
+#include "limnx/stat.h"
+
+/* Fill a Linux-compatible struct stat from a VFS node */
+static void fill_linux_stat(struct linux_stat *ls, vfs_node_t *node, int node_idx) {
+    /* Zero entire struct first */
+    uint8_t *p = (uint8_t *)ls;
+    for (int i = 0; i < 144; i++) p[i] = 0;
+
+    ls->st_ino = (uint64_t)(node_idx + 1);  /* inode = VFS index + 1 (0 reserved) */
+    ls->st_nlink = 1;
+    ls->st_size = (int64_t)node->size;
+    ls->st_uid = (uint32_t)node->uid;
+    ls->st_gid = (uint32_t)node->gid;
+    ls->st_blksize = 4096;
+    ls->st_blocks = (int64_t)((node->size + 511) / 512);
+
+    /* File type + permission mode */
+    uint32_t ftype = 0;
+    switch (node->type) {
+        case VFS_FILE:      ftype = S_IFREG; break;
+        case VFS_DIRECTORY: ftype = S_IFDIR; break;
+        case VFS_SYMLINK:   ftype = S_IFLNK; break;
+        case VFS_FIFO:      ftype = S_IFIFO; break;
+        default:            ftype = S_IFREG; break;
+    }
+    ls->st_mode = ftype | (uint32_t)(node->mode & 0xFFF);
+}
 
 int64_t sys_open(uint64_t path_ptr, uint64_t flags,
                          uint64_t a3, uint64_t a4, uint64_t a5) {
@@ -371,23 +398,27 @@ int64_t sys_stat(uint64_t path_ptr, uint64_t stat_ptr,
 
     char raw_path[MAX_PATH], path[MAX_PATH];
     if (copy_string_from_user((const char *)path_ptr, raw_path, MAX_PATH) != 0)
-        return -1;
-    if (validate_user_ptr(stat_ptr, sizeof(vfs_stat_t)) != 0)
-        return -1;
+        return -EFAULT;
+    if (validate_user_ptr(stat_ptr, sizeof(struct linux_stat)) != 0)
+        return -EFAULT;
 
     thread_t *t = thread_get_current();
     process_t *proc = t->process;
     if (!proc) return -1;
     resolve_user_path(proc, raw_path, path);
 
-    vfs_stat_t st;
-    if (vfs_stat(path, &st) != 0)
-        return -1;
+    int idx = vfs_resolve_path(path);
+    if (idx < 0) return -ENOENT;
+    vfs_node_t *node = vfs_get_node(idx);
+    if (!node) return -ENOENT;
 
-    /* Copy stat result to user buffer */
+    struct linux_stat ls;
+    fill_linux_stat(&ls, node, idx);
+
+    /* Copy to user buffer */
     uint8_t *dst = (uint8_t *)stat_ptr;
-    const uint8_t *src = (const uint8_t *)&st;
-    for (uint64_t i = 0; i < sizeof(vfs_stat_t); i++)
+    const uint8_t *src = (const uint8_t *)&ls;
+    for (uint64_t i = 0; i < sizeof(struct linux_stat); i++)
         dst[i] = src[i];
 
     return 0;
@@ -823,9 +854,9 @@ int64_t sys_fstat(uint64_t fd, uint64_t stat_ptr,
     (void)a3; (void)a4; (void)a5;
 
     if (fd >= MAX_FDS)
-        return -1;
-    if (validate_user_ptr(stat_ptr, sizeof(vfs_stat_t)) != 0)
-        return -1;
+        return -EBADF;
+    if (validate_user_ptr(stat_ptr, sizeof(struct linux_stat)) != 0)
+        return -EFAULT;
 
     thread_t *t = thread_get_current();
     process_t *proc = t->process;
@@ -834,21 +865,17 @@ int64_t sys_fstat(uint64_t fd, uint64_t stat_ptr,
 
     fd_entry_t *entry = &proc->fd_table[fd];
     if (entry->node == NULL)
-        return -1;
+        return -EBADF;
 
     vfs_node_t *node = entry->node;
-    vfs_stat_t st;
-    st.size = node->size;
-    st.type = node->type;
-    st.pad1 = 0;
-    st.mode = node->mode;
-    st.uid = node->uid;
-    st.gid = node->gid;
+    int node_idx = vfs_node_index(node);
 
-    /* Copy stat result to user buffer */
+    struct linux_stat ls;
+    fill_linux_stat(&ls, node, node_idx >= 0 ? node_idx : 0);
+
     uint8_t *dst = (uint8_t *)stat_ptr;
-    const uint8_t *src = (const uint8_t *)&st;
-    for (uint64_t i = 0; i < sizeof(vfs_stat_t); i++)
+    const uint8_t *src = (const uint8_t *)&ls;
+    for (uint64_t i = 0; i < sizeof(struct linux_stat); i++)
         dst[i] = src[i];
 
     return 0;
@@ -1043,4 +1070,86 @@ int64_t sys_mkfifo(uint64_t path_ptr, uint64_t a2,
     resolve_user_path(proc, raw_path, path);
     int ret = vfs_mkfifo(path);
     return ret < 0 ? ret : 0;
+}
+
+/* Linux getdents64: read directory entries from an fd */
+int64_t sys_getdents64(uint64_t fd, uint64_t buf_ptr, uint64_t bufsize,
+                                uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+
+    if (fd >= MAX_FDS) return -EBADF;
+    if (bufsize == 0) return -EINVAL;
+    if (validate_user_ptr(buf_ptr, bufsize) != 0) return -EFAULT;
+
+    thread_t *t = thread_get_current();
+    process_t *proc = t ? t->process : NULL;
+    if (!proc) return -1;
+
+    fd_entry_t *fde = &proc->fd_table[fd];
+    if (!fde->node) return -EBADF;
+    if (fde->node->type != VFS_DIRECTORY) return -ENOTDIR;
+
+    int dir_idx = vfs_node_index(fde->node);
+    if (dir_idx < 0) return -EBADF;
+
+    /*
+     * Linux struct linux_dirent64:
+     *   uint64_t d_ino;      (8)
+     *   int64_t  d_off;      (8)
+     *   uint16_t d_reclen;   (2)
+     *   uint8_t  d_type;     (1)
+     *   char     d_name[];   (variable, NUL-terminated)
+     *   // d_reclen = 8+8+2+1+strlen(name)+1, aligned to 8 bytes
+     */
+
+    uint8_t *buf = (uint8_t *)buf_ptr;
+    uint64_t pos = 0;
+    uint32_t index = (uint32_t)fde->offset;  /* use fd offset as directory index */
+
+    int nc = vfs_get_node_count();
+    uint32_t live = 0;
+    for (int i = 0; i < nc; i++) {
+        vfs_node_t *child = vfs_get_node(i);
+        if (!child || child->parent != dir_idx) continue;
+        if (live < index) { live++; continue; }
+
+        /* Calculate entry size */
+        int namelen = 0;
+        while (child->name[namelen]) namelen++;
+        uint16_t reclen = (uint16_t)((19 + namelen + 8) & ~7ULL);  /* align to 8 */
+
+        if (pos + reclen > bufsize) break;  /* buffer full */
+
+        /* Fill linux_dirent64 */
+        uint64_t ino = (uint64_t)(i + 1);
+        uint8_t dtype = 0;
+        switch (child->type) {
+            case VFS_FILE:      dtype = 8; break;  /* DT_REG */
+            case VFS_DIRECTORY: dtype = 4; break;  /* DT_DIR */
+            case VFS_SYMLINK:   dtype = 10; break; /* DT_LNK */
+            case VFS_FIFO:      dtype = 1; break;  /* DT_FIFO */
+        }
+
+        /* d_ino (8 bytes) */
+        for (int b = 0; b < 8; b++) buf[pos + b] = (ino >> (b * 8)) & 0xFF;
+        /* d_off (8 bytes) — next offset */
+        uint64_t next_off = live + 1;
+        for (int b = 0; b < 8; b++) buf[pos + 8 + b] = (next_off >> (b * 8)) & 0xFF;
+        /* d_reclen (2 bytes) */
+        buf[pos + 16] = reclen & 0xFF;
+        buf[pos + 17] = (reclen >> 8) & 0xFF;
+        /* d_type (1 byte) */
+        buf[pos + 18] = dtype;
+        /* d_name (NUL-terminated) */
+        for (int j = 0; j < namelen; j++) buf[pos + 19 + j] = (uint8_t)child->name[j];
+        buf[pos + 19 + namelen] = '\0';
+        /* Zero padding to reclen */
+        for (uint16_t p = 19 + namelen + 1; p < reclen; p++) buf[pos + p] = 0;
+
+        pos += reclen;
+        live++;
+        fde->offset = live;  /* update fd offset for next call */
+    }
+
+    return (int64_t)pos;  /* bytes written, 0 = end of directory */
 }
