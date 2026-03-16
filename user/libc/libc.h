@@ -181,13 +181,16 @@ typedef struct {
 #define SA_RESTART  (1 << 0)
 
 /* Open flags */
-#define O_RDONLY  0
-#define O_WRONLY  1
-#define O_RDWR    2
-#define O_CREAT   0x100
-#define O_TRUNC   0x200
-#define O_APPEND  0x400
-#define O_NONBLOCK 0x800
+/* Open flags — Linux-compatible values */
+#define O_RDONLY    0x000
+#define O_WRONLY    0x001
+#define O_RDWR      0x002
+#define O_CREAT     0x040     /* Linux 0100 octal = 64 = 0x40 */
+#define O_EXCL      0x080     /* Linux 0200 octal */
+#define O_TRUNC     0x200     /* Linux 01000 octal */
+#define O_APPEND    0x400     /* Linux 02000 octal */
+#define O_NONBLOCK  0x800     /* Linux 04000 octal */
+#define O_CLOEXEC   0x80000   /* Linux 02000000 octal */
 
 /* fcntl commands */
 #define F_GETFD  1
@@ -659,8 +662,7 @@ typedef struct super_info {
     unsigned int restart_count;
 } super_info_t;
 
-/* pipe2 flags */
-#define O_CLOEXEC 0x01
+/* pipe2 flags — O_CLOEXEC defined above with Linux value */
 long sys_pipe2(long *rfd_ptr, long *wfd_ptr, long flags);
 
 /* TCP socket options */

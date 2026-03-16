@@ -760,28 +760,45 @@ int64_t sys_fork(uint64_t a1, uint64_t a2,
     return (int64_t)child->pid;
 }
 
-int64_t sys_waitpid(uint64_t pid, uint64_t flags,
-                             uint64_t a3, uint64_t a4, uint64_t a5) {
-    (void)a3; (void)a4; (void)a5;
-    process_t *child = process_lookup(pid);
-    if (!child)
-        return -1;
-    if ((flags & WNOHANG) && !child->exited)
-        return 0;
+int64_t sys_waitpid(uint64_t pid_arg, uint64_t status_ptr,
+                             uint64_t options, uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+    /* Linux wait4 ABI: (pid, *status, options, *rusage)
+     * pid > 0: wait for specific child
+     * pid = -1: wait for any child
+     * pid = 0: wait for any child in same process group (treat as -1) */
+    int64_t target_pid = (int64_t)pid_arg;
+
     thread_t *wt = thread_get_current();
     process_t *wproc = wt ? wt->process : NULL;
+    if (!wproc) return -1;
+
+    extern process_t *process_find_child(uint64_t parent_pid, int exited_only);
+    process_t *child = NULL;
+    if (target_pid > 0) {
+        child = process_lookup((uint64_t)target_pid);
+        if (!child) return -ECHILD;
+    } else {
+        /* pid=-1 or pid=0: find any child of this process.
+         * First try to find an already-exited child. */
+        child = process_find_child(wproc->pid, 1);
+        if (!child) {
+            /* No exited child — find any living child */
+            child = process_find_child(wproc->pid, 0);
+            if (!child) return -ECHILD;
+        }
+    }
+
+    if ((options & WNOHANG) && !child->exited)
+        return 0;
+
     while (!child->exited) {
-        /* Check for interrupting signals, but filter out SIGCHLD —
-         * waitpid is logically waiting for child state changes, so
-         * SIGCHLD should not cause -EINTR here (matches POSIX). */
         if (wproc) {
             uint32_t interruptible = (wproc->pending_signals & ~wproc->signal_mask)
                                      & ~(1U << SIGCHLD);
             if (interruptible)
                 return -EINTR;
         }
-        /* Register as waiter and block instead of spin-yielding.
-         * Double-check pattern: set wait_thread, barrier, re-check exited. */
         child->wait_thread = wt;
         arch_memory_barrier();
         if (child->exited) {
@@ -790,7 +807,6 @@ int64_t sys_waitpid(uint64_t pid, uint64_t flags,
         }
         sched_block(wt);
         child->wait_thread = NULL;
-        /* Re-check signals after wake */
         if (wproc) {
             uint32_t interruptible = (wproc->pending_signals & ~wproc->signal_mask)
                                      & ~(1U << SIGCHLD);
@@ -798,14 +814,25 @@ int64_t sys_waitpid(uint64_t pid, uint64_t flags,
                 return -EINTR;
         }
     }
-    int64_t status = child->exit_status;
+
+    int64_t exit_code = child->exit_status;
+    uint64_t child_pid = child->pid;
+
+    /* Write Linux-style status to user pointer: (exit_code & 0xFF) << 8 */
+    if (status_ptr != 0) {
+        if (validate_user_ptr(status_ptr, sizeof(int)) == 0) {
+            int linux_status = (int)((exit_code & 0xFF) << 8);
+            *(int *)status_ptr = linux_status;
+        }
+    }
+
     {
         extern void vfs_procfs_unregister_pid(uint64_t pid);
-        vfs_procfs_unregister_pid(pid);
+        vfs_procfs_unregister_pid(child_pid);
     }
-    process_unregister(pid);
+    process_unregister(child_pid);
     kfree(child);
-    return status;
+    return (int64_t)child_pid;
 }
 
 int64_t sys_getpid(uint64_t a1, uint64_t a2,

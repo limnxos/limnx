@@ -856,6 +856,35 @@ int64_t sys_task_wait(uint64_t task_id, uint64_t a2,
 
 /* ---- Linux compat stubs (needed by musl) ---- */
 
+int64_t sys_getrandom(uint64_t buf_ptr, uint64_t buflen,
+                               uint64_t flags, uint64_t a4, uint64_t a5) {
+    (void)flags; (void)a4; (void)a5;
+    if (buflen == 0) return 0;
+    if (validate_user_ptr(buf_ptr, buflen) != 0) return -EFAULT;
+
+    /* Simple xorshift64 PRNG seeded from timer */
+    static uint64_t rng_state = 0;
+    if (rng_state == 0) {
+        uint64_t tsc;
+#if defined(__x86_64__)
+        __asm__ volatile ("rdtsc" : "=A"(tsc));
+#elif defined(__aarch64__)
+        __asm__ volatile ("mrs %0, cntvct_el0" : "=r"(tsc));
+#endif
+        rng_state = tsc ^ 0x5DEECE66DULL;
+    }
+
+    uint8_t *out = (uint8_t *)buf_ptr;
+    for (uint64_t i = 0; i < buflen; i++) {
+        rng_state ^= rng_state << 13;
+        rng_state ^= rng_state >> 7;
+        rng_state ^= rng_state << 17;
+        out[i] = (uint8_t)(rng_state & 0xFF);
+    }
+    return (int64_t)buflen;
+}
+
+
 int64_t sys_brk(uint64_t addr, uint64_t a2,
                          uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a2; (void)a3; (void)a4; (void)a5;

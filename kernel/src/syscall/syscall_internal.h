@@ -64,6 +64,7 @@ int64_t sys_getcwd(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_fstat(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_rename(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_renameat2(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_getrandom(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_chmod(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_fsstat(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_symlink(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);

@@ -194,10 +194,8 @@ int64_t sys_open(uint64_t path_ptr, uint64_t flags,
         return -1;
     }
 
-    /* Regular file: store access mode + append flag as low byte */
-    uint8_t stored_flags = (uint8_t)(flags & O_ACCMODE);
-    if (flags & O_APPEND)
-        stored_flags |= 0x04;  /* bit 2 = append */
+    /* Store open flags (access mode + O_APPEND + O_NONBLOCK etc.) */
+    uint32_t stored_flags = (uint32_t)(flags & (O_ACCMODE | O_APPEND | O_NONBLOCK));
 
     for (int fd = 0; fd < MAX_FDS; fd++) {
         if (fd_is_free(&proc->fd_table[fd])) {
@@ -674,7 +672,7 @@ int64_t sys_fwrite(uint64_t fd, uint64_t buf_ptr, uint64_t len,
         return -1;
 
     /* O_APPEND: always write at end */
-    if (entry->open_flags & 0x04)
+    if (entry->open_flags & O_APPEND)
         entry->offset = node->size;
 
     int64_t written = vfs_write(node_idx, entry->offset,

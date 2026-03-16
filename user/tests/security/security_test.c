@@ -37,7 +37,7 @@ static void test_umask(void) {
 }
 
 static void test_chmod_chown(void) {
-    sys_open("/sec_test_file.txt", 0x100 | 2);
+    sys_open("/sec_test_file.txt", O_CREAT | O_RDWR);
     long ret = sys_chmod("/sec_test_file.txt", 0755);
     lt_ok(ret == 0, "chmod succeeds");
     ret = sys_chown("/sec_test_file.txt", 0, 0);

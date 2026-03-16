@@ -113,15 +113,27 @@ long sys_getchar(void) {
 }
 
 long sys_waitpid(long pid) {
-    return __syscall2(SYS_WAIT4, pid, 0);
+    int status = 0;
+    long ret = __syscall4(SYS_WAIT4, pid, (long)&status, 0, 0);
+    if (ret > 0) return (status >> 8) & 0xFF;  /* extract exit code */
+    return ret;
 }
 
 long sys_waitpid_flags(long pid, long flags) {
-    return __syscall2(SYS_WAIT4, pid, flags);
+    int status = 0;
+    long ret = __syscall4(SYS_WAIT4, pid, (long)&status, flags, 0);
+    if (ret > 0 && (flags & 1) == 0) return (status >> 8) & 0xFF;
+    return ret;  /* WNOHANG: return pid or 0 */
 }
 
 long sys_pipe(long *rfd_ptr, long *wfd_ptr) {
-    return __syscall2(SYS_PIPE, (long)rfd_ptr, (long)wfd_ptr);
+    int pipefd[2];
+    long ret = __syscall2(SYS_PIPE, (long)pipefd, 0);
+    if (ret == 0) {
+        *rfd_ptr = pipefd[0];
+        *wfd_ptr = pipefd[1];
+    }
+    return ret;
 }
 
 long sys_getpid(void) {
@@ -579,7 +591,13 @@ long sys_super_stop(long super_id) {
 }
 
 long sys_pipe2(long *rfd_ptr, long *wfd_ptr, long flags) {
-    return __syscall3(SYS_PIPE2, (long)rfd_ptr, (long)wfd_ptr, flags);
+    int pipefd[2];
+    long ret = __syscall2(SYS_PIPE2, (long)pipefd, flags);
+    if (ret == 0) {
+        *rfd_ptr = pipefd[0];
+        *wfd_ptr = pipefd[1];
+    }
+    return ret;
 }
 
 long sys_execve(const char *path, const char **argv) {

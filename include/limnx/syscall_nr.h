@@ -92,6 +92,7 @@
 #define SYS_PREAD64         __NR_pread64
 #define SYS_IO_URING_SETUP  __NR_io_uring_setup
 #define SYS_IO_URING_ENTER  __NR_io_uring_enter
+#define SYS_GETRANDOM       __NR_getrandom
 /* *at() variants — both archs */
 #define SYS_OPENAT          __NR_openat
 #define SYS_MKDIRAT         __NR_mkdirat

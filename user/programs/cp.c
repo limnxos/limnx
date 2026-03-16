@@ -12,7 +12,7 @@ int main(int argc, char **argv) {
         return 1;
     }
     /* Create destination (O_CREAT | O_RDWR) */
-    long dst = sys_open(argv[2], 0x100 | 2);
+    long dst = sys_open(argv[2], O_CREAT | O_RDWR);
     if (dst < 0) {
         printf("cp: cannot create '%s'\n", argv[2]);
         sys_close(src);

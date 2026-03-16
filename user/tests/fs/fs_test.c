@@ -19,7 +19,7 @@ static void test_open_read(void) {
 }
 
 static void test_create_write_read(void) {
-    long fd = sys_open("/fs_test_file.txt", 0x100 | 2);
+    long fd = sys_open("/fs_test_file.txt", O_CREAT | O_RDWR);
     lt_ok(fd >= 0, "create file");
     if (fd >= 0) {
         sys_fwrite(fd, "testdata", 8);
@@ -41,7 +41,7 @@ static void test_create_write_read(void) {
 static void test_mkdir_readdir(void) {
     long ret = sys_mkdir("/fs_test_dir");
     lt_ok(ret >= 0, "mkdir");
-    long fd = sys_open("/fs_test_dir/file1.txt", 0x100 | 2);
+    long fd = sys_open("/fs_test_dir/file1.txt", O_CREAT | O_RDWR);
     if (fd >= 0) { sys_fwrite(fd, "x", 1); sys_close(fd); }
     char dirent[272];
     ret = sys_readdir("/fs_test_dir", 0, dirent);
@@ -49,7 +49,7 @@ static void test_mkdir_readdir(void) {
 }
 
 static void test_symlink(void) {
-    sys_open("/fs_sym_target.txt", 0x100 | 2);
+    sys_open("/fs_sym_target.txt", O_CREAT | O_RDWR);
     long ret = sys_symlink("/fs_sym_target.txt", "/fs_sym_link");
     lt_ok(ret == 0, "symlink creation");
     char buf[256];
@@ -84,7 +84,7 @@ static void test_mount_umount(void) {
     sys_mkdir("/fs_mnt");
     long ret = sys_mount("/fs_mnt", "tmpfs");
     lt_ok(ret == 0, "mount tmpfs");
-    long fd = sys_open("/fs_mnt/mfile.txt", 0x100 | 2);
+    long fd = sys_open("/fs_mnt/mfile.txt", O_CREAT | O_RDWR);
     lt_ok(fd >= 0, "create file on tmpfs");
     if (fd >= 0) sys_close(fd);
     ret = sys_umount("/fs_mnt");
@@ -94,7 +94,7 @@ static void test_mount_umount(void) {
 }
 
 static void test_seek_truncate(void) {
-    long fd = sys_open("/fs_seek_test.txt", 0x100 | 2);
+    long fd = sys_open("/fs_seek_test.txt", O_CREAT | O_RDWR);
     if (fd < 0) { lt_ok(0, "seek test setup"); return; }
     sys_fwrite(fd, "abcdefghij", 10);
     sys_seek(fd, 5, 0);  /* SEEK_SET to offset 5 */
@@ -116,7 +116,7 @@ static void test_seek_truncate(void) {
 }
 
 static void test_rename(void) {
-    long cfd = sys_open("/fs_rename_src.txt", 0x100 | 2);
+    long cfd = sys_open("/fs_rename_src.txt", O_CREAT | O_RDWR);
     if (cfd < 0) {
         lt_diag("create failed for rename src — skipping");
         lt_skip("rename succeeds", "file create failed");

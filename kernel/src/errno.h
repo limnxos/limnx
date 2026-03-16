@@ -33,6 +33,7 @@
 #define ENOSPC          28  /* No space left on device */
 #define ESPIPE          29  /* Illegal seek */
 #define ENOEXEC          8  /* Exec format error */
+#define ECHILD          10  /* No child processes */
 #define EPIPE           32  /* Broken pipe */
 
 /* Extended errno (Linux errno.h equivalent, codes 35+) */

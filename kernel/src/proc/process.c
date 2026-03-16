@@ -61,6 +61,24 @@ process_t *process_lookup(uint64_t pid) {
     return NULL;
 }
 
+/* Find a child process of the given parent. If exited_only=1, prefer exited children. */
+process_t *process_find_child(uint64_t parent_pid, int exited_only) {
+    uint64_t flags;
+    spin_lock_irqsave(&proc_table_lock, &flags);
+    process_t *any_child = NULL;
+    for (int i = 0; i < MAX_PROCS; i++) {
+        if (proc_table[i] && proc_table[i]->parent_pid == parent_pid) {
+            if (proc_table[i]->exited) {
+                spin_unlock_irqrestore(&proc_table_lock, flags);
+                return proc_table[i];
+            }
+            if (!any_child) any_child = proc_table[i];
+        }
+    }
+    spin_unlock_irqrestore(&proc_table_lock, flags);
+    return exited_only ? NULL : any_child;
+}
+
 process_t *proc_table_get(int idx) {
     if (idx < 0 || idx >= MAX_PROCS) return NULL;
     uint64_t flags;

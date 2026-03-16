@@ -6,12 +6,11 @@
 #include "ipc/epoll.h"
 #include "ipc/uring.h"
 
-int64_t sys_pipe(uint64_t rfd_ptr, uint64_t wfd_ptr,
+int64_t sys_pipe(uint64_t pipefd_ptr, uint64_t a2,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
-    (void)a3; (void)a4; (void)a5;
-    if (validate_user_ptr(rfd_ptr, sizeof(long)) != 0 ||
-        validate_user_ptr(wfd_ptr, sizeof(long)) != 0)
-        return -1;
+    (void)a2; (void)a3; (void)a4; (void)a5;
+    if (validate_user_ptr(pipefd_ptr, 2 * sizeof(int)) != 0)
+        return -EFAULT;
 
     thread_t *t = thread_get_current();
     process_t *proc = t->process;
@@ -76,19 +75,20 @@ int64_t sys_pipe(uint64_t rfd_ptr, uint64_t wfd_ptr,
     proc->fd_table[wfd].pty_is_master = 0;
     proc->fd_table[wfd].fd_flags = 0;
 
-    /* Write fd numbers to user pointers */
-    *(long *)rfd_ptr = rfd;
-    *(long *)wfd_ptr = wfd;
+    /* Linux ABI: write two int32 to pipefd[0], pipefd[1] */
+    int *pipefd = (int *)pipefd_ptr;
+    pipefd[0] = rfd;
+    pipefd[1] = wfd;
 
     return 0;
 }
 
-int64_t sys_pipe2(uint64_t rfd_ptr, uint64_t wfd_ptr,
-                          uint64_t flags, uint64_t a4, uint64_t a5) {
-    (void)a4; (void)a5;
-    if (validate_user_ptr(rfd_ptr, sizeof(long)) != 0 ||
-        validate_user_ptr(wfd_ptr, sizeof(long)) != 0)
-        return -1;
+int64_t sys_pipe2(uint64_t pipefd_ptr, uint64_t flags,
+                          uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)a3; (void)a4; (void)a5;
+    /* Linux ABI: pipefd_ptr points to int[2] */
+    if (validate_user_ptr(pipefd_ptr, 2 * sizeof(int)) != 0)
+        return -EFAULT;
 
     thread_t *t = thread_get_current();
     process_t *proc = t->process;
@@ -142,17 +142,19 @@ int64_t sys_pipe2(uint64_t rfd_ptr, uint64_t wfd_ptr,
     proc->fd_table[wfd].pty_is_master = 0;
     proc->fd_table[wfd].fd_flags = 0;
 
-    if (flags & 0x01) {  /* O_CLOEXEC */
-        proc->fd_table[rfd].fd_flags |= 0x01;
-        proc->fd_table[wfd].fd_flags |= 0x01;
+    if (flags & O_CLOEXEC) {
+        proc->fd_table[rfd].fd_flags |= FD_CLOEXEC;
+        proc->fd_table[wfd].fd_flags |= FD_CLOEXEC;
     }
-    if (flags & 0x800) {  /* O_NONBLOCK */
+    if (flags & O_NONBLOCK) {
         proc->fd_table[rfd].fd_flags |= 0x02;
         proc->fd_table[wfd].fd_flags |= 0x02;
     }
 
-    *(long *)rfd_ptr = rfd;
-    *(long *)wfd_ptr = wfd;
+    /* Linux ABI: write two int32 to pipefd[0], pipefd[1] */
+    int *pipefd = (int *)pipefd_ptr;
+    pipefd[0] = rfd;
+    pipefd[1] = wfd;
     return 0;
 }
 
@@ -320,14 +322,39 @@ int64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg,
         entry->fd_flags = (entry->fd_flags & ~FD_CLOEXEC)
                         | (uint8_t)(arg & FD_CLOEXEC);
         return 0;
-    case F_GETFL:
-        return (entry->fd_flags & 0x02) ? O_NONBLOCK : 0;
+    case F_GETFL: {
+        uint32_t fl = entry->open_flags;
+        if (entry->fd_flags & 0x02) fl |= O_NONBLOCK;
+        return (int64_t)fl;
+    }
     case F_SETFL:
         if (arg & O_NONBLOCK)
             entry->fd_flags |= 0x02;
         else
             entry->fd_flags &= ~0x02;
+        if (arg & O_APPEND)
+            entry->open_flags |= O_APPEND;
+        else
+            entry->open_flags &= ~O_APPEND;
         return 0;
+    case 0: /* F_DUPFD */
+    {
+        int min_fd = (int)arg;
+        for (int nfd = min_fd; nfd < MAX_FDS; nfd++) {
+            if (fd_is_free(&proc->fd_table[nfd])) {
+                proc->fd_table[nfd] = *entry;
+                /* Increment refs for PTY */
+                if (entry->pty) {
+                    pty_t *pt = (pty_t *)entry->pty;
+                    if (entry->pty_is_master) pt->master_refs++;
+                    else pt->slave_refs++;
+                }
+                proc->fd_table[nfd].fd_flags = 0; /* F_DUPFD clears CLOEXEC */
+                return nfd;
+            }
+        }
+        return -EMFILE;
+    }
     default:
         return -1;
     }

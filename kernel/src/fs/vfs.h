@@ -37,15 +37,19 @@
 /* Maximum file size for writable files: 1 GB */
 #define VFS_MAX_FILE_SIZE  (1024ULL * 1024 * 1024)
 
-/* Open flags */
-#define O_RDONLY  0
-#define O_WRONLY  1
-#define O_RDWR    2
-#define O_CREAT   0x100
-#define O_TRUNC   0x200
-#define O_APPEND  0x400
-#define O_ACCMODE 3       /* mask for access mode bits */
-#define O_NONBLOCK 0x800
+/* Open flags — Linux-compatible values */
+#define O_RDONLY    0x000
+#define O_WRONLY    0x001
+#define O_RDWR      0x002
+#define O_ACCMODE   0x003     /* mask for access mode bits */
+#define O_CREAT     0x040     /* Linux 0100 octal = 64 decimal = 0x40 */
+#define O_EXCL      0x080     /* Linux 0200 octal */
+#define O_TRUNC     0x200     /* Linux 01000 octal = 512 = 0x200 */
+#define O_APPEND    0x400     /* Linux 02000 octal = 1024 = 0x400 */
+#define O_NONBLOCK  0x800     /* Linux 04000 octal = 2048 = 0x800 */
+#define O_DIRECTORY 0x10000   /* Linux 0200000 octal */
+#define O_CLOEXEC   0x80000   /* Linux 02000000 octal */
+#define O_NOFOLLOW  0x20000   /* Linux 0400000 octal */
 
 /* Per-fd flags (fd_entry_t.fd_flags) */
 #define FD_CLOEXEC  0x01
@@ -90,8 +94,8 @@ typedef struct fd_entry {
     void    *epoll;             /* epoll_instance_t* if epoll fd */
     void    *uring;             /* uring_instance_t* if uring fd */
     int16_t  tcp_conn_idx;      /* TCP conn index if TCP fd, -1 otherwise */
-    uint8_t  open_flags;        /* O_RDONLY/O_WRONLY/O_RDWR/O_APPEND (low bits) */
-    uint8_t  fd_flags;          /* FD_CLOEXEC, O_NONBLOCK (bit 1) */
+    uint32_t open_flags;        /* O_RDONLY/O_WRONLY/O_RDWR/O_APPEND/O_NONBLOCK etc */
+    uint8_t  fd_flags;          /* FD_CLOEXEC */
 } fd_entry_t;
 
 typedef struct vfs_dirent {
