@@ -146,6 +146,7 @@ static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
     [SYS_CLOSE]            = sys_close,
     [SYS_FSTAT]            = sys_fstat,
     [SYS_LSEEK]            = sys_seek,
+    [SYS_POLL]             = sys_poll,
     [SYS_MMAP]             = sys_mmap,
     [SYS_MPROTECT]         = sys_mprotect,
     [SYS_MUNMAP]           = sys_munmap,
