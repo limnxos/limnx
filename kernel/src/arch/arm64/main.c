@@ -273,7 +273,7 @@ void kmain(uint64_t dtb_addr) {
                         if (disk_ino >= 0) {
                             limnfs_inode_t inode;
                             if (limnfs_read_inode((uint32_t)disk_ino, &inode) == 0) {
-                                inode.mode = n->mode;
+                                inode.mode = n->mode ? n->mode : 0755;
                                 limnfs_write_inode((uint32_t)disk_ino, &inode);
                             }
                             n->disk_inode = (int32_t)disk_ino;
@@ -362,6 +362,10 @@ void kmain(uint64_t dtb_addr) {
             pr_info("Created /etc/passwd\n");
         }
     }
+
+    /* Create /proc/self/exe symlink (needed by busybox applet exec) */
+    vfs_mkdir("/proc/self");
+    vfs_symlink("/proc/self/exe", "/busybox-arm64.elf");
 
     vfs_mkdir("/root");
 

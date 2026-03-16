@@ -18,7 +18,7 @@
 static void fill_linux_stat(struct linux_stat *ls, vfs_node_t *node, int node_idx) {
     /* Zero entire struct first */
     uint8_t *p = (uint8_t *)ls;
-    for (int i = 0; i < 144; i++) p[i] = 0;
+    for (unsigned i = 0; i < sizeof(struct linux_stat); i++) p[i] = 0;
 
     ls->st_ino = (uint64_t)(node_idx + 1);  /* inode = VFS index + 1 (0 reserved) */
     ls->st_nlink = 1;
@@ -424,7 +424,7 @@ int64_t sys_close(uint64_t fd, uint64_t a2,
  */
 int64_t sys_fstatat(uint64_t dirfd, uint64_t path_ptr,
                              uint64_t stat_ptr, uint64_t flags, uint64_t a5) {
-    (void)flags; (void)a5;
+    (void)a5;
 
     char raw_path[MAX_PATH];
     if (copy_string_from_user((const char *)path_ptr, raw_path, MAX_PATH) != 0)
@@ -475,6 +475,20 @@ int64_t sys_fstatat(uint64_t dirfd, uint64_t path_ptr,
     if (idx < 0) return -ENOENT;
     vfs_node_t *node = vfs_get_node(idx);
     if (!node) return -ENOENT;
+
+    /* Follow symlink (stat follows by default, lstat doesn't) */
+    if (node->type == VFS_SYMLINK && node->data) {
+        char target[256];
+        uint64_t tlen = node->size < 255 ? node->size : 255;
+        for (uint64_t i = 0; i < tlen; i++) target[i] = (char)node->data[i];
+        target[tlen] = '\0';
+        int tidx = vfs_resolve_path(target);
+        if (tidx >= 0) {
+            idx = tidx;
+            node = vfs_get_node(idx);
+            if (!node) return -ENOENT;
+        }
+    }
 
     struct linux_stat ls;
     fill_linux_stat(&ls, node, idx);
@@ -565,9 +579,22 @@ int64_t sys_stat(uint64_t path_ptr, uint64_t stat_ptr,
     vfs_node_t *node = vfs_get_node(idx);
     if (!node) return -ENOENT;
 
+    /* Follow symlink (stat always follows, lstat doesn't — lstat is separate) */
+    if (node->type == VFS_SYMLINK && node->data) {
+        char target[256];
+        uint64_t tlen = node->size < 255 ? node->size : 255;
+        for (uint64_t i = 0; i < tlen; i++) target[i] = (char)node->data[i];
+        target[tlen] = '\0';
+        int tidx = vfs_resolve_path(target);
+        if (tidx >= 0) {
+            idx = tidx;
+            node = vfs_get_node(idx);
+            if (!node) return -ENOENT;
+        }
+    }
+
     struct linux_stat ls;
     fill_linux_stat(&ls, node, idx);
-
 
     /* Copy to user buffer */
     uint8_t *dst = (uint8_t *)stat_ptr;

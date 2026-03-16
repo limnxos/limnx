@@ -897,6 +897,10 @@ void kmain(void) {
         }
     }
 
+    /* Create /proc/self/exe symlink (needed by busybox applet exec) */
+    vfs_mkdir("/proc/self");
+    vfs_symlink("/proc/self/exe", "/busybox.elf");
+
     /* Create home directories */
     vfs_mkdir("/root");
 

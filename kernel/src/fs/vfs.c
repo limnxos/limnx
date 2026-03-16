@@ -684,7 +684,7 @@ static void load_limnfs_dir(uint32_t dir_ino, int vfs_parent_idx) {
                 nodes[existing].disk_inode = (int32_t)ent.inode;
                 nodes[existing].size = inode.size;
                 nodes[existing].flags |= VFS_FLAG_WRITABLE;
-                nodes[existing].mode = inode.mode;
+                nodes[existing].mode = inode.mode ? inode.mode : 0755;
                 nodes[existing].uid = inode.uid;
                 nodes[existing].gid = inode.gid;
             } else {

@@ -357,6 +357,8 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
                            uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a3; (void)a4; (void)a5;
 
+    serial_puts("[execve] called\n");
+
     thread_t *t = thread_get_current();
     process_t *proc = t->process;
     if (!proc) return -1;
@@ -385,7 +387,18 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
 
     vfs_node_t *exec_node = vfs_get_node(node_idx);
     if (exec_node && !(exec_node->mode & VFS_PERM_EXEC)) {
-        serial_printf("[execve] EACCES: %s mode=%o\n", path, exec_node->mode);
+        serial_puts("[execve] EACCES: mode=");
+        /* Output mode as decimal to avoid serial_printf optimization */
+        char mbuf[16]; int mi = 0;
+        unsigned m = exec_node->mode;
+        if (m == 0) { mbuf[mi++] = '0'; }
+        else { char tmp[16]; int ti = 0; while (m) { tmp[ti++] = '0'+(m%8); m/=8; }
+               for (int j=ti-1;j>=0;j--) mbuf[mi++] = tmp[j]; }
+        mbuf[mi] = '\0';
+        serial_puts(mbuf);
+        serial_puts(" path=");
+        serial_puts(path);
+        serial_puts("\n");
         return -EACCES;
     }
 
