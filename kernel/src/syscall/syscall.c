@@ -235,6 +235,9 @@ static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
     [SYS_SELECT]           = sys_select,
     [SYS_DUP]              = sys_dup,
     [SYS_DUP2]             = sys_dup2,
+#ifdef __NR_rmdir
+    [SYS_RMDIR]            = sys_unlink,  /* rmdir = unlink for directories */
+#endif
     [SYS_FORK]             = sys_fork_plain,
     [SYS_RENAME]           = sys_rename,
     [SYS_MKDIR]            = sys_mkdir,

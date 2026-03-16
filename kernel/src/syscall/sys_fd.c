@@ -337,7 +337,8 @@ int64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg,
         else
             entry->open_flags &= ~O_APPEND;
         return 0;
-    case 0: /* F_DUPFD */
+    case 0:   /* F_DUPFD */
+    case 1030: /* F_DUPFD_CLOEXEC */
     {
         int min_fd = (int)arg;
         for (int nfd = min_fd; nfd < MAX_FDS; nfd++) {
@@ -349,7 +350,7 @@ int64_t sys_fcntl(uint64_t fd, uint64_t cmd, uint64_t arg,
                     if (entry->pty_is_master) pt->master_refs++;
                     else pt->slave_refs++;
                 }
-                proc->fd_table[nfd].fd_flags = 0; /* F_DUPFD clears CLOEXEC */
+                proc->fd_table[nfd].fd_flags = (cmd == 1030) ? FD_CLOEXEC : 0;
                 return nfd;
             }
         }

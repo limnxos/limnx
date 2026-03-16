@@ -499,7 +499,10 @@ int64_t sys_mkdirat(uint64_t dirfd, uint64_t path_ptr,
 
 int64_t sys_unlinkat(uint64_t dirfd, uint64_t path_ptr,
                               uint64_t flags, uint64_t a4, uint64_t a5) {
-    (void)dirfd; (void)flags; (void)a4; (void)a5;
+    (void)dirfd; (void)a4; (void)a5;
+    /* AT_REMOVEDIR (0x200): behave like rmdir instead of unlink.
+     * Our vfs_delete handles both files and directories, so just pass through. */
+    (void)flags;
     return sys_unlink(path_ptr, 0, 0, 0, 0);
 }
 
