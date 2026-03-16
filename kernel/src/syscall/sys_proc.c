@@ -664,9 +664,10 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
     /* Never reached */
 }
 
-int64_t sys_fork(uint64_t a1, uint64_t a2,
+int64_t sys_fork(uint64_t flags, uint64_t child_stack,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
-    (void)a1; (void)a2; (void)a3; (void)a4; (void)a5;
+    (void)a3; (void)a4; (void)a5;
+    (void)flags;  /* TODO: handle CLONE_VM, CLONE_VFORK etc. */
 
     thread_t *t = thread_get_current();
     process_t *proc = t->process;
@@ -723,6 +724,13 @@ int64_t sys_fork(uint64_t a1, uint64_t a2,
         ctx.x30  = frame[30];  /* LR — SAVE_CONTEXT stores x30 at [sp+240] = frame[30] */
     }
 #endif
+
+    /* Note: clone child_stack is ignored since we don't support CLONE_VM.
+     * Our fork always creates a separate address space. The child starts
+     * on a COW copy of the parent's stack. This works for musl's fork()
+     * which calls clone(SIGCHLD, 0), but busybox's vfork pattern
+     * (clone with child_stack) needs CLONE_VM support to work properly. */
+    (void)child_stack;
 
     process_t *child = process_fork(proc, &ctx);
     if (!child) return -1;
