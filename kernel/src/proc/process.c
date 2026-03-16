@@ -159,10 +159,16 @@ static void process_enter_usermode(void) {
     /* 3. Build Linux stack layout: auxv, envp, argv, argc
      * Calculate total size and align sp BEFORE writing,
      * so argc is exactly at sp[0] after alignment. */
+    /* Auxiliary vector: AT_PAGESZ + AT_NULL (musl needs AT_PAGESZ at minimum) */
+    #define AT_PAGESZ 6
+    #define AT_PHDR   3
+    #define AT_PHENT  4
+    #define AT_PHNUM  5
     uint64_t total_slots = 1                   /* argc */
                          + (nargs + 1)         /* argv[] + NULL */
                          + (nenv + 1)          /* envp[] + NULL */
-                         + 2;                  /* auxv AT_NULL (key, value) */
+                         + 2                   /* AT_PAGESZ (key, value) */
+                         + 2;                  /* AT_NULL (key, value) */
     uint64_t total_bytes = total_slots * 8;
 
     /* Align: sp must be 16-byte aligned at entry.
@@ -188,8 +194,10 @@ static void process_enter_usermode(void) {
         slot[si++] = env_addrs[j];
     slot[si++] = 0;  /* envp NULL terminator */
 
-    /* auxv: AT_NULL (0, 0) */
-    slot[si++] = 0;
+    /* auxv: AT_PAGESZ then AT_NULL */
+    slot[si++] = AT_PAGESZ;
+    slot[si++] = PAGE_SIZE;
+    slot[si++] = 0;  /* AT_NULL */
     slot[si++] = 0;
 
     uint64_t user_rsp = sp;

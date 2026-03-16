@@ -611,7 +611,8 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
 
     /* 3. Build stack: calculate total, align, then write.
      * argc must be exactly at sp[0] after alignment. */
-    uint64_t total_slots = 1 + (nargs + 1) + (nenv + 1) + 2;
+    #define AT_PAGESZ 6
+    uint64_t total_slots = 1 + (nargs + 1) + (nenv + 1) + 2 + 2; /* +AT_PAGESZ */
     sp -= total_slots * 8;
     sp &= ~0xFULL;
 
@@ -623,6 +624,8 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
     slot[si++] = 0;
     for (int j = 0; j < nenv; j++) slot[si++] = env_addrs[j];
     slot[si++] = 0;
+    slot[si++] = AT_PAGESZ;  /* auxv: page size */
+    slot[si++] = PAGE_SIZE;
     slot[si++] = 0;  /* AT_NULL key */
     slot[si++] = 0;  /* AT_NULL value */
 

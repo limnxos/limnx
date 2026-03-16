@@ -16,10 +16,12 @@ static inline void flush_page(uint64_t addr) {
 
 int64_t sys_mmap(uint64_t addr_hint, uint64_t length,
                           uint64_t prot, uint64_t flags, uint64_t fd) {
-    (void)addr_hint; (void)fd;
+    (void)fd;
     /* Linux mmap: (addr, length, prot, flags, fd, offset)
      * For anonymous private mappings (the common case for malloc/TLS):
      * addr=0, length=bytes, flags=MAP_PRIVATE|MAP_ANONYMOUS */
+    #define MAP_FIXED 0x10
+
     uint64_t num_pages;
     if (length == 0)
         return -EINVAL;
@@ -36,6 +38,17 @@ int64_t sys_mmap(uint64_t addr_hint, uint64_t length,
     process_t *proc = t->process;
     if (!proc)
         return -1;
+
+    /* MAP_FIXED with PROT_NONE: guard page — just return the address.
+     * We don't actually need to unmap or change protections since
+     * the page might not be mapped yet, and we don't enforce PROT_NONE. */
+    if ((flags & MAP_FIXED) && prot == 0) {
+        /* musl uses this for brk guard pages. Just acknowledge it. */
+        return (int64_t)addr_hint;
+    }
+
+    /* MAP_FIXED: use the provided address instead of mmap_next_addr */
+    int use_fixed = (flags & MAP_FIXED) && addr_hint != 0;
 
     /* Check memory rlimit */
     if (proc->rlimit_mem_pages > 0 &&
@@ -54,7 +67,7 @@ int64_t sys_mmap(uint64_t addr_hint, uint64_t length,
         return -1;
 
     /* Allocate pages individually (don't need physical contiguity for mmap) */
-    uint64_t virt = proc->mmap_next_addr;
+    uint64_t virt = use_fixed ? (addr_hint & ~(PAGE_SIZE - 1)) : proc->mmap_next_addr;
     uint64_t first_phys = 0;
     for (uint64_t i = 0; i < num_pages; i++) {
         uint64_t page_phys = pmm_alloc_page();
@@ -83,8 +96,9 @@ int64_t sys_mmap(uint64_t addr_hint, uint64_t length,
     proc->mmap_table[slot].vfs_node = -1;
     proc->mmap_table[slot].file_offset = 0;
 
-    /* Bump next address (+1 guard gap page) */
-    proc->mmap_next_addr = virt + (num_pages + 1) * PAGE_SIZE;
+    /* Bump next address (+1 guard gap page) — only for non-fixed mappings */
+    if (!use_fixed)
+        proc->mmap_next_addr = virt + (num_pages + 1) * PAGE_SIZE;
     proc->used_mem_pages += num_pages;
 
     return (int64_t)virt;

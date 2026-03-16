@@ -882,7 +882,7 @@ int64_t sys_brk(uint64_t addr, uint64_t a2,
     for (uint64_t va = old_end; va < new_end; va += PAGE_SIZE) {
         uint64_t phys = pmm_alloc_page();
         if (phys == 0)
-            return (int64_t)proc->brk_current;  /* OOM: return old break */
+            return (int64_t)proc->brk_current;
         uint8_t *p = (uint8_t *)PHYS_TO_VIRT(phys);
         for (int i = 0; i < 4096; i++) p[i] = 0;
         if (vmm_map_page_in(proc->cr3, va, phys, PTE_USER | PTE_WRITABLE | PTE_NX) != 0) {
