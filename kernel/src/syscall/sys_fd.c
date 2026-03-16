@@ -444,5 +444,5 @@ int64_t sys_ioctl(uint64_t fd_num, uint64_t cmd, uint64_t arg,
         return pty_ioctl(pidx, cmd, arg);
     }
 
-    return -1;  /* unsupported fd type */
+    return -ENOTTY;  /* not a terminal */
 }

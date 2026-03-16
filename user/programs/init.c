@@ -141,7 +141,7 @@ int main(void) {
 
     /* Set up environment */
     sys_setenv("LIMNX_VERSION", "1.0");
-    sys_setenv("PATH", "/");
+    sys_setenv("PATH", "/bin");
 
     /* Read config */
     if (read_inittab() < 0) {

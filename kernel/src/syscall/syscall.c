@@ -250,9 +250,10 @@ static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
     [SYS_EPOLL_WAIT]       = sys_epoll_wait,
 #endif
 
-    /* ---- ARM64 only: clone instead of fork ---- */
-#ifdef __aarch64__
-    [__NR_clone]           = sys_fork,  /* clone with default flags = fork */
+    /* clone/vfork → fork mapping (musl uses clone instead of fork) */
+    [__NR_clone]           = sys_fork,
+#ifdef __NR_vfork
+    [__NR_vfork]           = sys_fork,
 #endif
 
     /* === Limnx-specific (512+) === */
