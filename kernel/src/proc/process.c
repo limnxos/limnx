@@ -3,6 +3,7 @@
 
 #include "proc/process.h"
 #include "proc/elf.h"
+#include "kquiet.h"
 #include "mm/vmm.h"
 #include "mm/pmm.h"
 #include "mm/kheap.h"
@@ -405,7 +406,7 @@ process_t *process_create(const uint8_t *code, uint64_t code_size) {
     }
     /* NOTE: caller must call sched_add(proc->main_thread) after setup */
 
-    pr_info("Created process %lu (cr3=%lx, entry=%lx)\n",
+    if (!kernel_quiet) pr_info("Created process %lu (cr3=%lx, entry=%lx)\n",
         proc->pid, proc->cr3, proc->user_entry);
 
     return proc;
@@ -571,7 +572,7 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
     }
     /* NOTE: caller must call sched_add(proc->main_thread) after setup */
 
-    pr_info("Created process %lu (cr3=%lx, entry=%lx)\n",
+    if (!kernel_quiet) pr_info("Created process %lu (cr3=%lx, entry=%lx)\n",
         proc->pid, proc->cr3, proc->user_entry);
 
     return proc;
@@ -605,7 +606,7 @@ static void fork_child_entry(void) {
     arch_prepare_usermode_return();
     arch_set_tls_base(t->fs_base);
 #if defined(__aarch64__)
-    serial_printf("[fork-child] elr=%lx x30=%lx sp=%lx\n",
+    if (!kernel_quiet) serial_printf("[fork-child] elr=%lx x30=%lx sp=%lx\n",
                   proc->fork_ctx.elr, proc->fork_ctx.x30, proc->fork_ctx.sp);
 #endif
     arch_enter_forked_child(&proc->fork_ctx);

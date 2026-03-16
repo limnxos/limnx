@@ -5,7 +5,10 @@
 #include <stddef.h>
 #include <stdbool.h>
 #include "limine.h"
+#include "kquiet.h"
 #include "arch/serial.h"
+
+volatile int kernel_quiet = 0;
 #include "arch/boot.h"
 #include "arch/timer.h"
 #include "arch/smp_hal.h"
@@ -928,6 +931,7 @@ void kmain(void) {
      * Init reads /etc/inittab and spawns all services.
      * Children inherit the PTY fds via fork. */
     pr_info("\nLaunching init...\n");
+    kernel_quiet = 1;  /* suppress verbose messages from here on */
     {
         process_t *init_proc = load_elf_from_vfs("/init.elf");
         if (init_proc) {

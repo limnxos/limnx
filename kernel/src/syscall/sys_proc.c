@@ -1,4 +1,5 @@
 #include "syscall/syscall_internal.h"
+#include "kquiet.h"
 #include "arch/syscall_arch.h"
 #include "arch/percpu.h"
 #include "sched/sched.h"
@@ -103,7 +104,8 @@ void process_terminate(thread_t *t, int64_t status) {
                 process_deliver_signal(parent, SIGCHLD);
         }
     }
-    serial_printf("[proc] Process terminated with status %ld\n", status);
+    if (!kernel_quiet)
+        serial_printf("[proc] Process terminated with status %ld\n", status);
     /* CRITICAL: Disable interrupts from here until thread_exit().
      * After cr3 is zeroed above, if a timer interrupt preempts us and the
      * scheduler context-switches to another thread, when we're later

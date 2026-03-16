@@ -388,6 +388,10 @@ void kmain(uint64_t dtb_addr) {
     }
 
     /* Launch init (pid 1) — Unix standard */
+    {
+        extern volatile int kernel_quiet;
+        kernel_quiet = 1;
+    }
     pr_info("\nLaunching init...\n");
     {
         process_t *init_proc = load_elf_from_vfs("/init.elf");

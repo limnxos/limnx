@@ -4,6 +4,7 @@
 #include "proc/elf.h"
 #include "mm/vmm.h"
 #include "kutil.h"
+#include "kquiet.h"
 #include "mm/pmm.h"
 #include "arch/serial.h"
 #include "syscall/syscall.h"  /* USER_ADDR_MAX */
@@ -150,8 +151,9 @@ int elf_load(const uint8_t *data, uint64_t size, elf_load_result_t *result) {
         return -EINVAL;
     }
 
-    pr_info("Valid ELF64: entry=%lx, %d PT_LOAD segments\n",
-        ehdr->e_entry, load_count);
+    if (!kernel_quiet)
+        pr_info("Valid ELF64: entry=%lx, %d PT_LOAD segments\n",
+            ehdr->e_entry, load_count);
 
     result->entry = ehdr->e_entry;
     result->cr3 = cr3;
