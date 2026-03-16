@@ -17,7 +17,6 @@ static inline void flush_page(uint64_t addr) {
 int64_t sys_mmap(uint64_t addr_hint, uint64_t length,
                           uint64_t prot, uint64_t flags, uint64_t fd) {
     (void)addr_hint; (void)fd;
-
     /* Linux mmap: (addr, length, prot, flags, fd, offset)
      * For anonymous private mappings (the common case for malloc/TLS):
      * addr=0, length=bytes, flags=MAP_PRIVATE|MAP_ANONYMOUS */

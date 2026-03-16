@@ -17,6 +17,7 @@
 #include "arch/percpu.h"
 #include "arch/frame.h"
 #include "sched/thread.h"
+#include "proc/process.h"
 #include <stdint.h>
 
 /* Page fault handler from sys_mm.c — handles COW, swap-in, demand paging */
@@ -137,8 +138,16 @@ void arm64_sync_handler(arm64_frame_t *frame, uint64_t esr) {
         break;
     }
     default: {
-        serial_printf("[fault] Unhandled sync exception EC=0x%x ESR=0x%lx ELR=0x%lx\n",
-                      ec, esr, frame->elr_el1);
+        {
+            extern thread_t *thread_get_current(void);
+            thread_t *_ft = thread_get_current();
+            const char *pname = "?";
+            if (_ft && _ft->process) pname = _ft->process->name;
+            serial_printf("[fault] EC=0x%x ESR=0x%lx ELR=0x%lx SP_EL0=0x%lx SPSR=0x%lx proc=%s\n",
+                          ec, esr, frame->elr_el1, frame->sp_el0, frame->spsr_el1, pname);
+            serial_printf("[fault] x0=%lx x1=%lx x8=%lx x30=%lx\n",
+                          frame->x[0], frame->x[1], frame->x[8], frame->x[30]);
+        }
         /* Check if exception came from lower EL (EL0) — SPSR_EL1.M[3:0] == 0 */
         uint32_t spsr_m = frame->spsr_el1 & 0xF;
         if (spsr_m == 0) {

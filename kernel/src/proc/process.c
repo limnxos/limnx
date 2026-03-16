@@ -426,6 +426,8 @@ process_t *process_create_from_elf(const uint8_t *elf, uint64_t size) {
     proc->user_entry = result.entry;
     proc->user_stack_top = USER_STACK_TOP;
     proc->cr3 = result.cr3;
+    proc->brk_base = result.brk_base;
+    proc->brk_current = result.brk_base;
 
     /* Set parent PID from calling process (0 if kernel) */
     thread_t *caller = thread_get_current();

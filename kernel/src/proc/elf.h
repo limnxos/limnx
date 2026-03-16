@@ -63,6 +63,7 @@ typedef struct {
 typedef struct {
     uint64_t entry;         /* from e_entry */
     uint64_t cr3;           /* new address space with segments mapped */
+    uint64_t brk_base;     /* end of BSS, page-aligned — initial program break */
 } elf_load_result_t;
 
 /*

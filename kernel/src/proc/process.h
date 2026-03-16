@@ -123,6 +123,8 @@ typedef struct process {
     fd_entry_t    fd_table[MAX_FDS];
     mmap_entry_t  mmap_table[MMAP_MAX_ENTRIES];
     uint64_t      mmap_next_addr;
+    uint64_t      brk_base;       /* program break base (end of ELF BSS) */
+    uint64_t      brk_current;    /* current program break */
     char          cwd[MAX_PATH];  /* per-process working directory */
     volatile uint32_t pending_signals;  /* bitfield of pending signals */
     uint32_t      signal_mask;      /* blocked signals bitmask */

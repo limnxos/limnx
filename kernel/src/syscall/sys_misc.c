@@ -1,6 +1,7 @@
 #include "syscall/syscall_internal.h"
 #include "sched/sched.h"
 #include "sched/thread.h"
+#include "proc/process.h"
 #include "arch/serial.h"
 #include "arch/timer.h"
 #include "arch/interrupt.h"
@@ -858,21 +859,40 @@ int64_t sys_task_wait(uint64_t task_id, uint64_t a2,
 int64_t sys_brk(uint64_t addr, uint64_t a2,
                          uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a2; (void)a3; (void)a4; (void)a5;
-    /* Linux brk(0) returns current break. brk(new) expands heap.
-     * We don't support brk expansion — always return current break
-     * to force musl to use mmap for allocation. */
     thread_t *t = thread_get_current();
     if (!t || !t->process) return 0;
-    /* Program break = end of BSS, page-aligned up.
-     * For ELF programs loaded at 0x400000 with ~8KB of segments,
-     * the break starts after the last mapped segment. */
-    /* Use a per-process break address. If not set, estimate from mmap base. */
-    /* Simple: return an address just past the ELF segments.
-     * The ELF loader sets up segments at 0x400000-0x406000ish.
-     * Return the first page after that as the break. */
-    (void)addr;
-    /* Return a safe address that tells musl "brk is here, don't expand" */
-    return 0x800000;  /* 8MB — past any ELF but below mmap region */
+    process_t *proc = t->process;
+
+    /* brk(0) returns current break */
+    if (addr == 0)
+        return (int64_t)proc->brk_current;
+
+    /* Don't allow shrinking below base */
+    if (addr < proc->brk_base)
+        return (int64_t)proc->brk_current;
+
+    /* Cap expansion to 32MB above base to prevent runaway */
+    if (addr > proc->brk_base + 32 * 1024 * 1024)
+        return (int64_t)proc->brk_current;
+
+    /* Expand: map new pages between old break and new break */
+    uint64_t old_end = (proc->brk_current + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    uint64_t new_end = (addr + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+
+    for (uint64_t va = old_end; va < new_end; va += PAGE_SIZE) {
+        uint64_t phys = pmm_alloc_page();
+        if (phys == 0)
+            return (int64_t)proc->brk_current;  /* OOM: return old break */
+        uint8_t *p = (uint8_t *)PHYS_TO_VIRT(phys);
+        for (int i = 0; i < 4096; i++) p[i] = 0;
+        if (vmm_map_page_in(proc->cr3, va, phys, PTE_USER | PTE_WRITABLE | PTE_NX) != 0) {
+            pmm_free_page(phys);
+            return (int64_t)proc->brk_current;
+        }
+    }
+
+    proc->brk_current = addr;
+    return (int64_t)addr;
 }
 
 int64_t sys_set_tid_address(uint64_t tidptr, uint64_t a2,

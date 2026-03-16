@@ -67,6 +67,7 @@ int elf_load(const uint8_t *data, uint64_t size, elf_load_result_t *result) {
     }
 
     int load_count = 0;
+    uint64_t highest_addr = 0;
 
     for (uint16_t i = 0; i < ehdr->e_phnum; i++) {
         const elf64_phdr_t *phdr = (const elf64_phdr_t *)
@@ -143,6 +144,12 @@ int elf_load(const uint8_t *data, uint64_t size, elf_load_result_t *result) {
             }
         }
 
+        /* Track highest mapped address for brk base */
+        uint64_t seg_top = (phdr->p_vaddr + phdr->p_memsz + PAGE_SIZE - 1)
+                           & ~(uint64_t)(PAGE_SIZE - 1);
+        if (seg_top > highest_addr)
+            highest_addr = seg_top;
+
         load_count++;
     }
 
@@ -157,5 +164,6 @@ int elf_load(const uint8_t *data, uint64_t size, elf_load_result_t *result) {
 
     result->entry = ehdr->e_entry;
     result->cr3 = cr3;
+    result->brk_base = highest_addr;
     return 0;
 }

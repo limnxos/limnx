@@ -496,6 +496,8 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
     proc->cr3 = result.cr3;
     proc->user_entry = result.entry;
     proc->user_stack_top = USER_STACK_TOP;
+    proc->brk_base = result.brk_base;
+    proc->brk_current = result.brk_base;
 
     /* Reset mmap table */
     for (int i = 0; i < MMAP_MAX_ENTRIES; i++) {
