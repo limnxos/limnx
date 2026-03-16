@@ -92,6 +92,24 @@
 #define __NR_mmap            222
 #define __NR_mprotect        226
 
+/* System */
+#define __NR_uname           160
+#define __NR_getrlimit       163
+#define __NR_setrlimit       164
+#define __NR_gettid          178
+#define __NR_futex            98
+#define __NR_set_tid_address  96
+#define __NR_clock_getres    114
+#define __NR_tgkill          131
+#define __NR_exit_group       94
+#define __NR_getdents64       61
+#define __NR_ftruncate        46
+#define __NR_dup3             24
+#define __NR_readv            65
+#define __NR_writev           66
+#define __NR_pread64          67
+#define __NR_faccessat        48
+
 /* Misc */
 #define __NR_wait4           260
 #define __NR_prlimit64       261

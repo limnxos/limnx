@@ -447,6 +447,7 @@ build/arm64/user/%.elf: build/arm64/user/%.o $(ARM64_LIBC_C_OBJS) user/arch/arm6
 # ARM64 initrd
 $(ARM64_INITRD): $(ARM64_USER_C_ELFS)
 	@mkdir -p build/arm64/initrd_staging
+	cp initrd/* build/arm64/initrd_staging/ 2>/dev/null || true
 	cp $(ARM64_USER_C_ELFS) build/arm64/initrd_staging/
 	COPYFILE_DISABLE=1 tar cf $@ --format ustar --no-mac-metadata -C build/arm64/initrd_staging .
 	rm -rf build/arm64/initrd_staging

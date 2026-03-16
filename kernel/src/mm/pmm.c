@@ -321,6 +321,19 @@ uint64_t pmm_alloc_contiguous(uint64_t count) {
     return 0; /* not enough contiguous memory */
 }
 
+void pmm_mark_used(uint64_t page_num) {
+    if (page_num == 0 || page_num >= total_pages)
+        return;
+    uint64_t flags;
+    spin_lock_irqsave(&pmm_lock, &flags);
+    if (!bitmap_test(page_num)) {
+        bitmap_set(page_num);
+        free_pages--;
+        refcounts[page_num] = 1;
+    }
+    spin_unlock_irqrestore(&pmm_lock, flags);
+}
+
 void pmm_free_page(uint64_t phys_addr) {
     uint64_t page = phys_addr / PAGE_SIZE;
 

@@ -5,6 +5,9 @@
 
 #define pr_fmt(fmt) "[arm64] " fmt
 #include "klog.h"
+#include "kquiet.h"
+
+volatile int kernel_quiet = 0;
 
 #include "arch/serial.h"
 #include "arch/cpu.h"
@@ -283,7 +286,7 @@ void kmain(uint64_t dtb_addr) {
             serial_printf("[limnfs] Sync complete: %d copied, %d already exist\n",
                           synced, skipped);
 
-            vfs_mount_limnfs();
+                    vfs_mount_limnfs();
         }
     }
 
@@ -365,25 +368,22 @@ void kmain(uint64_t dtb_addr) {
     /* Create /dev with device nodes */
     vfs_mkdir("/dev");
     {
-        const struct { const char *name; int minor; } devs[] = {
-            {"null", DEV_NULL}, {"zero", DEV_ZERO},
-            {"urandom", DEV_URANDOM}, {"tty", DEV_TTY}, {(void*)0, 0}
-        };
         int dev_dir = vfs_resolve_path("/dev");
-        for (int i = 0; devs[i].name; i++) {
-            int idx = vfs_register_node(dev_dir, devs[i].name, VFS_DEVICE, 0, (void*)0);
-            if (idx >= 0) {
-                vfs_get_node(idx)->disk_inode = devs[i].minor;
-                vfs_get_node(idx)->mode = 0666;
-                vfs_get_node(idx)->flags = VFS_FLAG_WRITABLE;
-            }
-        }
+        int idx;
+        idx = vfs_register_node(dev_dir, "null", VFS_DEVICE, 0, NULL);
+        if (idx >= 0) { vfs_get_node(idx)->disk_inode = DEV_NULL; vfs_get_node(idx)->mode = 0666; vfs_get_node(idx)->flags = VFS_FLAG_WRITABLE; }
+        idx = vfs_register_node(dev_dir, "zero", VFS_DEVICE, 0, NULL);
+        if (idx >= 0) { vfs_get_node(idx)->disk_inode = DEV_ZERO; vfs_get_node(idx)->mode = 0666; vfs_get_node(idx)->flags = VFS_FLAG_WRITABLE; }
+        idx = vfs_register_node(dev_dir, "urandom", VFS_DEVICE, 0, NULL);
+        if (idx >= 0) { vfs_get_node(idx)->disk_inode = DEV_URANDOM; vfs_get_node(idx)->mode = 0666; vfs_get_node(idx)->flags = VFS_FLAG_WRITABLE; }
+        idx = vfs_register_node(dev_dir, "tty", VFS_DEVICE, 0, NULL);
+        if (idx >= 0) { vfs_get_node(idx)->disk_inode = DEV_TTY; vfs_get_node(idx)->mode = 0666; vfs_get_node(idx)->flags = VFS_FLAG_WRITABLE; }
     }
 
     /* Create /bin with busybox symlinks */
     vfs_mkdir("/bin");
     {
-        const char *applets[] = {
+        static const char *applets[] = {
             "vi", "ash", "sh", "sed", "awk", "grep", "cat", "ls", "cp",
             "mv", "rm", "mkdir", "rmdir", "echo", "printf", "head", "tail",
             "wc", "sort", "uniq", "cut", "tr", "tee", "find", "xargs",
@@ -401,15 +401,12 @@ void kmain(uint64_t dtb_addr) {
             const char *a = applets[i];
             while (*a) path[p++] = *a++;
             path[p] = '\0';
-            vfs_symlink(path, "/busybox.elf");
+            vfs_symlink(path, "/busybox-arm64.elf");
         }
     }
 
     /* Launch init (pid 1) — Unix standard */
-    {
-        extern volatile int kernel_quiet;
-        kernel_quiet = 1;
-    }
+    kernel_quiet = 1;
     pr_info("\nLaunching init...\n");
     {
         process_t *init_proc = load_elf_from_vfs("/init.elf");

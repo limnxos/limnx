@@ -59,6 +59,16 @@ static block_header_t *heap_expand(uint64_t min_size) {
     }
 
     for (uint64_t i = 0; i < pages_needed; i++) {
+#if defined(__aarch64__)
+        /* ARM64: identity-mapped, so VA == PA for the heap range.
+         * Just reserve the physical page at the heap VA address in PMM
+         * (mark as used so DMA/other allocations can't touch it).
+         * No vmm_map_page needed — the page is already identity-mapped. */
+        uint64_t heap_pa = heap_current_end;  /* VA == PA on ARM64 */
+        uint64_t page_num = heap_pa / PAGE_SIZE;
+        extern void pmm_mark_used(uint64_t page_num);
+        pmm_mark_used(page_num);
+#else
         uint64_t phys = pmm_alloc_page();
         if (phys == 0) {
             pr_err("out of physical memory\n");
@@ -69,6 +79,7 @@ static block_header_t *heap_expand(uint64_t min_size) {
             pmm_free_page(phys);
             return NULL;
         }
+#endif
         heap_current_end += PAGE_SIZE;
     }
 
