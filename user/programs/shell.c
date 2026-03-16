@@ -1797,6 +1797,17 @@ static long run_external(command_t *cmd) {
         /* Try without .elf extension */
         pid = sys_exec(path, (const char **)cmd->argv);
     }
+    if (pid <= 0) {
+        /* Try /bin/cmd (busybox symlinks) */
+        char bin_path[256];
+        int bp = 0;
+        const char *pfx = "/bin/";
+        while (*pfx) bin_path[bp++] = *pfx++;
+        for (int i = 0; cmd->argv[0][i] && bp < 255; i++)
+            bin_path[bp++] = cmd->argv[0][i];
+        bin_path[bp] = '\0';
+        pid = sys_exec(bin_path, (const char **)cmd->argv);
+    }
     return pid;
 }
 
@@ -1933,6 +1944,17 @@ static void execute_pipeline(command_t *cmds, int ncmds) {
                 /* sys_execve replaces this process — only returns on error */
                 sys_execve(epath_elf, (const char **)cmds[i].argv);
                 sys_execve(epath, (const char **)cmds[i].argv);
+                /* Try /bin/cmd (busybox symlinks) */
+                {
+                    char bpath[256];
+                    int bp = 0;
+                    const char *pfx = "/bin/";
+                    while (*pfx) bpath[bp++] = *pfx++;
+                    for (int j = 0; cmds[i].argv[0][j] && bp < 255; j++)
+                        bpath[bp++] = cmds[i].argv[0][j];
+                    bpath[bp] = '\0';
+                    sys_execve(bpath, (const char **)cmds[i].argv);
+                }
                 printf("%s: command not found\n", cmds[i].argv[0]);
                 sys_exit(127);
             }

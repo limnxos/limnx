@@ -897,6 +897,32 @@ void kmain(void) {
     /* Create home directories */
     vfs_mkdir("/root");
 
+    /* Create /bin with busybox symlinks for standard commands */
+    vfs_mkdir("/bin");
+    {
+        const char *applets[] = {
+            "vi", "ash", "sh", "sed", "awk", "grep", "cat", "ls", "cp",
+            "mv", "rm", "mkdir", "rmdir", "echo", "printf", "head", "tail",
+            "wc", "sort", "uniq", "cut", "tr", "tee", "find", "xargs",
+            "chmod", "chown", "touch", "ps", "kill", "sleep",
+            "true", "false", "test", "uname", "whoami", "id", "env",
+            "readlink", "basename", "dirname", "seq", "yes", "pwd",
+            "tar", "diff", "less", "more",
+            NULL
+        };
+        for (int i = 0; applets[i]; i++) {
+            char path[64];
+            int p = 0;
+            const char *pfx = "/bin/";
+            while (*pfx) path[p++] = *pfx++;
+            const char *a = applets[i];
+            while (*a) path[p++] = *a++;
+            path[p] = '\0';
+            vfs_symlink(path, "/busybox.elf");
+        }
+        pr_info("Created /bin with %d busybox symlinks\n", 47);
+    }
+
     /* Launch init (pid 1) — the Unix way.
      * Kernel sets up console PTY on init's fd 0/1/2.
      * Init reads /etc/inittab and spawns all services.

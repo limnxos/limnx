@@ -362,6 +362,31 @@ void kmain(uint64_t dtb_addr) {
 
     vfs_mkdir("/root");
 
+    /* Create /bin with busybox symlinks */
+    vfs_mkdir("/bin");
+    {
+        const char *applets[] = {
+            "vi", "ash", "sh", "sed", "awk", "grep", "cat", "ls", "cp",
+            "mv", "rm", "mkdir", "rmdir", "echo", "printf", "head", "tail",
+            "wc", "sort", "uniq", "cut", "tr", "tee", "find", "xargs",
+            "chmod", "chown", "touch", "ps", "kill", "sleep",
+            "true", "false", "test", "uname", "whoami", "id", "env",
+            "readlink", "basename", "dirname", "seq", "yes", "pwd",
+            "tar", "diff", "less", "more",
+            NULL
+        };
+        for (int i = 0; applets[i]; i++) {
+            char path[64];
+            int p = 0;
+            const char *pfx = "/bin/";
+            while (*pfx) path[p++] = *pfx++;
+            const char *a = applets[i];
+            while (*a) path[p++] = *a++;
+            path[p] = '\0';
+            vfs_symlink(path, "/busybox.elf");
+        }
+    }
+
     /* Launch init (pid 1) — Unix standard */
     pr_info("\nLaunching init...\n");
     {
