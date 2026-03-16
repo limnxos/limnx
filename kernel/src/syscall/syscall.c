@@ -235,7 +235,7 @@ static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
     [SYS_SELECT]           = sys_select,
     [SYS_DUP]              = sys_dup,
     [SYS_DUP2]             = sys_dup2,
-    [SYS_FORK]             = sys_fork,
+    [SYS_FORK]             = sys_fork_plain,
     [SYS_RENAME]           = sys_rename,
     [SYS_MKDIR]            = sys_mkdir,
 #ifdef __NR_creat
@@ -250,10 +250,10 @@ static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
     [SYS_EPOLL_WAIT]       = sys_epoll_wait,
 #endif
 
-    /* clone/vfork → fork mapping (musl uses clone instead of fork) */
+    /* clone: handles flags + child_stack properly (musl uses clone) */
     [__NR_clone]           = sys_fork,
 #ifdef __NR_vfork
-    [__NR_vfork]           = sys_fork,
+    [__NR_vfork]           = sys_fork_plain,
 #endif
 
     /* === Limnx-specific (512+) === */

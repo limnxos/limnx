@@ -89,10 +89,23 @@ void process_terminate(thread_t *t, int64_t status) {
         process_reparent_children(t->process->pid, 1);
         /* Free user-space pages (respects COW refcounts) */
         if (t->process->cr3) {
-            /* Switch to kernel PML4 before freeing */
-            arch_switch_address_space(vmm_get_kernel_pml4());
-            vmm_free_user_pages(t->process->cr3);
-            t->process->cr3 = 0;
+            if (t->process->vfork_parent) {
+                /* vfork child: don't free parent's address space */
+                process_t *vp = t->process->vfork_parent;
+                t->process->vfork_parent = NULL;
+                t->process->cr3 = 0;
+                /* Wake the vfork parent */
+                if (vp && !vp->exited) {
+                    vp->vfork_done = 1;
+                    arch_memory_barrier();
+                    if (vp->main_thread)
+                        sched_wake(vp->main_thread);
+                }
+            } else {
+                arch_switch_address_space(vmm_get_kernel_pml4());
+                vmm_free_user_pages(t->process->cr3);
+                t->process->cr3 = 0;
+            }
         }
         /* Notify supervisors about exit */
         supervisor_on_exit(t->process->pid, (int)status);
@@ -487,10 +500,23 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
         shm_unlock_release(sflags);
     }
 
-    /* Free old address space */
+    /* Free old address space (or skip if vfork child sharing parent's) */
     uint64_t old_cr3 = proc->cr3;
     arch_switch_address_space(vmm_get_kernel_pml4());
-    vmm_free_user_pages(old_cr3);
+    if (proc->vfork_parent) {
+        /* vfork child doing execve — don't free parent's address space.
+         * Wake the parent so it can resume. */
+        process_t *vp = proc->vfork_parent;
+        proc->vfork_parent = NULL;
+        if (vp && !vp->exited) {
+            vp->vfork_done = 1;
+            arch_memory_barrier();
+            if (vp->main_thread)
+                sched_wake(vp->main_thread);
+        }
+    } else {
+        vmm_free_user_pages(old_cr3);
+    }
 
     /* Install new address space */
     proc->cr3 = result.cr3;
@@ -664,10 +690,19 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
     /* Never reached */
 }
 
+/* sys_fork_plain: for __NR_fork — ignores all args, does regular COW fork */
+int64_t sys_fork_plain(uint64_t a1, uint64_t a2,
+                                uint64_t a3, uint64_t a4, uint64_t a5) {
+    return sys_fork(0x11 /* SIGCHLD */, 0, a3, a4, a5);
+}
+
+/* sys_fork: handles clone(flags, child_stack, ...) */
 int64_t sys_fork(uint64_t flags, uint64_t child_stack,
                           uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a3; (void)a4; (void)a5;
-    (void)flags;  /* TODO: handle CLONE_VM, CLONE_VFORK etc. */
+    #define CLONE_VM    0x00000100
+    #define CLONE_VFORK 0x00004000
+    int is_vfork = (flags & CLONE_VM) && (flags & CLONE_VFORK);
 
     thread_t *t = thread_get_current();
     process_t *proc = t->process;
@@ -725,14 +760,22 @@ int64_t sys_fork(uint64_t flags, uint64_t child_stack,
     }
 #endif
 
-    /* Note: clone child_stack is ignored since we don't support CLONE_VM.
-     * Our fork always creates a separate address space. The child starts
-     * on a COW copy of the parent's stack. This works for musl's fork()
-     * which calls clone(SIGCHLD, 0), but busybox's vfork pattern
-     * (clone with child_stack) needs CLONE_VM support to work properly. */
-    (void)child_stack;
+    /* Set child stack if provided (only for clone, not fork) */
+    if (child_stack != 0) {
+#if defined(__x86_64__)
+        ctx.rsp = child_stack;
+#elif defined(__aarch64__)
+        ctx.sp = child_stack;
+#endif
+    }
 
-    process_t *child = process_fork(proc, &ctx);
+    process_t *child;
+    if (is_vfork) {
+        /* vfork: share parent's address space, don't COW clone */
+        child = process_fork_vfork(proc, &ctx);
+    } else {
+        child = process_fork(proc, &ctx);
+    }
     if (!child) return -1;
 
     /* Increment pipe, PTY, unix_sock, eventfd, epoll, uring ref counts for inherited fds */
@@ -793,6 +836,15 @@ int64_t sys_fork(uint64_t flags, uint64_t child_stack,
 
     /* Adjust namespace quota after successful fork */
     agent_ns_quota_adjust(proc->ns_id, NS_QUOTA_PROCS, 1);
+
+    if (is_vfork) {
+        /* Block parent until child calls execve or exit */
+        proc->vfork_done = 0;
+        arch_memory_barrier();
+        while (!proc->vfork_done) {
+            sched_block(t);
+        }
+    }
 
     return (int64_t)child->pid;
 }

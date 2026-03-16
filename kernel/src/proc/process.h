@@ -125,6 +125,8 @@ typedef struct process {
     uint64_t      mmap_next_addr;
     uint64_t      brk_base;       /* program break base (end of ELF BSS) */
     uint64_t      brk_current;    /* current program break */
+    struct process *vfork_parent; /* non-NULL = vfork child, shares parent's cr3 */
+    volatile uint8_t vfork_done; /* parent blocks until child sets this to 1 */
     char          cwd[MAX_PATH];  /* per-process working directory */
     volatile uint32_t pending_signals;  /* bitfield of pending signals */
     uint32_t      signal_mask;      /* blocked signals bitmask */
@@ -159,6 +161,7 @@ int process_kill_group(uint64_t pgid, int signum);
 process_t *process_create(const uint8_t *code, uint64_t code_size);
 process_t *process_create_from_elf(const uint8_t *elf, uint64_t size);
 process_t *process_fork(process_t *parent, const fork_context_t *ctx);
+process_t *process_fork_vfork(process_t *parent, const fork_context_t *ctx);
 
 /* Process registry (spinlock-protected for SMP safety) */
 uint64_t   process_alloc_pid(void);

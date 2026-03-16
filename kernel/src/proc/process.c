@@ -174,35 +174,6 @@ static void process_enter_usermode(void) {
         }
     }
 
-    /* Add default environment entries if not already present */
-    {
-        const char *defaults[] = { "PATH=/bin", "HOME=/", "TERM=vt100", NULL };
-        for (int d = 0; defaults[d] && nenv < 62; d++) {
-            /* Check if key already exists in env */
-            int klen = 0;
-            while (defaults[d][klen] && defaults[d][klen] != '=') klen++;
-            int found = 0;
-            for (int e = 0; e < nenv; e++) {
-                const char *existing = (const char *)env_addrs[e];
-                int match = 1;
-                for (int k = 0; k <= klen; k++) {
-                    if (existing[k] != defaults[d][k]) { match = 0; break; }
-                }
-                if (match) { found = 1; break; }
-            }
-            if (!found) {
-                int slen = 0;
-                while (defaults[d][slen]) slen++;
-                slen++;
-                sp -= (uint64_t)slen;
-                char *dst = (char *)sp;
-                for (int j = 0; j < slen; j++) dst[j] = defaults[d][j];
-                env_addrs[nenv] = sp;
-                nenv++;
-            }
-        }
-    }
-
     sp &= ~0xFULL;
 
     /* 3. Build Linux stack layout: auxv, envp, argv, argc
@@ -767,6 +738,78 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     if (process_register(child) < 0) { kfree(child); return NULL; }
     /* NOTE: caller must call sched_add(child->main_thread) after
      * incrementing pipe/pty/unix_sock ref counts. */
+    return child;
+}
+
+/*
+ * process_fork_vfork — vfork variant: child shares parent's address space.
+ * Used for clone(CLONE_VM|CLONE_VFORK). Parent blocks until child execs/exits.
+ */
+process_t *process_fork_vfork(process_t *parent, const fork_context_t *ctx) {
+    process_t *child = (process_t *)kmalloc(sizeof(process_t));
+    if (!child) return NULL;
+    mem_zero(child, sizeof(process_t));
+
+    child->pid = process_alloc_pid();
+    child->parent_pid = parent->pid;
+    child->pgid = parent->pgid;
+    child->sid = parent->sid;
+    child->uid = parent->uid;
+    child->gid = parent->gid;
+    child->euid = parent->euid;
+    child->egid = parent->egid;
+    child->suid = parent->suid;
+    child->sgid = parent->sgid;
+    child->umask = parent->umask;
+    child->capabilities = parent->capabilities;
+    child->daemon = 0;
+    child->exit_status = 0;
+    child->exited = 0;
+    child->ns_id = parent->ns_id;
+    child->user_entry = parent->user_entry;
+    child->user_stack_top = parent->user_stack_top;
+    child->signal_mask = parent->signal_mask;
+    child->fork_ctx = *ctx;
+    for (int i = 0; i < 32; i++) child->name[i] = parent->name[i];
+
+    /* VFORK: share parent's address space (no COW clone) */
+    child->cr3 = parent->cr3;
+    child->vfork_parent = parent;
+
+    /* Copy fd_table */
+    for (int i = 0; i < MAX_FDS; i++)
+        child->fd_table[i] = parent->fd_table[i];
+
+    /* Do NOT copy mmap_table — vfork child doesn't own any mappings */
+    child->mmap_next_addr = parent->mmap_next_addr;
+
+    /* Copy cwd, argv, env, signal handlers */
+    for (int i = 0; i < MAX_PATH; i++) child->cwd[i] = parent->cwd[i];
+    child->argc = parent->argc;
+    child->argv_buf_len = parent->argv_buf_len;
+    for (int i = 0; i < parent->argv_buf_len; i++)
+        child->argv_buf[i] = parent->argv_buf[i];
+    child->env_count = parent->env_count;
+    child->env_buf_len = parent->env_buf_len;
+    for (int i = 0; i < parent->env_buf_len; i++)
+        child->env_buf[i] = parent->env_buf[i];
+    for (int i = 0; i < MAX_SIGNALS; i++)
+        child->sig_handlers[i] = parent->sig_handlers[i];
+
+    /* brk: inherit parent's */
+    child->brk_base = parent->brk_base;
+    child->brk_current = parent->brk_current;
+
+    /* No TCP connections */
+    for (int i = 0; i < 8; i++) child->tcp_conns[i] = 0;
+
+    thread_t *ct = thread_create(fork_child_entry, 0);
+    if (!ct) { kfree(child); return NULL; }
+    ct->process = child;
+    ct->fs_base = parent->main_thread->fs_base;
+    child->main_thread = ct;
+
+    if (process_register(child) < 0) { kfree(child); return NULL; }
     return child;
 }
 
