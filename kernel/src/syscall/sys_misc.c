@@ -986,7 +986,7 @@ int64_t sys_uname(uint64_t buf_ptr, uint64_t a2,
     s = "limnx";
     for (int i = 0; s[i]; i++) buf[65 + i] = s[i];
     /* release (offset 130) */
-    s = "1.6.0";
+    s = "1.10.0";
     for (int i = 0; s[i]; i++) buf[130 + i] = s[i];
     /* version (offset 195) */
     s = "#1 SMP";
