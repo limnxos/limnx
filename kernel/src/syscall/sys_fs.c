@@ -35,6 +35,7 @@ static void fill_linux_stat(struct linux_stat *ls, vfs_node_t *node, int node_id
         case VFS_DIRECTORY: ftype = S_IFDIR; break;
         case VFS_SYMLINK:   ftype = S_IFLNK; break;
         case VFS_FIFO:      ftype = S_IFIFO; break;
+        case VFS_DEVICE:    ftype = S_IFCHR; break;
         default:            ftype = S_IFREG; break;
     }
     ls->st_mode = ftype | (uint32_t)(node->mode & 0xFFF);
@@ -236,6 +237,30 @@ int64_t sys_read(uint64_t fd, uint64_t buf_ptr, uint64_t len,
         return -1;
 
     fd_entry_t *entry = &proc->fd_table[fd];
+
+    /* Device read */
+    if (entry->node && entry->node->type == VFS_DEVICE) {
+        int minor = entry->node->disk_inode;
+        uint8_t *dst = (uint8_t *)buf_ptr;
+        if (minor == DEV_NULL) return 0;  /* EOF */
+        if (minor == DEV_ZERO) {
+            for (uint64_t i = 0; i < len; i++) dst[i] = 0;
+            return (int64_t)len;
+        }
+        if (minor == DEV_URANDOM) {
+            static uint64_t seed = 0x12345678DEADBEEFULL;
+            for (uint64_t i = 0; i < len; i++) {
+                seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17;
+                dst[i] = (uint8_t)(seed & 0xFF);
+            }
+            return (int64_t)len;
+        }
+        if (minor == DEV_TTY) {
+            /* /dev/tty reads from the process's stdin (fd 0) */
+            return sys_read(0, buf_ptr, len, 0, 0);
+        }
+        return -ENODEV;
+    }
 
     /* Pipe read */
     if (entry->pipe != NULL) {
@@ -568,6 +593,14 @@ int64_t sys_fwrite(uint64_t fd, uint64_t buf_ptr, uint64_t len,
         return -1;
 
     fd_entry_t *entry = &proc->fd_table[fd];
+
+    /* Device write */
+    if (entry->node && entry->node->type == VFS_DEVICE) {
+        int minor = entry->node->disk_inode;
+        if (minor == DEV_NULL) return (int64_t)len;  /* discard */
+        if (minor == DEV_TTY) return sys_fwrite(1, buf_ptr, len, 0, 0);
+        return -ENODEV;
+    }
 
     /* Pipe write */
     if (entry->pipe != NULL) {

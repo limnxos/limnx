@@ -900,6 +900,28 @@ void kmain(void) {
     /* Create home directories */
     vfs_mkdir("/root");
 
+    /* Create /dev with device nodes */
+    vfs_mkdir("/dev");
+    {
+        const struct { const char *name; int minor; } devs[] = {
+            {"null",    DEV_NULL},
+            {"zero",    DEV_ZERO},
+            {"urandom", DEV_URANDOM},
+            {"tty",     DEV_TTY},
+            {NULL, 0}
+        };
+        int dev_dir = vfs_resolve_path("/dev");
+        for (int i = 0; devs[i].name; i++) {
+            int idx = vfs_register_node(dev_dir, devs[i].name, VFS_DEVICE, 0, NULL);
+            if (idx >= 0) {
+                vfs_get_node(idx)->disk_inode = devs[i].minor;
+                vfs_get_node(idx)->mode = 0666;
+                vfs_get_node(idx)->flags = VFS_FLAG_WRITABLE;
+            }
+        }
+        pr_info("Created /dev with %d device nodes\n", 4);
+    }
+
     /* Create /bin with busybox symlinks for standard commands */
     vfs_mkdir("/bin");
     {

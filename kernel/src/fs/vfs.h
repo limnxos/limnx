@@ -7,6 +7,13 @@
 #define VFS_DIRECTORY 1
 #define VFS_SYMLINK   2
 #define VFS_FIFO      3
+#define VFS_DEVICE    4
+
+/* Device minor numbers (stored in vfs_node.disk_inode for VFS_DEVICE) */
+#define DEV_NULL      0
+#define DEV_ZERO      1
+#define DEV_URANDOM   2
+#define DEV_TTY       3
 
 #define MAX_VFS_NODES 1024
 #define MAX_SYMLINK_DEPTH 8
