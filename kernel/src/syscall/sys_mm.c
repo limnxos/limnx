@@ -54,15 +54,13 @@ int64_t sys_mmap(uint64_t addr_hint, uint64_t length,
     if (slot < 0)
         return -1;
 
-    /* Allocate contiguous physical pages */
-    uint64_t phys = pmm_alloc_contiguous((uint32_t)num_pages);
-    if (phys == 0)
-        return -ENOMEM;
-
-    /* Map pages into process address space */
+    /* Allocate pages individually (don't need physical contiguity for mmap) */
     uint64_t virt = proc->mmap_next_addr;
+    uint64_t first_phys = 0;
     for (uint64_t i = 0; i < num_pages; i++) {
-        uint64_t page_phys = phys + i * PAGE_SIZE;
+        uint64_t page_phys = pmm_alloc_page();
+        if (page_phys == 0) return -ENOMEM;
+        if (i == 0) first_phys = page_phys;
         uint64_t page_virt = virt + i * PAGE_SIZE;
 
         /* Zero the page */
@@ -72,16 +70,14 @@ int64_t sys_mmap(uint64_t addr_hint, uint64_t length,
 
         if (vmm_map_page_in(proc->cr3, page_virt, page_phys,
                             PTE_USER | PTE_WRITABLE | PTE_NX) != 0) {
-            /* Cleanup: free all allocated pages */
-            for (uint64_t k = 0; k < num_pages; k++)
-                pmm_free_page(phys + k * PAGE_SIZE);
-            return -1;
+            pmm_free_page(page_phys);
+            return -ENOMEM;
         }
     }
 
-    /* Record the mapping */
+    /* Record the mapping (phys_addr is first page only — pages may not be contiguous) */
     proc->mmap_table[slot].virt_addr = virt;
-    proc->mmap_table[slot].phys_addr = phys;
+    proc->mmap_table[slot].phys_addr = first_phys;
     proc->mmap_table[slot].num_pages = (uint32_t)num_pages;
     proc->mmap_table[slot].used = 1;
     proc->mmap_table[slot].shm_id = -1;

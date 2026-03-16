@@ -3,6 +3,7 @@
 
 #include "proc/elf.h"
 #include "mm/vmm.h"
+#include "kutil.h"
 #include "mm/pmm.h"
 #include "arch/serial.h"
 #include "syscall/syscall.h"  /* USER_ADDR_MAX */
@@ -113,8 +114,7 @@ int elf_load(const uint8_t *data, uint64_t size, elf_load_result_t *result) {
 
             /* Zero the entire page first */
             uint8_t *page = (uint8_t *)PHYS_TO_VIRT(phys);
-            for (uint64_t j = 0; j < PAGE_SIZE; j++)
-                page[j] = 0;
+            mem_zero(page, PAGE_SIZE);
 
             /* Copy file data that falls within this page */
             uint64_t page_start = virt;
