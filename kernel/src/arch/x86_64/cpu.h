@@ -141,12 +141,21 @@ static inline __attribute__((noreturn))
 void arch_enter_forked_child(const void *fork_ctx_ptr) {
     __asm__ volatile (
         "mov %0, %%rax\n"
+        /* Callee-saved */
         "mov 24(%%rax), %%rbp\n"
         "mov 32(%%rax), %%rbx\n"
         "mov 40(%%rax), %%r12\n"
         "mov 48(%%rax), %%r13\n"
         "mov 56(%%rax), %%r14\n"
         "mov 64(%%rax), %%r15\n"
+        /* Caller-saved (needed by musl clone — fn in r9) */
+        "mov 72(%%rax), %%rdi\n"
+        "mov 80(%%rax), %%rsi\n"
+        "mov 88(%%rax), %%rdx\n"
+        "mov 96(%%rax), %%r8\n"
+        "mov 104(%%rax), %%r9\n"
+        "mov 112(%%rax), %%r10\n"
+        /* SYSRET: rcx=rip, r11=rflags, rsp, rax=0 */
         "mov 0(%%rax), %%rcx\n"
         "mov 16(%%rax), %%r11\n"
         "mov 8(%%rax), %%rsp\n"

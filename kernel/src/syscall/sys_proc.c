@@ -730,6 +730,13 @@ int64_t sys_fork(uint64_t flags, uint64_t child_stack,
     ctx.r13    = kstack_top[-7];
     ctx.r14    = kstack_top[-8];
     ctx.r15    = kstack_top[-9];
+    /* Caller-saved registers — needed by musl's clone (fn in R9) */
+    ctx.rdi    = kstack_top[-10];
+    ctx.rsi    = kstack_top[-11];
+    ctx.rdx    = kstack_top[-12];
+    ctx.r10    = kstack_top[-13];
+    ctx.r8     = kstack_top[-14];
+    ctx.r9     = kstack_top[-15];
 #elif defined(__aarch64__)
     /* Read user context directly from the exception frame saved by
      * vectors.S SAVE_CONTEXT. Per-thread arch_frame set by

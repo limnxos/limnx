@@ -75,6 +75,7 @@ typedef struct mmap_entry {
 typedef struct fork_context {
     uint64_t rip, rsp, rflags;
     uint64_t rbp, rbx, r12, r13, r14, r15;
+    uint64_t rdi, rsi, rdx, r8, r9, r10;  /* caller-saved, needed for clone */
 } fork_context_t;
 #elif defined(__aarch64__)
 typedef struct fork_context {
