@@ -152,21 +152,28 @@ static void test_stat(void) {
     long ret = sys_stat("/etc", st);
     lt_ok(ret == 0, "stat /etc");
 
-    /* st_mode at offset 24 (uint32_t): should have S_IFDIR (0040000) */
-    uint32_t mode = *(uint32_t *)(st + 24);
+    /* st_mode offset: 24 on x86_64, 16 on ARM64 (asm-generic) */
+#if defined(__aarch64__)
+    #define STAT_MODE_OFF 16
+    #define STAT_SIZE_OFF 48
+#else
+    #define STAT_MODE_OFF 24
+    #define STAT_SIZE_OFF 48
+#endif
+    uint32_t mode = *(uint32_t *)(st + STAT_MODE_OFF);
     lt_ok((mode & 0170000) == 0040000, "stat mode has S_IFDIR");
 
-    /* st_size at offset 48 (int64_t) */
-    int64_t size = *(int64_t *)(st + 48);
+    /* st_size at offset 48 (same on both) */
+    int64_t size = *(int64_t *)(st + STAT_SIZE_OFF);
     lt_ok(size >= 0, "stat size non-negative");
 
     /* Test stat on a regular file */
     memset(st, 0, 144);
     ret = sys_stat("/etc/inittab", st);
     lt_ok(ret == 0, "stat /etc/inittab");
-    mode = *(uint32_t *)(st + 24);
+    mode = *(uint32_t *)(st + STAT_MODE_OFF);
     lt_ok((mode & 0170000) == 0100000, "stat mode has S_IFREG");
-    size = *(int64_t *)(st + 48);
+    size = *(int64_t *)(st + STAT_SIZE_OFF);
     lt_ok(size > 0, "stat file size > 0");
 }
 

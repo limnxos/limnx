@@ -3,10 +3,10 @@
 set -e
 
 TESTS="fs_test proc_test mm_test ipc_test security_test libc_test sched_test system_test net_test infer_test"
-X86_DELAY=22
-ARM64_DELAY=30
-X86_TIMEOUT=45
-ARM64_TIMEOUT=55
+X86_DELAY=30
+ARM64_DELAY=35
+X86_TIMEOUT=60
+ARM64_TIMEOUT=70
 PASS=0
 FAIL=0
 TOTAL=0
@@ -37,14 +37,14 @@ run_test() {
     dd if=/dev/zero of=build/disk.img bs=1M count=64 2>/dev/null
 
     if [ "$ARCH" = "x86_64" ]; then
-        (sleep $DELAY; printf "${TEST}\n"; sleep 10; printf "exit\n") | \
+        (sleep $DELAY; printf "/${TEST}.elf\n"; sleep 10; printf "exit\n") | \
             timeout $TIMEOUT qemu-system-x86_64 -M q35 -m 4G -smp 2 -nographic -no-reboot \
             -cdrom limnx.iso \
             -drive file=build/disk.img,format=raw,if=virtio \
             -netdev user,id=net0 -device virtio-net-pci,netdev=net0 \
             >"$LOGFILE" 2>&1 || true
     else
-        (sleep $DELAY; printf "${TEST}\n"; sleep 12; printf "exit\n") | \
+        (sleep $DELAY; printf "/${TEST}.elf\n"; sleep 12; printf "exit\n") | \
             timeout $TIMEOUT qemu-system-aarch64 -M virt -cpu cortex-a57 -m 256M -smp 2 -nographic \
             -kernel build/arm64/kernel \
             -drive file=build/disk.img,format=raw,if=none,id=hd0 \
