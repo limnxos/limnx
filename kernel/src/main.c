@@ -877,7 +877,7 @@ void kmain(void) {
                 "# Init config: name:path:flags\n"
                 "# flags: respawn, once, wait\n"
                 "serviced:/serviced.elf:respawn\n"
-                "shell:/shell.elf:wait\n";
+                "shell:/bin/ash:wait\n";
             int len = 0;
             while (inittab[len]) len++;
             vfs_write(tab_node, 0, (const uint8_t *)inittab, len);

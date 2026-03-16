@@ -157,7 +157,7 @@ int main(void) {
         svc = &services[service_count++];
         memset(svc, 0, sizeof(*svc));
         strcpy(svc->name, "shell");
-        strcpy(svc->path, "/shell.elf");
+        strcpy(svc->path, "/bin/ash");
         svc->flags = SVC_WAIT;
     }
 
