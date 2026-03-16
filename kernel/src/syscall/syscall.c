@@ -372,8 +372,12 @@ static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
 
 int64_t syscall_dispatch(uint64_t num, uint64_t arg1, uint64_t arg2,
                           uint64_t arg3, uint64_t arg4, uint64_t arg5) {
-    if (num >= SYS_NR || !syscall_table[num])
+    if (num >= SYS_NR || !syscall_table[num]) {
+        thread_t *et = thread_get_current();
+        if (et && et->process && et->process->pid >= 3)
+            serial_printf("[ENOSYS] pid=%lu sc=%lu\n", et->process->pid, num);
         return -ENOSYS;
+    }
 
     /* Seccomp filtering — bitmask covers syscalls 0-127.
      * Syscalls >= 128 (including Limnx custom 512+) are allowed if

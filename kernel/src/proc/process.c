@@ -709,7 +709,11 @@ process_t *process_fork(process_t *parent, const fork_context_t *ctx) {
     child->sig_queue.tail = 0;
     child->sig_queue.count = 0;
     child->signal_depth = 0;
-    child->fork_ctx = *ctx;  /* per-child saved user context */
+    { /* Copy fork context (avoid memcpy on ARM64) */
+        const uint8_t *s = (const uint8_t *)ctx;
+        uint8_t *d = (uint8_t *)&child->fork_ctx;
+        for (unsigned i = 0; i < sizeof(fork_context_t); i++) d[i] = s[i];
+    }
     for (int i = 0; i < 32; i++) child->name[i] = parent->name[i];
 
     /* Clone address space with COW */
@@ -795,7 +799,9 @@ process_t *process_fork_vfork(process_t *parent, const fork_context_t *ctx) {
     child->user_entry = parent->user_entry;
     child->user_stack_top = parent->user_stack_top;
     child->signal_mask = parent->signal_mask;
-    child->fork_ctx = *ctx;
+    { const uint8_t *s = (const uint8_t *)ctx;
+      uint8_t *d = (uint8_t *)&child->fork_ctx;
+      for (unsigned i = 0; i < sizeof(fork_context_t); i++) d[i] = s[i]; }
     for (int i = 0; i < 32; i++) child->name[i] = parent->name[i];
 
     /* VFORK: share parent's address space (no COW clone) */

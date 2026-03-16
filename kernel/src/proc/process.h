@@ -79,13 +79,10 @@ typedef struct fork_context {
 } fork_context_t;
 #elif defined(__aarch64__)
 typedef struct fork_context {
+    uint64_t x[31];     /* x0-x30 (full register set) */
     uint64_t elr;       /* exception link register (return PC) */
     uint64_t sp;        /* user stack pointer */
     uint64_t spsr;      /* saved program status register */
-    uint64_t x19, x20, x21, x22, x23, x24;
-    uint64_t x25, x26, x27, x28;
-    uint64_t x29;       /* frame pointer */
-    uint64_t x30;       /* link register (return address) */
 } fork_context_t;
 #endif
 

@@ -75,44 +75,42 @@ arch_enter_usermode_asm:
  * void arch_enter_forked_child_asm(const fork_context_t *ctx)
  *   x0 = pointer to fork_context_t
  *
- * fork_context_t layout (ARM64):
- *   offset  0: elr  (saved PC)
- *   offset  8: sp   (saved user SP)
- *   offset 16: spsr (saved PSTATE)
- *   offset 24: x19
- *   offset 32: x20
- *   offset 40: x21
- *   offset 48: x22
- *   offset 56: x23
- *   offset 64: x24
- *   offset 72: x25
- *   offset 80: x26
- *   offset 88: x27
- *   offset 96: x28
- *   offset 104: x29
- *   offset 112: x30 (LR)
+ * fork_context_t layout (ARM64) — full register set like Linux's pt_regs:
+ *   offset   0: x[0]..x[30]  (31 × 8 = 248 bytes)
+ *   offset 248: elr  (saved PC)
+ *   offset 256: sp   (saved user SP)
+ *   offset 264: spsr (saved PSTATE)
  */
 .global arch_enter_forked_child_asm
 arch_enter_forked_child_asm:
-    /* Disable interrupts — same as arch_enter_usermode_asm.
-     * ELR/SPSR writes must be atomic with ERET. */
+    /* Disable interrupts — ELR/SPSR writes must be atomic with ERET */
     msr     daifset, #0xf
 
-    /* Load system registers from fork context */
-    ldr     x1, [x0, #0]       /* elr */
-    ldr     x2, [x0, #8]       /* sp */
-    ldr     x3, [x0, #16]      /* spsr */
+    /* Load system registers */
+    ldr     x1, [x0, #248]     /* elr */
+    ldr     x2, [x0, #256]     /* sp */
+    ldr     x3, [x0, #264]     /* spsr */
     msr     elr_el1, x1
     msr     sp_el0, x2
     msr     spsr_el1, x3
 
-    /* Restore callee-saved registers + LR */
-    ldp     x19, x20, [x0, #24]
-    ldp     x21, x22, [x0, #40]
-    ldp     x23, x24, [x0, #56]
-    ldp     x25, x26, [x0, #72]
-    ldp     x27, x28, [x0, #88]
-    ldp     x29, x30, [x0, #104]
+    /* Restore ALL general-purpose registers x1-x30 from fork context.
+     * x0 is set to 0 (fork return value) AFTER restoring others. */
+    ldp     x1,  x2,  [x0, #8]
+    ldp     x3,  x4,  [x0, #24]
+    ldp     x5,  x6,  [x0, #40]
+    ldp     x7,  x8,  [x0, #56]
+    ldp     x9,  x10, [x0, #72]
+    ldp     x11, x12, [x0, #88]
+    ldp     x13, x14, [x0, #104]
+    ldp     x15, x16, [x0, #120]
+    ldp     x17, x18, [x0, #136]
+    ldp     x19, x20, [x0, #152]
+    ldp     x21, x22, [x0, #168]
+    ldp     x23, x24, [x0, #184]
+    ldp     x25, x26, [x0, #200]
+    ldp     x27, x28, [x0, #216]
+    ldp     x29, x30, [x0, #232]
 
     /* Child returns 0 from fork */
     mov     x0, #0

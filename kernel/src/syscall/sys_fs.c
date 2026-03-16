@@ -568,6 +568,7 @@ int64_t sys_stat(uint64_t path_ptr, uint64_t stat_ptr,
     struct linux_stat ls;
     fill_linux_stat(&ls, node, idx);
 
+
     /* Copy to user buffer */
     uint8_t *dst = (uint8_t *)stat_ptr;
     const uint8_t *src = (const uint8_t *)&ls;

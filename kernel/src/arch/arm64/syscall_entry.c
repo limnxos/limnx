@@ -79,6 +79,7 @@ void arm64_sync_handler(arm64_frame_t *frame, uint64_t esr) {
             (long)frame->x[4]);
         frame->x[0] = (uint64_t)ret;
 
+        /* Debug: log return value for traced syscalls */
         /* Check for pending signal delivery (mirrors x86_64 syscall_entry.asm) */
         percpu_t *pc = percpu_get();
         if (pc->signal_deliver_pending) {

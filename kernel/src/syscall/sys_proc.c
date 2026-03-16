@@ -363,14 +363,20 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
 
     /* Copy path from user space (before we destroy the address space) */
     char raw_path[MAX_PATH], path[MAX_PATH];
-    if (copy_string_from_user((const char *)path_ptr, raw_path, MAX_PATH) != 0)
+    if (copy_string_from_user((const char *)path_ptr, raw_path, MAX_PATH) != 0) {
+        serial_printf("[execve] EFAULT: path_ptr=%lx pid=%lu\n", path_ptr, proc->pid);
         return -EFAULT;
+    }
     resolve_user_path(proc, raw_path, path);
+    serial_printf("[execve] pid=%lu path=%s\n", proc->pid, path);
 
     /* Check CAP_EXEC */
     if (!(proc->capabilities & CAP_EXEC) &&
-        !cap_token_check(proc->pid, CAP_EXEC, path))
+        !cap_token_check(proc->pid, CAP_EXEC, path)) {
+        serial_printf("[execve] CAP_EXEC denied: pid=%lu caps=%x path=%s\n",
+                      proc->pid, proc->capabilities, path);
         return -EACCES;
+    }
 
     /* Open and read the ELF file */
     int node_idx = vfs_open(path);
@@ -378,8 +384,10 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
         return -ENOENT;
 
     vfs_node_t *exec_node = vfs_get_node(node_idx);
-    if (exec_node && !(exec_node->mode & VFS_PERM_EXEC))
+    if (exec_node && !(exec_node->mode & VFS_PERM_EXEC)) {
+        serial_printf("[execve] EACCES: %s mode=%o\n", path, exec_node->mode);
         return -EACCES;
+    }
 
     /* Capture setuid/setgid bits before we lose exec_node access */
     uint16_t exec_mode = exec_node ? exec_node->mode : 0;
@@ -745,26 +753,16 @@ int64_t sys_fork(uint64_t flags, uint64_t child_stack,
     {
         uint64_t *frame = (uint64_t *)t->arch_frame;
         /* SAVE_CONTEXT layout (arm64_frame_t / interrupt_frame_t):
-         *   [frame+0..240]  = x0-x30
+         *   [frame+0..240]  = x0-x30 (31 regs × 8 bytes)
          *   [frame+248]     = elr_el1
          *   [frame+256]     = spsr_el1
          *   [frame+264]     = sp_el0 */
+        /* Save ALL general-purpose registers (like Linux's copy_thread) */
+        for (int r = 0; r < 31; r++)
+            ctx.x[r] = frame[r];
         ctx.elr  = *(uint64_t *)((uint8_t *)frame + 248);
         ctx.sp   = *(uint64_t *)((uint8_t *)frame + 264);
         ctx.spsr = *(uint64_t *)((uint8_t *)frame + 256);
-        /* Callee-saved regs from SAVE_CONTEXT: x19-x29 */
-        ctx.x19  = frame[19];
-        ctx.x20  = frame[20];
-        ctx.x21  = frame[21];
-        ctx.x22  = frame[22];
-        ctx.x23  = frame[23];
-        ctx.x24  = frame[24];
-        ctx.x25  = frame[25];
-        ctx.x26  = frame[26];
-        ctx.x27  = frame[27];
-        ctx.x28  = frame[28];
-        ctx.x29  = frame[29];
-        ctx.x30  = frame[30];  /* LR — SAVE_CONTEXT stores x30 at [sp+240] = frame[30] */
     }
 #endif
 
@@ -776,6 +774,7 @@ int64_t sys_fork(uint64_t flags, uint64_t child_stack,
         ctx.sp = child_stack;
 #endif
     }
+
 
     process_t *child;
     if (is_vfork) {
