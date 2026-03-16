@@ -174,6 +174,34 @@ static void process_enter_usermode(void) {
         }
     }
 
+    /* Add default environment entries if not already present */
+    {
+        const char *defaults[] = { "PATH=/bin", "HOME=/", "TERM=vt100", NULL };
+        for (int d = 0; defaults[d] && nenv < 62; d++) {
+            int klen = 0;
+            while (defaults[d][klen] && defaults[d][klen] != '=') klen++;
+            int found = 0;
+            for (int e = 0; e < nenv; e++) {
+                const char *existing = (const char *)env_addrs[e];
+                int match = 1;
+                for (int k = 0; k <= klen; k++) {
+                    if (existing[k] != defaults[d][k]) { match = 0; break; }
+                }
+                if (match) { found = 1; break; }
+            }
+            if (!found) {
+                int slen = 0;
+                while (defaults[d][slen]) slen++;
+                slen++;
+                sp -= (uint64_t)slen;
+                char *dst = (char *)sp;
+                for (int j = 0; j < slen; j++) dst[j] = defaults[d][j];
+                env_addrs[nenv] = sp;
+                nenv++;
+            }
+        }
+    }
+
     sp &= ~0xFULL;
 
     /* 3. Build Linux stack layout: auxv, envp, argv, argc
