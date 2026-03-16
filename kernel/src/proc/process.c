@@ -664,8 +664,6 @@ static void fork_child_entry(void) {
     arch_prepare_usermode_return();
     arch_set_tls_base(t->fs_base);
 #if defined(__aarch64__)
-    if (!kernel_quiet) serial_printf("[fork-child] elr=%lx x30=%lx sp=%lx\n",
-                  proc->fork_ctx.elr, proc->fork_ctx.x30, proc->fork_ctx.sp);
 #endif
     arch_enter_forked_child(&proc->fork_ctx);
 }

@@ -708,6 +708,7 @@ int64_t sys_fork(uint64_t flags, uint64_t child_stack,
     process_t *proc = t->process;
     if (!proc) return -1;
 
+
     /* Namespace process quota check */
     if (!agent_ns_quota_check(proc->ns_id, NS_QUOTA_PROCS, 1))
         return -ENOMEM;

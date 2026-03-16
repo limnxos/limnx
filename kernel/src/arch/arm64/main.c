@@ -344,7 +344,7 @@ void kmain(uint64_t dtb_addr) {
             const char *inittab =
                 "# Init config: name:path:flags\n"
                 "serviced:/serviced.elf:respawn\n"
-                "shell:/shell.elf:wait\n";
+                "shell:/bin/ash:wait\n";
             int len = 0;
             while (inittab[len]) len++;
             vfs_write(tab_node, 0, (const uint8_t *)inittab, len);
