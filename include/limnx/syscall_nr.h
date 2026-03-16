@@ -94,6 +94,7 @@
 #define SYS_IO_URING_ENTER  __NR_io_uring_enter
 #define SYS_GETRANDOM       __NR_getrandom
 #define SYS_UTIMENSAT       __NR_utimensat
+#define SYS_PPOLL           __NR_ppoll
 /* *at() variants — both archs */
 #define SYS_OPENAT          __NR_openat
 #define SYS_MKDIRAT         __NR_mkdirat
