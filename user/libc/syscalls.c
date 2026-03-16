@@ -14,6 +14,9 @@
 /* Syscall numbers — single source of truth */
 #include "limnx/syscall_nr.h"
 
+/* AT_FDCWD: dirfd sentinel meaning "resolve relative to cwd" */
+#define AT_FDCWD (-100)
+
 /* --- Syscall wrappers --- */
 
 long sys_write(const void *buf, unsigned long len) {
@@ -30,7 +33,11 @@ void __attribute__((noreturn)) sys_exit(long status) {
 }
 
 long sys_open(const char *path, unsigned long flags) {
+#ifdef __aarch64__
+    return __syscall3(SYS_OPEN, AT_FDCWD, (long)path, (long)flags);
+#else
     return __syscall2(SYS_OPEN, (long)path, (long)flags);
+#endif
 }
 
 long sys_read(long fd, void *buf, unsigned long len) {
@@ -42,7 +49,11 @@ long sys_close(long fd) {
 }
 
 long sys_stat(const char *path, void *stat_buf) {
+#ifdef __aarch64__
+    return __syscall4(SYS_STAT, AT_FDCWD, (long)path, (long)stat_buf, 0);
+#else
     return __syscall2(SYS_STAT, (long)path, (long)stat_buf);
+#endif
 }
 
 long sys_exec(const char *path, const char **argv) {
@@ -72,11 +83,20 @@ long sys_fwrite(long fd, const void *buf, unsigned long len) {
 }
 
 long sys_create(const char *path) {
+#ifdef __aarch64__
+    /* creat → openat(AT_FDCWD, path, O_CREAT|O_WRONLY|O_TRUNC, 0666) */
+    return __syscall4(SYS_CREAT, AT_FDCWD, (long)path, 0x241, 0666);
+#else
     return __syscall1(SYS_CREAT, (long)path);
+#endif
 }
 
 long sys_unlink(const char *path) {
+#ifdef __aarch64__
+    return __syscall3(SYS_UNLINK, AT_FDCWD, (long)path, 0);
+#else
     return __syscall1(SYS_UNLINK, (long)path);
+#endif
 }
 
 long sys_mmap(unsigned long num_pages) {
@@ -117,7 +137,11 @@ long sys_readdir(const char *dir_path, unsigned long index, void *dirent_ptr) {
 }
 
 long sys_mkdir(const char *path) {
+#ifdef __aarch64__
+    return __syscall3(SYS_MKDIR, AT_FDCWD, (long)path, 0755);
+#else
     return __syscall1(SYS_MKDIR, (long)path);
+#endif
 }
 
 long sys_seek(long fd, long offset, int whence) {
@@ -141,15 +165,29 @@ long sys_fstat(long fd, void *stat_buf) {
 }
 
 long sys_rename(const char *old_path, const char *new_path) {
+#ifdef __aarch64__
+    /* renameat2(AT_FDCWD, old, AT_FDCWD, new, 0) */
+    return __syscall5(SYS_RENAME, AT_FDCWD, (long)old_path, AT_FDCWD, (long)new_path, 0);
+#else
     return __syscall2(SYS_RENAME, (long)old_path, (long)new_path);
+#endif
 }
 
 long sys_dup(long fd) {
+#ifdef __aarch64__
+    /* dup3(oldfd, newfd, 0) — but dup has no newfd, use fcntl F_DUPFD instead */
+    return __syscall3(SYS_FCNTL, fd, 0 /* F_DUPFD */, 0);
+#else
     return __syscall1(SYS_DUP, fd);
+#endif
 }
 
 long sys_dup2(long oldfd, long newfd) {
+#ifdef __aarch64__
+    return __syscall3(SYS_DUP2, oldfd, newfd, 0);
+#else
     return __syscall2(SYS_DUP2, oldfd, newfd);
+#endif
 }
 
 long sys_kill(long pid, long signal) {
@@ -169,7 +207,11 @@ long sys_getpgid(long pid) {
 }
 
 long sys_chmod(const char *path, long mode) {
+#ifdef __aarch64__
+    return __syscall3(SYS_CHMOD, AT_FDCWD, (long)path, mode);
+#else
     return __syscall2(SYS_CHMOD, (long)path, mode);
+#endif
 }
 
 long sys_shmget(long key, long num_pages) {
@@ -565,7 +607,11 @@ long sys_environ(void *buf, unsigned long buf_size) {
 }
 
 long sys_chown(const char *path, long uid, long gid) {
+#ifdef __aarch64__
+    return __syscall5(SYS_CHOWN, AT_FDCWD, (long)path, uid, gid, 0);
+#else
     return __syscall3(SYS_CHOWN, (long)path, uid, gid);
+#endif
 }
 
 long sys_fchown(long fd, long uid, long gid) {
@@ -593,11 +639,20 @@ long sys_setgroups(long count, const void *buf) {
 }
 
 long sys_symlink(const char *target, const char *path) {
+#ifdef __aarch64__
+    /* symlinkat(target, AT_FDCWD, linkpath) */
+    return __syscall3(SYS_SYMLINK, (long)target, AT_FDCWD, (long)path);
+#else
     return __syscall2(SYS_SYMLINK, (long)target, (long)path);
+#endif
 }
 
 long sys_readlink(const char *path, char *buf, unsigned long bufsize) {
+#ifdef __aarch64__
+    return __syscall4(SYS_READLINK, AT_FDCWD, (long)path, (long)buf, (long)bufsize);
+#else
     return __syscall3(SYS_READLINK, (long)path, (long)buf, (long)bufsize);
+#endif
 }
 
 long sys_setsid(void) {

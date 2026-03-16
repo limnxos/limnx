@@ -216,7 +216,9 @@ static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
     [SYS_MKDIRAT]          = sys_mkdirat,
     [SYS_FSTATAT]          = sys_fstatat,
     [SYS_UNLINKAT]         = sys_unlinkat,
-    [SYS_RENAME]           = sys_rename,
+#ifdef __aarch64__
+    [SYS_RENAME]           = sys_renameat2,
+#endif
     [SYS_SYMLINKAT]        = sys_symlinkat,
     [SYS_READLINKAT]       = sys_readlinkat,
     [SYS_FCHMODAT]         = sys_fchmodat,

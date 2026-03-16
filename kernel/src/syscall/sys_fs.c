@@ -1066,6 +1066,14 @@ int64_t sys_rename(uint64_t old_path_ptr, uint64_t new_path_ptr,
     return vfs_rename(old_path, new_path);
 }
 
+/* renameat2(olddirfd, oldpath, newdirfd, newpath, flags) — wrapper */
+int64_t sys_renameat2(uint64_t olddirfd, uint64_t old_path_ptr,
+                      uint64_t newdirfd, uint64_t new_path_ptr, uint64_t flags) {
+    (void)olddirfd; (void)newdirfd; (void)flags;
+    /* Ignore dirfd (only AT_FDCWD supported) and flags */
+    return sys_rename(old_path_ptr, new_path_ptr, 0, 0, 0);
+}
+
 int64_t sys_chmod(uint64_t path_ptr, uint64_t mode,
                            uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a3; (void)a4; (void)a5;
