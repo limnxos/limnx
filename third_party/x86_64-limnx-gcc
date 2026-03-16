@@ -1,9 +1,19 @@
 #!/bin/bash
 # Wrapper GCC for cross-compiling against musl for Limnx
 MUSL=/Users/kursataydemir/limnr/limnx/third_party/musl-install
-exec x86_64-elf-gcc -nostdlib \
-    -isystem "$MUSL/include" \
-    "$MUSL/lib/crt1.o" "$MUSL/lib/crti.o" \
-    "$@" \
-    -L"$MUSL/lib" -lc -lgcc \
-    "$MUSL/lib/crtn.o"
+COMPILE_ONLY=0
+for arg in "$@"; do
+    case "$arg" in
+        -c|-S|-E|-r) COMPILE_ONLY=1 ;;
+    esac
+done
+if [ "$COMPILE_ONLY" = "1" ]; then
+    exec x86_64-elf-gcc -nostdlib -isystem "$MUSL/include" "$@"
+else
+    exec x86_64-elf-gcc -nostdlib \
+        -isystem "$MUSL/include" \
+        "$MUSL/lib/crt1.o" "$MUSL/lib/crti.o" \
+        "$@" \
+        -L"$MUSL/lib" -lc -lgcc \
+        "$MUSL/lib/crtn.o"
+fi

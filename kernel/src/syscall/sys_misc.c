@@ -1069,3 +1069,21 @@ int64_t sys_ftruncate(uint64_t fd, uint64_t length,
     if (node_idx < 0) return -EBADF;
     return vfs_truncate_node(node_idx, length);
 }
+
+int64_t sys_utimensat(uint64_t dirfd, uint64_t path_ptr,
+                      uint64_t times_ptr, uint64_t flags, uint64_t a5) {
+    (void)dirfd; (void)times_ptr; (void)flags; (void)a5;
+    /* Stub: accept the call but don't actually update timestamps
+     * (our VFS doesn't track timestamps yet). Just verify the path exists. */
+    if (path_ptr == 0) return 0;  /* futimens on fd */
+    char path[256];
+    if (copy_string_from_user((const char *)path_ptr, path, 256) != 0)
+        return -EFAULT;
+    /* If file doesn't exist, create it (touch behavior) */
+    int idx = vfs_open(path);
+    if (idx < 0) {
+        idx = vfs_create(path);
+        if (idx < 0) return -ENOENT;
+    }
+    return 0;
+}

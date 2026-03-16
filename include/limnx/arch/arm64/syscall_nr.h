@@ -43,6 +43,7 @@
 #define __NR_readlinkat       78
 #define __NR_fstatat          79
 #define __NR_fstat            80
+#define __NR_utimensat        88
 
 /* Process */
 #define __NR_exit             93

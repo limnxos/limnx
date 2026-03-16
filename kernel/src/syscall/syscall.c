@@ -225,6 +225,7 @@ static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
     [SYS_FCHMODAT]         = sys_fchmodat,
     [SYS_FCHOWNAT]         = sys_fchownat,
     [SYS_FACCESSAT]        = sys_faccessat,
+    [SYS_UTIMENSAT]        = sys_utimensat,
 
     /* ---- x86_64 only: classic syscalls ---- */
 #ifdef __NR_open
