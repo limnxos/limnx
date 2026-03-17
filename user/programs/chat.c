@@ -82,22 +82,27 @@ static void generate_response(transformer_t *tf, tok_config_t *tok,
 
     if (!logits) return;
 
-    /* Generate response tokens */
+    /* Generate response tokens with sampling */
+    transformer_seed_rng((uint64_t)input_len * 31 + 7);
     printf("[bot] ");
     for (int i = 0; i < RESP_TOKENS && logits; i++) {
-        uint32_t best = 0;
-        float best_val = logits[0];
-        for (uint32_t j = 1; j < tf->cfg.vocab_size; j++) {
-            if (logits[j] > best_val) {
-                best_val = logits[j];
-                best = j;
-            }
-        }
+        uint32_t best = transformer_sample(logits, tf->cfg.vocab_size, 0.8f, 20);
         char c = (best < tok->vocab_size) ? tok->chars[best] : '?';
         printf("%c", c);
         logits = transformer_forward(tf, best);
     }
     printf("\n");
+}
+
+/* Try to generate response via inference service */
+static int remote_response(const char *prompt, int len) {
+    char resp[512];
+    long ret = sys_infer_request("default", prompt, (unsigned long)len,
+                                 resp, sizeof(resp) - 1);
+    if (ret <= 0) return 0;
+    resp[ret] = '\0';
+    printf("[bot] %s\n", resp);
+    return 1;
 }
 
 int main(void) {
@@ -192,8 +197,9 @@ int main(void) {
         rag_len += len;
         rag_prompt[rag_len] = '\0';
 
-        /* Generate response using RAG prompt */
-        generate_response(&tf, &tok, rag_prompt, rag_len);
+        /* Generate response: try inference service first, fall back to local */
+        if (!remote_response(rag_prompt, rag_len))
+            generate_response(&tf, &tok, rag_prompt, rag_len);
 
         /* Store this message in memory (truncate key to fit) */
         char key[VECSTORE_MAX_KEY + 1];

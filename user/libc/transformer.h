@@ -74,6 +74,12 @@ void     transformer_destroy(transformer_t *tf);
 float   *transformer_forward(transformer_t *tf, uint32_t token);
 uint32_t transformer_generate(transformer_t *tf, uint32_t start_token,
                                uint32_t *out_tokens, uint32_t max_tokens);
+uint32_t transformer_generate_sampled(transformer_t *tf, uint32_t start_token,
+                               uint32_t *out_tokens, uint32_t max_tokens,
+                               float temperature, uint32_t top_k);
+uint32_t transformer_sample(float *logits, uint32_t vocab_size,
+                            float temperature, uint32_t top_k);
+void     transformer_seed_rng(uint64_t seed);
 
 /* --- Character-level tokenizer --- */
 

@@ -567,6 +567,98 @@ int transformer_load(transformer_t *tf, tf_config_t *cfg, const char *path) {
     return (n == (long)weight_bytes) ? 0 : -1;
 }
 
+/* --- Sampling --- */
+
+static uint64_t rng_state = 0;
+
+void transformer_seed_rng(uint64_t seed) {
+    rng_state = seed ? seed : 0xDEADBEEFCAFE1234ULL;
+}
+
+static uint32_t rng_next(void) {
+    /* xorshift64 */
+    rng_state ^= rng_state << 13;
+    rng_state ^= rng_state >> 7;
+    rng_state ^= rng_state << 17;
+    return (uint32_t)(rng_state >> 16);
+}
+
+static float rng_float(void) {
+    return (float)(rng_next() & 0xFFFFFF) / (float)0xFFFFFF;
+}
+
+/* Sample a token from logits with temperature and top-k */
+uint32_t transformer_sample(float *logits, uint32_t vocab_size,
+                            float temperature, uint32_t top_k) {
+    /* Temperature = 0 or top_k = 1: greedy */
+    if (temperature <= 0.0f || top_k <= 1) {
+        uint32_t best = 0;
+        float best_val = logits[0];
+        for (uint32_t i = 1; i < vocab_size; i++) {
+            if (logits[i] > best_val) {
+                best_val = logits[i];
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    /* Apply temperature */
+    for (uint32_t i = 0; i < vocab_size; i++)
+        logits[i] /= temperature;
+
+    /* Find top-k indices via partial selection */
+    if (top_k > vocab_size) top_k = vocab_size;
+
+    /* Simple approach: find top_k by repeated scans (fine for small vocab) */
+    static uint32_t topk_idx[1024];
+    static float    topk_val[1024];
+    if (top_k > 1024) top_k = 1024;
+
+    for (uint32_t k = 0; k < top_k; k++) {
+        uint32_t best = 0;
+        float best_val = -1e30f;
+        for (uint32_t i = 0; i < vocab_size; i++) {
+            if (logits[i] > best_val) {
+                /* Check not already selected */
+                int skip = 0;
+                for (uint32_t j = 0; j < k; j++) {
+                    if (topk_idx[j] == i) { skip = 1; break; }
+                }
+                if (!skip) {
+                    best_val = logits[i];
+                    best = i;
+                }
+            }
+        }
+        topk_idx[k] = best;
+        topk_val[k] = best_val;
+    }
+
+    /* Softmax over top-k */
+    float max_val = topk_val[0];
+    for (uint32_t i = 1; i < top_k; i++)
+        if (topk_val[i] > max_val) max_val = topk_val[i];
+
+    float sum = 0.0f;
+    for (uint32_t i = 0; i < top_k; i++) {
+        topk_val[i] = expf(topk_val[i] - max_val);
+        sum += topk_val[i];
+    }
+    for (uint32_t i = 0; i < top_k; i++)
+        topk_val[i] /= sum;
+
+    /* Weighted random selection */
+    float r = rng_float();
+    float cumsum = 0.0f;
+    for (uint32_t i = 0; i < top_k; i++) {
+        cumsum += topk_val[i];
+        if (r <= cumsum)
+            return topk_idx[i];
+    }
+    return topk_idx[top_k - 1];
+}
+
 /* --- Generate (greedy) --- */
 
 uint32_t transformer_generate(transformer_t *tf, uint32_t start_token,
@@ -579,19 +671,29 @@ uint32_t transformer_generate(transformer_t *tf, uint32_t start_token,
     uint32_t token = start_token;
     while (count < max_tokens) {
         float *logits = transformer_forward(tf, token);
+        token = transformer_sample(logits, tf->cfg.vocab_size, 0.0f, 1);
+        out_tokens[count] = token;
+        count++;
+    }
 
-        /* Argmax over logits */
-        uint32_t best = 0;
-        float best_val = logits[0];
-        for (uint32_t i = 1; i < tf->cfg.vocab_size; i++) {
-            if (logits[i] > best_val) {
-                best_val = logits[i];
-                best = i;
-            }
-        }
+    return count;
+}
 
-        out_tokens[count] = best;
-        token = best;
+/* --- Generate with sampling --- */
+
+uint32_t transformer_generate_sampled(transformer_t *tf, uint32_t start_token,
+                                       uint32_t *out_tokens, uint32_t max_tokens,
+                                       float temperature, uint32_t top_k) {
+    if (max_tokens == 0) return 0;
+
+    out_tokens[0] = start_token;
+    uint32_t count = 1;
+
+    uint32_t token = start_token;
+    while (count < max_tokens) {
+        float *logits = transformer_forward(tf, token);
+        token = transformer_sample(logits, tf->cfg.vocab_size, temperature, top_k);
+        out_tokens[count] = token;
         count++;
     }
 
