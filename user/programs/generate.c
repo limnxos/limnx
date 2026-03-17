@@ -1,17 +1,14 @@
 #include "libc/libc.h"
+#include "limnx/stat.h"
 
 #define GEN_TOKENS   32
 #define MAX_INPUT    128
 #define MAX_TOKENS   128
 
-static tf_config_t cfg = {
-    .dim        = 48,
-    .hidden_dim = 128,
-    .n_heads    = 4,
-    .n_layers   = 2,
-    .vocab_size = 96,
-    .max_seq_len = 64,
-};
+static tf_config_t cfg;
+static int use_gguf = 0;
+static bpe_tokenizer_t bpe;
+static tok_config_t char_tok;
 
 static void tf_reset(transformer_t *tf) {
     tf->pos = 0;
@@ -43,11 +40,25 @@ static int readline(char *buf, int max) {
 }
 
 static int init_model(transformer_t *tf) {
-    if (transformer_load(tf, &cfg, "/model.bin") == 0) {
-        printf("Loaded trained model from /model.bin\n");
+    /* Try GGUF first (trained model) */
+    memset(&bpe, 0, sizeof(bpe));
+    if (gguf_load("/test.gguf", tf, &cfg, &bpe) == 0) {
+        use_gguf = 1;
+        printf("Loaded GGUF model: dim=%u layers=%u vocab=%u\n",
+               cfg.dim, cfg.n_layers, cfg.vocab_size);
         return 0;
     }
-    printf("No trained model found, using random init\n");
+    /* Fall back to model.bin */
+    cfg.dim = 48; cfg.hidden_dim = 128; cfg.n_heads = 4;
+    cfg.n_layers = 2; cfg.vocab_size = 96; cfg.max_seq_len = 64;
+    cfg.rope = 1; cfg.swiglu = 0; cfg.n_kv_heads = 0;
+    cfg.qk_norm = 0; cfg.rope_theta = 10000.0f;
+    tok_default_config(&char_tok);
+    if (transformer_load(tf, &cfg, "/model.bin") == 0) {
+        printf("Loaded model.bin\n");
+        return 0;
+    }
+    printf("No model found, using random init\n");
     return transformer_init(tf, &cfg, 42);
 }
 
@@ -64,10 +75,16 @@ static int remote_generate(const char *prompt, int len) {
 }
 
 /* Generate locally using transformer */
-static void local_generate(transformer_t *tf, tok_config_t *tok,
-                           const char *prompt, int len) {
+static void local_generate(transformer_t *tf, const char *prompt, int len) {
     uint32_t tokens[MAX_TOKENS];
-    uint32_t n_tok = tok_encode(tok, prompt, (uint32_t)len, tokens, MAX_TOKENS);
+    uint32_t n_tok;
+
+    if (use_gguf) {
+        n_tok = bpe_encode(&bpe, prompt, (uint32_t)len, tokens, MAX_TOKENS);
+    } else {
+        n_tok = tok_encode(&char_tok, prompt, (uint32_t)len, tokens, MAX_TOKENS);
+    }
+
     if (n_tok == 0) {
         printf("(no encodable characters)\n");
         return;
@@ -82,10 +99,20 @@ static void local_generate(transformer_t *tf, tok_config_t *tok,
 
     printf("[gen] ");
     for (int i = 0; i < GEN_TOKENS && logits; i++) {
-        uint32_t best = transformer_sample(logits, tf->cfg.vocab_size, 0.8f, 20);
-        char c = (best < tok->vocab_size) ? tok->chars[best] : '?';
-        printf("%c", c);
-        logits = transformer_forward(tf, best);
+        uint32_t tok = transformer_sample(logits, tf->cfg.vocab_size, 0.8f, 20);
+        if (tok == 0 || tok == 2) break;  /* EOS */
+
+        if (use_gguf) {
+            char out[8];
+            uint32_t dlen = bpe_decode(&bpe, &tok, 1, out, sizeof(out));
+            for (uint32_t j = 0; j < dlen; j++)
+                printf("%c", out[j]);
+        } else {
+            char c = (tok < char_tok.vocab_size) ? char_tok.chars[tok] : '?';
+            printf("%c", c);
+        }
+
+        logits = transformer_forward(tf, tok);
     }
     printf("\n");
 }
@@ -135,9 +162,6 @@ static int self_test(void) {
 }
 
 static void interactive(void) {
-    tok_config_t tok;
-    tok_default_config(&tok);
-
     transformer_t tf;
     int have_local = (init_model(&tf) == 0);
 
@@ -175,7 +199,7 @@ static void interactive(void) {
             printf("(service unavailable, using local)\n");
         }
         if (have_local)
-            local_generate(&tf, &tok, line, len);
+            local_generate(&tf, line, len);
     }
 
     if (have_local) transformer_destroy(&tf);
