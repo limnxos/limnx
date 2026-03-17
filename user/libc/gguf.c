@@ -1,4 +1,5 @@
 #include "libc.h"
+#include "limnx/stat.h"
 
 /*
  * GGUF v3 parser and model loader.
@@ -152,14 +153,14 @@ int gguf_load(const char *path, transformer_t *tf, tf_config_t *cfg,
     sys_close(fd);
     if (map_addr <= 0) return -1;
 
-    /* Get file size via stat */
-    struct { uint64_t size; uint8_t type; uint8_t pad[7]; } st;
+    /* Get file size via stat (uses Linux-compatible 144/128-byte struct) */
+    struct linux_stat st;
     if (sys_stat(path, &st) != 0) {
         sys_munmap((uint64_t)map_addr);
         return -1;
     }
 
-    gguf_reader_t reader = { .base = (const uint8_t *)map_addr, .size = st.size, .pos = 0 };
+    gguf_reader_t reader = { .base = (const uint8_t *)map_addr, .size = (uint64_t)st.st_size, .pos = 0 };
     gguf_reader_t *r = &reader;
 
     /* Parse header */
