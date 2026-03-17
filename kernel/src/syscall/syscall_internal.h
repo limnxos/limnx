@@ -194,6 +194,7 @@ int64_t sys_nanosleep(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_getenv(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_setenv(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_poll(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_ppoll(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_select(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_arch_prctl(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_swap_stat(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);

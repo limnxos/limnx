@@ -428,10 +428,12 @@ int64_t sys_environ(uint64_t buf_ptr, uint64_t buf_size,
     return (int64_t)copy;
 }
 
-int64_t sys_poll(uint64_t fds_ptr, uint64_t nfds, uint64_t timeout_ms,
-                          uint64_t a4, uint64_t a5) {
-    (void)a4; (void)a5;
-
+/*
+ * Internal poll core — shared by sys_poll and sys_ppoll.
+ * timeout_ms: -1 = block forever, 0 = non-blocking, >0 = wait N ms.
+ */
+static int64_t do_poll_internal(uint64_t fds_ptr, uint64_t nfds,
+                                int64_t timeout_ms) {
     if (nfds == 0) return 0;
     if (nfds > MAX_FDS) return -EINVAL;
     if (validate_user_ptr(fds_ptr, nfds * sizeof(pollfd_t)) != 0)
@@ -445,8 +447,9 @@ int64_t sys_poll(uint64_t fds_ptr, uint64_t nfds, uint64_t timeout_ms,
 
     /* Calculate deadline */
     uint64_t deadline = 0;
-    if (timeout_ms > 0) {
-        uint64_t delay_ticks = timeout_ms * 18 / 1000;
+    int has_timeout = (timeout_ms > 0);
+    if (has_timeout) {
+        uint64_t delay_ticks = (uint64_t)timeout_ms * 18 / 1000;
         if (delay_ticks == 0) delay_ticks = 1;
         deadline = arch_timer_get_ticks() + delay_ticks;
     }
@@ -462,18 +465,54 @@ int64_t sys_poll(uint64_t fds_ptr, uint64_t nfds, uint64_t timeout_ms,
         if (ready > 0)
             return (int64_t)ready;
 
-        /* timeout_ms == 0: immediate return */
+        /* Non-blocking */
         if (timeout_ms == 0)
             return 0;
 
-        /* Check deadline for positive timeout */
-        if (timeout_ms > 0 && arch_timer_get_ticks() >= deadline)
+        /* Timed: check deadline */
+        if (has_timeout && arch_timer_get_ticks() >= deadline)
             return 0;
 
         if (proc->pending_signals & ~proc->signal_mask)
             return -EINTR;
         sched_yield();
     }
+}
+
+/* SYS_POLL: arg3 is int timeout_ms (poll semantics) */
+int64_t sys_poll(uint64_t fds_ptr, uint64_t nfds, uint64_t timeout_ms,
+                          uint64_t a4, uint64_t a5) {
+    (void)a4; (void)a5;
+    return do_poll_internal(fds_ptr, nfds, (int64_t)timeout_ms);
+}
+
+/*
+ * SYS_PPOLL: arg3 is struct timespec* (ppoll semantics).
+ * On ARM64, musl has no SYS_poll — all poll() calls become ppoll().
+ * musl's poll.c: syscall(SYS_ppoll, fds, n,
+ *     timeout>=0 ? &(long long[2]){sec,nsec} : 0, 0, _NSIG/8);
+ */
+int64_t sys_ppoll(uint64_t fds_ptr, uint64_t nfds, uint64_t timeout_ptr,
+                  uint64_t sigmask, uint64_t sigsetsize) {
+    (void)sigmask; (void)sigsetsize;
+
+    int64_t timeout_ms;
+    if (timeout_ptr == 0) {
+        /* NULL = block forever */
+        timeout_ms = -1;
+    } else {
+        if (validate_user_ptr(timeout_ptr, sizeof(timespec_t)) != 0)
+            return -EFAULT;
+        const timespec_t *ts = (const timespec_t *)timeout_ptr;
+        if (ts->tv_sec == 0 && ts->tv_nsec == 0) {
+            timeout_ms = 0;
+        } else {
+            timeout_ms = ts->tv_sec * 1000 + ts->tv_nsec / 1000000;
+            if (timeout_ms <= 0) timeout_ms = 1;
+        }
+    }
+
+    return do_poll_internal(fds_ptr, nfds, timeout_ms);
 }
 
 /* select() fd_set is a 64-bit bitmask (supports fds 0-63) */
