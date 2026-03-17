@@ -201,15 +201,13 @@ static void test_gguf_loader(void) {
 /* ---- Inference service pipeline ---- */
 
 static void test_infer_pipeline(void) {
-    /* Fork inferd as a child process */
+    /* Fork inferd as a child process — serve 1 request then exit */
     long pid = sys_fork();
     if (pid == 0) {
-        /* Child: run inferd with test model, serve 2 requests then exit */
         const char *argv[] = {
-            "inferd", "/test.gguf", "test_svc", "/tmp/test_inferd.sock", "2", (void *)0
+            "inferd", "/test.gguf", "test_svc", "/tmp/test_inferd.sock", "1", (void *)0
         };
         sys_execve("/inferd.elf", argv);
-        /* If exec fails, just exit */
         sys_exit(99);
     }
 
@@ -218,6 +216,9 @@ static void test_infer_pipeline(void) {
 
     /* Wait for inferd to start and register */
     for (int i = 0; i < 50; i++) sys_yield();
+
+    /* Flush infer cache so request goes to inferd (not cached) */
+    sys_infer_cache_ctrl(2 /* FLUSH */, (void *)0);
 
     /* Send a request via the kernel inference service */
     char resp[256];
@@ -243,18 +244,18 @@ static void test_infer_pipeline(void) {
         }
     }
 
-    /* Wait for inferd to finish */
+    /* Wait for inferd to finish (it exits after 1 request) */
     sys_waitpid(pid);
 }
 
 /* ---- Async inference (submit/poll/result) ---- */
 
 static void test_infer_async(void) {
-    /* Fork inferd for async test */
+    /* Fork inferd for async test — serve 1 request then exit */
     long pid = sys_fork();
     if (pid == 0) {
         const char *argv[] = {
-            "inferd", "/test.gguf", "async_svc", "/tmp/test_async.sock", "2", (void *)0
+            "inferd", "/test.gguf", "async_svc", "/tmp/test_async.sock", "1", (void *)0
         };
         sys_execve("/inferd.elf", argv);
         sys_exit(99);
@@ -265,6 +266,9 @@ static void test_infer_async(void) {
 
     /* Wait for registration */
     for (int i = 0; i < 80; i++) sys_yield();
+
+    /* Flush cache to ensure request hits inferd */
+    sys_infer_cache_ctrl(2, (void *)0);
 
     /* Submit async request */
     long req_id = sys_infer_submit("async_svc", "World", 5, -1);
