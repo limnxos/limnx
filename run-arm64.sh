@@ -10,6 +10,9 @@ echo "=== Building ARM64 ==="
 make arm64-clean
 make arm64
 
+echo "=== Creating disk ==="
+dd if=/dev/zero of=build/disk.img bs=1M count=64 2>/dev/null
+
 echo "=== Booting ARM64 ==="
 
 # Save terminal state, set raw mode (no local echo), restore on exit
@@ -23,7 +26,12 @@ qemu-system-aarch64 \
     -M virt \
     -cpu cortex-a57 \
     -m 256M \
+    -smp 2 \
     -nographic \
     -kernel build/arm64/kernel \
+    -drive file=build/disk.img,format=raw,if=none,id=hd0 \
+    -device virtio-blk-device,drive=hd0 \
+    -netdev user,id=net0 \
+    -device virtio-net-device,netdev=net0 \
     -no-reboot \
     "$@"

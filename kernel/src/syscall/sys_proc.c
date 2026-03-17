@@ -357,28 +357,20 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
                            uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a3; (void)a4; (void)a5;
 
-    serial_puts("[execve] called\n");
-
     thread_t *t = thread_get_current();
     process_t *proc = t->process;
     if (!proc) return -1;
 
     /* Copy path from user space (before we destroy the address space) */
     char raw_path[MAX_PATH], path[MAX_PATH];
-    if (copy_string_from_user((const char *)path_ptr, raw_path, MAX_PATH) != 0) {
-        serial_printf("[execve] EFAULT: path_ptr=%lx pid=%lu\n", path_ptr, proc->pid);
+    if (copy_string_from_user((const char *)path_ptr, raw_path, MAX_PATH) != 0)
         return -EFAULT;
-    }
     resolve_user_path(proc, raw_path, path);
-    serial_printf("[execve] pid=%lu path=%s\n", proc->pid, path);
 
     /* Check CAP_EXEC */
     if (!(proc->capabilities & CAP_EXEC) &&
-        !cap_token_check(proc->pid, CAP_EXEC, path)) {
-        serial_printf("[execve] CAP_EXEC denied: pid=%lu caps=%x path=%s\n",
-                      proc->pid, proc->capabilities, path);
+        !cap_token_check(proc->pid, CAP_EXEC, path))
         return -EACCES;
-    }
 
     /* Open and read the ELF file */
     int node_idx = vfs_open(path);
@@ -386,21 +378,8 @@ int64_t sys_execve(uint64_t path_ptr, uint64_t argv_ptr,
         return -ENOENT;
 
     vfs_node_t *exec_node = vfs_get_node(node_idx);
-    if (exec_node && !(exec_node->mode & VFS_PERM_EXEC)) {
-        serial_puts("[execve] EACCES: mode=");
-        /* Output mode as decimal to avoid serial_printf optimization */
-        char mbuf[16]; int mi = 0;
-        unsigned m = exec_node->mode;
-        if (m == 0) { mbuf[mi++] = '0'; }
-        else { char tmp[16]; int ti = 0; while (m) { tmp[ti++] = '0'+(m%8); m/=8; }
-               for (int j=ti-1;j>=0;j--) mbuf[mi++] = tmp[j]; }
-        mbuf[mi] = '\0';
-        serial_puts(mbuf);
-        serial_puts(" path=");
-        serial_puts(path);
-        serial_puts("\n");
+    if (exec_node && !(exec_node->mode & VFS_PERM_EXEC))
         return -EACCES;
-    }
 
     /* Capture setuid/setgid bits before we lose exec_node access */
     uint16_t exec_mode = exec_node ? exec_node->mode : 0;

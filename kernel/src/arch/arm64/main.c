@@ -305,9 +305,9 @@ void kmain(uint64_t dtb_addr) {
     serial_puts("  ARM64 boot complete — all subsystems\n");
     serial_puts("========================================\n");
 
-    /* Start bcache flusher kernel thread */
-    if (blk_ok)
-        bcache_start_flusher();
+    /* bcache flusher disabled: ARM64 virtio-blk writes fail and flusher
+     * busy-wait starves console reader. Dirty blocks remain in cache. */
+    /* if (blk_ok) bcache_start_flusher(); */
 
     /* Start async inference worker kernel thread */
     infer_async_start_worker();

@@ -199,8 +199,13 @@ static int blk_do_request(uint32_t type, uint64_t sector, void *data_buf) {
     }
 
     if (result != 0) {
-        pr_err("request failed: status=%u (sector=%lu type=%u)\n",
-               (unsigned)*status_virt, sector, type);
+        static int err_count = 0;
+        if (err_count < 5)
+            pr_err("request failed: status=%u (sector=%lu type=%u)\n",
+                   (unsigned)*status_virt, sector, type);
+        else if (err_count == 5)
+            pr_err("(suppressing further errors)\n");
+        err_count++;
     }
 
     /* Free DMA buffers */
