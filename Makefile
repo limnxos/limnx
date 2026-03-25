@@ -401,7 +401,19 @@ ARM64_USER_C_PROGRAMS := build/arm64/user/programs/shell.elf \
                           build/arm64/user/programs/mountcmd.elf \
                           build/arm64/user/programs/umount.elf \
                           build/arm64/user/programs/orchestrator.elf \
-                          build/arm64/user/programs/agent_worker.elf
+                          build/arm64/user/programs/agent_worker.elf \
+                          build/arm64/user/programs/inferd.elf \
+                          build/arm64/user/programs/infer.elf \
+                          build/arm64/user/programs/generate.elf \
+                          build/arm64/user/programs/chat.elf \
+                          build/arm64/user/programs/agent.elf \
+                          build/arm64/user/programs/agentrt.elf \
+                          build/arm64/user/programs/toolagent.elf \
+                          build/arm64/user/programs/learn.elf \
+                          build/arm64/user/programs/worker.elf \
+                          build/arm64/user/programs/multiagent.elf \
+                          build/arm64/user/programs/netagent.elf \
+                          build/arm64/user/programs/crasher.elf
 ARM64_USER_C_TESTS := build/arm64/user/tests/fs/fs_test.elf \
                       build/arm64/user/tests/proc/proc_test.elf \
                       build/arm64/user/tests/mm/mm_test.elf \
