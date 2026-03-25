@@ -879,15 +879,9 @@ int infer_async_process_one(void) {
         }
     }
 
-    /* Receive response (yield-based wait) */
+    /* Receive response — blocking recv (yields internally until data or peer close) */
     uint8_t resp_tmp[INFER_ASYNC_RESP_MAX];
-    int received = 0;
-    for (int attempt = 0; attempt < 1000; attempt++) {
-        received = unix_sock_recv(client, resp_tmp, INFER_ASYNC_RESP_MAX, 1);
-        if (received > 0) break;
-        if (client->peer_closed) break;
-        sched_yield();
-    }
+    int received = unix_sock_recv(client, resp_tmp, INFER_ASYNC_RESP_MAX, 0);
 
     unix_sock_close(client);
 
