@@ -104,14 +104,24 @@ int main(void) {
     /* Set restart policy: one-for-one (restart only crashed worker) */
     sys_super_set_policy(super_id, 0 /* SUPER_ONE_FOR_ONE */);
 
-    /* Step 5: Add workers to supervisor */
-    printf("[orch] Step 5: Adding %d workers...\n", NUM_WORKERS);
+    /* Step 5: Create capability tokens for workers */
+    printf("[orch] Step 5: Creating capability tokens...\n");
+    long infer_token = sys_token_create(CAP_INFER | CAP_XNS_INFER,
+                                         0 /* bearer — any process */,
+                                         "default");
+    if (infer_token >= 0) {
+        printf("[orch] CAP_INFER token created: id=%ld (bearer, resource=\"default\")\n",
+               infer_token);
+    } else {
+        printf("[orch] WARN: token_create failed (%ld), using raw caps\n", infer_token);
+    }
 
-    /* Build argv strings for workers: agent_worker <id> <task_topic> <result_topic> */
+    /* Step 6: Add workers to supervisor */
+    printf("[orch] Step 6: Adding %d workers...\n", NUM_WORKERS);
     for (int i = 0; i < NUM_WORKERS; i++) {
-        /* Workers get the namespace and basic caps */
-        long ret = sys_super_add(super_id, "/agent_worker.elf", ns_id,
-                                 CAP_INFER | CAP_XNS_INFER);
+        /* Workers get raw caps as fallback; token provides scoped access */
+        long caps = (infer_token >= 0) ? 0 : (CAP_INFER | CAP_XNS_INFER);
+        long ret = sys_super_add(super_id, "/agent_worker.elf", ns_id, caps);
         if (ret < 0) {
             printf("[orch] FAIL: super_add worker %d (err=%ld)\n", i, ret);
         } else {
@@ -119,8 +129,8 @@ int main(void) {
         }
     }
 
-    /* Step 6: Create task graph */
-    printf("[orch] Step 6: Creating task graph...\n");
+    /* Step 7: Create task graph */
+    printf("[orch] Step 7: Creating task graph...\n");
 
     long task_a = sys_task_create("analyze_data", ns_id);
     long task_b = sys_task_create("transform", ns_id);
@@ -139,15 +149,15 @@ int main(void) {
     printf("[orch] Tasks: A=%ld → B=%ld → C=%ld (dependency chain)\n",
            task_a, task_b, task_c);
 
-    /* Step 7: Start supervisor (launches all workers) */
-    printf("[orch] Step 7: Starting supervisor...\n");
+    /* Step 8: Start supervisor (launches all workers) */
+    printf("[orch] Step 8: Starting supervisor...\n");
     long launched = sys_super_start(super_id);
     printf("[orch] Launched %ld workers\n", launched);
 
     /* Give workers time to register and subscribe */
     for (int i = 0; i < 100; i++) sys_yield();
 
-    /* Step 8: Execute task graph */
+    /* Step 9: Execute task graph */
     printf("\n[orch] === Executing Task Graph ===\n\n");
 
     /* Task A: start immediately, publish assignment */
@@ -231,7 +241,7 @@ int main(void) {
         printf("[orch] Task C timed out\n");
     }
 
-    /* Step 9: Collect results from pub/sub */
+    /* Step 10: Collect results from pub/sub */
     printf("\n[orch] === Results ===\n\n");
 
     int results_collected = 0;
@@ -251,9 +261,15 @@ int main(void) {
 
     printf("\n[orch] Collected %d/%d results\n", results_collected, NUM_TASKS);
 
-    /* Step 10: Stop supervisor and clean up */
+    /* Step 11: Stop supervisor and clean up */
     printf("[orch] Stopping supervisor...\n");
     sys_super_stop(super_id);
+
+    /* Revoke capability token (cascading — revokes all delegated sub-tokens) */
+    if (infer_token >= 0) {
+        sys_token_revoke(infer_token);
+        printf("[orch] Token %ld revoked (cascading)\n", infer_token);
+    }
 
     /* Kill inferd */
     if (inferd_pid > 0)

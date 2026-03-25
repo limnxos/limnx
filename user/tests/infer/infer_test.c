@@ -264,8 +264,8 @@ static void test_infer_async(void) {
     lt_ok(pid > 0, "fork inferd (async)");
     if (pid <= 0) return;
 
-    /* Wait for registration */
-    for (int i = 0; i < 80; i++) sys_yield();
+    /* Wait for registration — inferd needs time to load GGUF model */
+    for (int i = 0; i < 300; i++) sys_yield();
 
     /* Flush cache to ensure request hits inferd */
     sys_infer_cache_ctrl(2, (void *)0);
@@ -276,11 +276,12 @@ static void test_infer_async(void) {
     if (req_id >= 0) {
         lt_ok(1, "infer_submit returned request ID");
 
-        /* Poll until complete */
+        /* Poll until complete (READY=2, PENDING=1) */
         int done = 0;
-        for (int i = 0; i < 200; i++) {
+        for (int i = 0; i < 500; i++) {
             long status = sys_infer_poll(req_id);
-            if (status == 1) { done = 1; break; } /* 1 = complete */
+            if (status == 2) { done = 1; break; } /* INFER_ASYNC_READY */
+            if (status < 0) break;  /* error */
             sys_yield();
         }
         lt_ok(done, "infer_poll shows completion");
