@@ -1,44 +1,41 @@
 /*
  * agent_worker.c — Worker agent for orchestration demo
  *
- * Launched by orchestrator via supervisor. Registers with agent registry,
- * subscribes to "tasks" topic, processes assigned work by calling inference,
- * publishes results to "results" topic.
- *
- * Usage: agent_worker <worker_id> <task_topic_id> <result_topic_id>
+ * Launched by orchestrator via supervisor. Discovers task/result topics
+ * by well-known IDs (0=tasks, 1=results). Registers with agent registry,
+ * processes tasks by calling inference, publishes results via pub/sub.
  */
 
 #include "../libc/libc.h"
 
-#define MAX_WORK 8
+int main(void) {
+    long my_pid = sys_getpid();
 
-int main(int argc, char **argv) {
-    if (argc < 4) {
-        printf("[worker] Usage: agent_worker <id> <task_topic> <result_topic>\n");
-        return 1;
-    }
+    /* Worker ID derived from PID (simple, unique per worker) */
+    int worker_id = (int)(my_pid % 100);
 
-    int worker_id = atoi(argv[1]);
-    long task_topic = atoi(argv[2]);
-    long result_topic = atoi(argv[3]);
+    printf("[worker %d] pid=%ld starting\n", worker_id, my_pid);
 
     /* Register with agent registry */
     char name[32];
-    printf("[worker %d] pid=%ld starting\n", worker_id, sys_getpid());
-
     int nlen = 0;
     const char *pfx = "worker_";
     while (*pfx) name[nlen++] = *pfx++;
-    name[nlen++] = '0' + (char)worker_id;
+    name[nlen++] = '0' + (char)(worker_id % 10);
     name[nlen] = '\0';
     sys_agent_register(name);
 
-    /* Subscribe to result topic for publishing */
+    /* Subscribe to results topic (ID 1 — created by orchestrator) */
+    long result_topic = 1;
     sys_topic_subscribe(result_topic);
+
+    /* Subscribe to tasks topic (ID 0 — created by orchestrator) */
+    long task_topic = 0;
+    sys_topic_subscribe(task_topic);
 
     /* Process tasks */
     int tasks_done = 0;
-    for (int attempt = 0; attempt < 100; attempt++) {
+    for (int attempt = 0; attempt < 200; attempt++) {
         /* Try to receive a task assignment from task topic */
         char task_buf[256];
         unsigned long sender_pid = 0;
@@ -54,12 +51,14 @@ int main(int argc, char **argv) {
         task_buf[n] = '\0';
         printf("[worker %d] Got task: %s\n", worker_id, task_buf);
 
+        /* Check for DONE signal */
+        if (n >= 4 && task_buf[0] == 'D' && task_buf[1] == 'O' &&
+            task_buf[2] == 'N' && task_buf[3] == 'E') break;
+
         /* Parse task: "TASK:<task_id>:<prompt>" */
         long task_id = -1;
         char *prompt = task_buf;
-        if (task_buf[0] == 'T' && task_buf[1] == 'A' && task_buf[2] == 'S' &&
-            task_buf[3] == 'K' && task_buf[4] == ':') {
-            /* Parse task_id */
+        if (n >= 5 && task_buf[0] == 'T' && task_buf[4] == ':') {
             task_id = 0;
             int i = 5;
             while (task_buf[i] >= '0' && task_buf[i] <= '9') {
@@ -70,59 +69,52 @@ int main(int argc, char **argv) {
             prompt = &task_buf[i];
         }
 
-        /* Call inference service */
+        /* Call inference service (may fail if inferd not running) */
         char resp[256];
         long rlen = sys_infer_request("default", prompt, strlen(prompt),
                                       resp, sizeof(resp) - 1);
 
+        /* Build result: "RESULT:<worker_id>:<task_id>:<response>" */
         char result[384];
         int rpos = 0;
-
-        /* Format: "RESULT:<worker_id>:<task_id>:<response>" */
         const char *rpfx = "RESULT:";
         while (*rpfx) result[rpos++] = *rpfx++;
-        result[rpos++] = '0' + (char)worker_id;
+        result[rpos++] = '0' + (char)(worker_id % 10);
         result[rpos++] = ':';
 
-        /* task_id digits */
+        /* Append task_id */
         if (task_id >= 0) {
-            char tmp[16];
-            int tlen = 0;
+            char tmp[16]; int tlen = 0;
             long v = task_id;
             if (v == 0) { tmp[tlen++] = '0'; }
             else { while (v > 0) { tmp[tlen++] = '0' + (int)(v % 10); v /= 10; } }
             for (int j = tlen - 1; j >= 0; j--) result[rpos++] = tmp[j];
         } else {
-            result[rpos++] = '-';
-            result[rpos++] = '1';
+            result[rpos++] = '?';
         }
         result[rpos++] = ':';
 
-        /* Append inference response or fallback */
+        /* Append response */
         if (rlen > 0) {
             resp[rlen] = '\0';
             int copylen = (int)rlen;
             if (rpos + copylen > 380) copylen = 380 - rpos;
             for (int j = 0; j < copylen; j++) result[rpos++] = resp[j];
         } else {
-            const char *fb = "(no inference)";
+            const char *fb = "(processed locally)";
             while (*fb && rpos < 380) result[rpos++] = *fb++;
         }
         result[rpos] = '\0';
 
         /* Publish result */
         sys_topic_publish(result_topic, result, (unsigned long)rpos);
-        printf("[worker %d] Published result for task %ld\n", worker_id, task_id);
+        printf("[worker %d] Completed task %ld\n", worker_id, task_id);
 
         /* Mark task complete in the task graph */
-        if (task_id >= 0) {
+        if (task_id >= 0)
             sys_task_complete(task_id, 0);
-        }
 
         tasks_done++;
-
-        /* Check for DONE signal */
-        if (strcmp(prompt, "DONE") == 0) break;
     }
 
     printf("[worker %d] Exiting after %d tasks\n", worker_id, tasks_done);

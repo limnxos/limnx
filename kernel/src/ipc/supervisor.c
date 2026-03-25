@@ -11,6 +11,7 @@
 #include "mm/kheap.h"
 #include "sync/spinlock.h"
 #include "arch/timer.h"
+#include "pty/pty.h"
 
 static supervisor_t supervisors[MAX_SUPERVISORS];
 
@@ -140,6 +141,30 @@ static void supervisor_restart_child(supervisor_t *sv, int child_idx) {
     proc->parent_pid = sv->owner_pid;
     proc->capabilities = (uint32_t)ch->caps;
     proc->daemon = 1;
+    proc->ns_id = ch->ns_id;
+
+    /* Set up fd 0/1/2 from the console PTY so child has stdin/stdout */
+    int con = pty_get_console();
+    if (con >= 0) {
+        pty_t *pt = pty_get(con);
+        if (pt) {
+            for (int fd = 0; fd < 3; fd++) {
+                proc->fd_table[fd].node = NULL;
+                proc->fd_table[fd].pipe = NULL;
+                proc->fd_table[fd].pipe_write = 0;
+                proc->fd_table[fd].pty = (void *)pt;
+                proc->fd_table[fd].pty_is_master = 0;
+                proc->fd_table[fd].unix_sock = NULL;
+                proc->fd_table[fd].eventfd = NULL;
+                proc->fd_table[fd].epoll = NULL;
+                proc->fd_table[fd].uring = NULL;
+                proc->fd_table[fd].open_flags = 2; /* O_RDWR */
+                proc->fd_table[fd].fd_flags = 0;
+                pt->slave_refs++;
+            }
+        }
+    }
+
     ch->pid = proc->pid;
     sched_add(proc->main_thread);
     pr_info("Restarted %s as pid %lu\n",
