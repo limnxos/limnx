@@ -10,8 +10,9 @@ echo "=== Building ARM64 ==="
 make arm64-clean
 make arm64
 
-echo "=== Creating disk ==="
-dd if=/dev/zero of=build/disk.img bs=1M count=64 2>/dev/null
+echo "=== Creating ARM64 disk ==="
+mkdir -p build/arm64
+dd if=/dev/zero of=build/arm64/disk.img bs=1M count=64 2>/dev/null
 
 echo "=== Booting ARM64 ==="
 
@@ -29,7 +30,7 @@ qemu-system-aarch64 \
     -smp 2 \
     -nographic \
     -kernel build/arm64/kernel \
-    -drive file=build/disk.img,format=raw,if=none,id=hd0 \
+    -drive file=build/arm64/disk.img,format=raw,if=none,id=hd0 \
     -device virtio-blk-device,drive=hd0 \
     -netdev user,id=net0 \
     -device virtio-net-device,netdev=net0 \

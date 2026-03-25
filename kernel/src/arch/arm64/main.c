@@ -250,8 +250,11 @@ void kmain(uint64_t dtb_addr) {
                 serial_puts("[test] FAIL: limnfs_mount failed\n");
         }
 
-        /* Sync initrd files to disk */
-        if (limnfs_mounted()) {
+        /* Skip disk sync on ARM64: virtio-blk-mmio writes are unreliable
+         * (timeout after ~13K sectors). Keep files in VFS memory from initrd.
+         * LimnFS is initialized for user file creation but initrd files
+         * are NOT copied to disk. */
+        if (0 && limnfs_mounted()) {
             serial_puts("\n[limnfs] Syncing initrd to disk...\n");
             int synced = 0, skipped = 0;
 
@@ -286,7 +289,7 @@ void kmain(uint64_t dtb_addr) {
             serial_printf("[limnfs] Sync complete: %d copied, %d already exist\n",
                           synced, skipped);
 
-                    vfs_mount_limnfs();
+                    /* vfs_mount_limnfs() — disabled: initrd files served from VFS memory */
         }
     }
 
