@@ -77,7 +77,7 @@ int main(void) {
             }
         }
 
-        /* Call inference service (may fail if inferd not running) */
+        /* Call inference service */
         char resp[256];
         long rlen = sys_infer_request("default", prompt, strlen(prompt),
                                       resp, sizeof(resp) - 1);

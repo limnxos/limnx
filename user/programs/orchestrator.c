@@ -16,6 +16,8 @@
 
 #define NUM_WORKERS  3
 #define NUM_TASKS    3
+#define CAP_INFER      (1 << 8)
+#define CAP_XNS_INFER  (1 << 11)
 
 /* Wait for a task to complete (polling) */
 static int wait_task(long task_id, int max_polls) {
@@ -49,8 +51,35 @@ int main(void) {
         sys_ns_setquota(ns_id, 0 /* NS_QUOTA_PROCS */, 8);
     }
 
-    /* Step 2: Create pub/sub topics */
-    printf("[orch] Step 2: Creating pub/sub topics...\n");
+    /* Step 2: Start inference daemon */
+    printf("[orch] Step 2: Starting inference daemon...\n");
+    long inferd_pid = sys_fork();
+    if (inferd_pid == 0) {
+        /* Child: exec inferd with test model */
+        const char *argv[] = {"inferd", "/test.gguf", "default",
+                               "/tmp/inferd.sock", "0", (void *)0};
+        sys_execve("/inferd.elf", argv);
+        sys_exit(99);
+    }
+    if (inferd_pid > 0) {
+        printf("[orch] inferd started (pid=%ld)\n", inferd_pid);
+        /* Wait for inferd to load model and register */
+        for (int i = 0; i < 200; i++) sys_yield();
+        /* Verify it registered */
+        char probe[16];
+        long pret = sys_infer_request("default", "?", 1, probe, sizeof(probe));
+        if (pret > 0)
+            printf("[orch] Inference service ready\n");
+        else
+            printf("[orch] WARN: inferd not responding yet\n");
+    } else {
+        printf("[orch] WARN: fork inferd failed\n");
+    }
+
+    /* Step 3: Create pub/sub topics */
+    printf("[orch] Step 3: Creating pub/sub topics...\n");
+    /* Flush inference cache so workers get fresh responses */
+    sys_infer_cache_ctrl(2 /* FLUSH */, (void *)0);
     long task_topic = sys_topic_create("tasks", ns_id);
     long result_topic = sys_topic_create("results", ns_id);
     if (task_topic < 0 || result_topic < 0) {
@@ -63,8 +92,8 @@ int main(void) {
     /* Subscribe to results topic to collect worker output */
     sys_topic_subscribe(result_topic);
 
-    /* Step 3: Create supervisor */
-    printf("[orch] Step 3: Creating supervisor...\n");
+    /* Step 4: Create supervisor */
+    printf("[orch] Step 4: Creating supervisor...\n");
     long super_id = sys_super_create("demo_super");
     if (super_id < 0) {
         printf("[orch] FAIL: super_create (err=%ld)\n", super_id);
@@ -75,13 +104,14 @@ int main(void) {
     /* Set restart policy: one-for-one (restart only crashed worker) */
     sys_super_set_policy(super_id, 0 /* SUPER_ONE_FOR_ONE */);
 
-    /* Step 4: Add workers to supervisor */
-    printf("[orch] Step 4: Adding %d workers...\n", NUM_WORKERS);
+    /* Step 5: Add workers to supervisor */
+    printf("[orch] Step 5: Adding %d workers...\n", NUM_WORKERS);
 
     /* Build argv strings for workers: agent_worker <id> <task_topic> <result_topic> */
     for (int i = 0; i < NUM_WORKERS; i++) {
         /* Workers get the namespace and basic caps */
-        long ret = sys_super_add(super_id, "/agent_worker.elf", ns_id, 0);
+        long ret = sys_super_add(super_id, "/agent_worker.elf", ns_id,
+                                 CAP_INFER | CAP_XNS_INFER);
         if (ret < 0) {
             printf("[orch] FAIL: super_add worker %d (err=%ld)\n", i, ret);
         } else {
@@ -89,8 +119,8 @@ int main(void) {
         }
     }
 
-    /* Step 5: Create task graph */
-    printf("[orch] Step 5: Creating task graph...\n");
+    /* Step 6: Create task graph */
+    printf("[orch] Step 6: Creating task graph...\n");
 
     long task_a = sys_task_create("analyze_data", ns_id);
     long task_b = sys_task_create("transform", ns_id);
@@ -109,15 +139,15 @@ int main(void) {
     printf("[orch] Tasks: A=%ld → B=%ld → C=%ld (dependency chain)\n",
            task_a, task_b, task_c);
 
-    /* Step 6: Start supervisor (launches all workers) */
-    printf("[orch] Step 6: Starting supervisor...\n");
+    /* Step 7: Start supervisor (launches all workers) */
+    printf("[orch] Step 7: Starting supervisor...\n");
     long launched = sys_super_start(super_id);
     printf("[orch] Launched %ld workers\n", launched);
 
     /* Give workers time to register and subscribe */
     for (int i = 0; i < 100; i++) sys_yield();
 
-    /* Step 7: Execute task graph */
+    /* Step 8: Execute task graph */
     printf("\n[orch] === Executing Task Graph ===\n\n");
 
     /* Task A: start immediately, publish assignment */
@@ -201,7 +231,7 @@ int main(void) {
         printf("[orch] Task C timed out\n");
     }
 
-    /* Step 8: Collect results from pub/sub */
+    /* Step 9: Collect results from pub/sub */
     printf("\n[orch] === Results ===\n\n");
 
     int results_collected = 0;
@@ -221,9 +251,13 @@ int main(void) {
 
     printf("\n[orch] Collected %d/%d results\n", results_collected, NUM_TASKS);
 
-    /* Step 9: Stop supervisor (kills workers) */
+    /* Step 10: Stop supervisor and clean up */
     printf("[orch] Stopping supervisor...\n");
     sys_super_stop(super_id);
+
+    /* Kill inferd */
+    if (inferd_pid > 0)
+        sys_kill(inferd_pid, 9 /* SIGKILL */);
 
     /* Summary */
     printf("\n=============================================\n");
