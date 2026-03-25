@@ -49,7 +49,8 @@ int  taskgraph_depend(uint32_t task_id, uint32_t dep_id,
 int  taskgraph_start(uint32_t task_id, uint64_t caller_pid);
 
 /* Mark task as DONE (result>=0) or FAILED (result<0). Returns 0 or -errno. */
-int  taskgraph_complete(uint32_t task_id, int32_t result, uint64_t caller_pid);
+int  taskgraph_complete(uint32_t task_id, int32_t result, uint64_t caller_pid,
+                        uint32_t caller_ns_id);
 
 /* Query task status. Returns 0 or -errno. */
 int  taskgraph_status(uint32_t task_id, task_status_t *out);

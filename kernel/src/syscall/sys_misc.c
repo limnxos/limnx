@@ -877,7 +877,8 @@ int64_t sys_task_complete(uint64_t task_id, uint64_t result,
     (void)a3; (void)a4; (void)a5;
     thread_t *t = thread_get_current();
     if (!t || !t->process) return -1;
-    return taskgraph_complete((uint32_t)task_id, (int32_t)result, t->process->pid);
+    return taskgraph_complete((uint32_t)task_id, (int32_t)result,
+                             t->process->pid, t->process->ns_id);
 }
 
 int64_t sys_task_status(uint64_t task_id, uint64_t buf_ptr,

@@ -139,14 +139,16 @@ int taskgraph_start(uint32_t task_id, uint64_t caller_pid) {
     return 0;
 }
 
-int taskgraph_complete(uint32_t task_id, int32_t result, uint64_t caller_pid) {
+int taskgraph_complete(uint32_t task_id, int32_t result, uint64_t caller_pid,
+                       uint32_t caller_ns_id) {
     uint64_t flags;
     spin_lock_irqsave(&taskgraph_lock, &flags);
 
     workflow_task_t *t = find_task(task_id);
     if (!t) { spin_unlock_irqrestore(&taskgraph_lock, flags); return -ENOENT; }
-    /* Owner or worker can complete */
-    if (t->owner_pid != caller_pid && t->worker_pid != caller_pid) {
+    /* Owner, assigned worker, or any process in the same namespace can complete */
+    if (t->owner_pid != caller_pid && t->worker_pid != caller_pid &&
+        t->ns_id != caller_ns_id) {
         spin_unlock_irqrestore(&taskgraph_lock, flags);
         return -EPERM;
     }
