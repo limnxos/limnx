@@ -115,7 +115,7 @@ int main(void) {
     printf("[orch] Launched %ld workers\n", launched);
 
     /* Give workers time to register and subscribe */
-    for (int i = 0; i < 30; i++) sys_yield();
+    for (int i = 0; i < 100; i++) sys_yield();
 
     /* Step 7: Execute task graph */
     printf("\n[orch] === Executing Task Graph ===\n\n");
@@ -143,7 +143,7 @@ int main(void) {
     }
 
     /* Wait for task A */
-    if (wait_task(task_a, 500) == 0) {
+    if (wait_task(task_a, 2000) == 0) {
         printf("[orch] Task A completed\n");
     } else {
         printf("[orch] Task A timed out\n");
@@ -169,7 +169,7 @@ int main(void) {
         sys_topic_publish(task_topic, msg, (unsigned long)len);
     }
 
-    if (wait_task(task_b, 500) == 0) {
+    if (wait_task(task_b, 2000) == 0) {
         printf("[orch] Task B completed\n");
     } else {
         printf("[orch] Task B timed out\n");
@@ -195,7 +195,7 @@ int main(void) {
         sys_topic_publish(task_topic, msg, (unsigned long)len);
     }
 
-    if (wait_task(task_c, 500) == 0) {
+    if (wait_task(task_c, 2000) == 0) {
         printf("[orch] Task C completed\n");
     } else {
         printf("[orch] Task C timed out\n");

@@ -69,6 +69,14 @@ int main(void) {
             prompt = &task_buf[i];
         }
 
+        /* Check if another worker already completed this task */
+        if (task_id >= 0) {
+            task_status_t ts;
+            if (sys_task_status(task_id, &ts) == 0 && ts.status >= TASK_DONE) {
+                continue;  /* already done by another worker */
+            }
+        }
+
         /* Call inference service (may fail if inferd not running) */
         char resp[256];
         long rlen = sys_infer_request("default", prompt, strlen(prompt),
