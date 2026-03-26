@@ -7,19 +7,15 @@ int tool_dispatch(const char *path, const char **argv, long caps,
         return -1;
 
     memset(result, 0, sizeof(*result));
-    (void)caps;       /* TODO: apply via sys_setcap on child when Limnx supports it */
-    (void)cpu_ticks;  /* TODO: apply via sys_setrlimit on child when Limnx supports it */
+    (void)caps;
+    (void)cpu_ticks;
 
-    /* In Limnx, sys_exec spawns a new child (does not replace current process).
-     * The child inherits our fd_table. We create pipes, mark parent-side fds
-     * as FD_CLOEXEC so the child only gets the child-side ends. */
-
-    /* Create stdin pipe (parent writes, child reads from fd 0) */
+    /* Create stdin pipe (parent writes → child reads) */
     long stdin_rfd = -1, stdin_wfd = -1;
     if (sys_pipe(&stdin_rfd, &stdin_wfd) < 0)
         return -1;
 
-    /* Create stdout pipe (child writes to fd 1, parent reads) */
+    /* Create stdout pipe (child writes → parent reads) */
     long stdout_rfd = -1, stdout_wfd = -1;
     if (sys_pipe(&stdout_rfd, &stdout_wfd) < 0) {
         sys_close(stdin_rfd);
@@ -27,12 +23,8 @@ int tool_dispatch(const char *path, const char **argv, long caps,
         return -1;
     }
 
-    /* Mark parent-side pipe ends as FD_CLOEXEC so child doesn't inherit them */
-    sys_fcntl(stdin_wfd, F_SETFD, FD_CLOEXEC);
-    sys_fcntl(stdout_rfd, F_SETFD, FD_CLOEXEC);
-
-    /* Exec the tool — child inherits stdin_rfd and stdout_wfd (no cloexec) */
-    long child_pid = sys_exec(path, argv);
+    /* Fork child */
+    long child_pid = sys_fork();
     if (child_pid < 0) {
         sys_close(stdin_rfd);
         sys_close(stdin_wfd);
@@ -41,17 +33,34 @@ int tool_dispatch(const char *path, const char **argv, long caps,
         return -1;
     }
 
-    /* Close child-side pipe ends in parent */
+    if (child_pid == 0) {
+        /* Child: redirect fd 0 and fd 1 to pipes */
+        sys_close(stdin_wfd);   /* parent's write end */
+        sys_close(stdout_rfd);  /* parent's read end */
+
+        sys_dup2(stdin_rfd, 0);    /* stdin ← pipe read end */
+        sys_dup2(stdout_wfd, 1);   /* stdout → pipe write end */
+
+        sys_close(stdin_rfd);   /* close original after dup */
+        sys_close(stdout_wfd);
+
+        /* Exec the tool */
+        sys_execve(path, argv);
+        /* If exec fails, exit */
+        sys_exit(127);
+    }
+
+    /* Parent: close child-side pipe ends */
     sys_close(stdin_rfd);
     sys_close(stdout_wfd);
 
-    /* Write input to child via our pipe write end */
+    /* Write input to child's stdin */
     if (input && input_len > 0) {
         sys_fwrite(stdin_wfd, input, input_len);
     }
-    sys_close(stdin_wfd);  /* signal EOF to child */
+    sys_close(stdin_wfd);  /* signal EOF */
 
-    /* Read output from child via our pipe read end */
+    /* Read child's stdout */
     uint32_t total = 0;
     while (total < sizeof(result->output) - 1) {
         long n = sys_read(stdout_rfd, result->output + total,
