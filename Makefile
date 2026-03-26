@@ -4,7 +4,7 @@
 CC       := x86_64-elf-gcc
 LD       := x86_64-elf-ld
 NASM     := nasm
-GCC_INCL := $(shell $(CC) -print-file-name=include)
+GCC_INCL := $(shell $(CC) -print-file-name=include 2>/dev/null)
 EXTRA_CFLAGS ?=
 CFLAGS   := -ffreestanding -nostdinc -isystem $(GCC_INCL) \
             -fno-stack-protector -fno-pic \
@@ -218,7 +218,7 @@ $(INITRD): $(USER_ELFS) $(wildcard initrd/*)
 	@mkdir -p build/initrd_staging
 	cp initrd/* build/initrd_staging/ 2>/dev/null || true
 	cp $(USER_ELFS) build/initrd_staging/
-	COPYFILE_DISABLE=1 tar cf $@ --format ustar --no-mac-metadata -C build/initrd_staging .
+	COPYFILE_DISABLE=1 tar cf $@ --format ustar -C build/initrd_staging .
 	rm -rf build/initrd_staging
 
 $(KERNEL): $(ALL_OBJS)
