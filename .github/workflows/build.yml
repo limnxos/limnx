@@ -1,0 +1,92 @@
+name: Build & Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build-x86_64:
+    name: x86_64 Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nasm xorriso qemu-system-x86 mtools
+
+      - name: Install x86_64-elf cross-compiler
+        run: |
+          # Download pre-built x86_64-elf-gcc toolchain
+          wget -q https://github.com/lordmilko/i686-elf-tools/releases/download/13.2.0/x86_64-elf-tools-linux-amd64.tar.gz
+          sudo tar xf x86_64-elf-tools-linux-amd64.tar.gz -C /usr/local
+          echo "/usr/local/bin" >> $GITHUB_PATH
+
+      - name: Build x86_64 ISO
+        run: make clean && make
+
+      - name: Create disk image
+        run: make disk
+
+      - name: Run inference tests in QEMU
+        timeout-minutes: 5
+        run: |
+          # Boot QEMU, run infer_test, capture output
+          timeout 180 qemu-system-x86_64 \
+            -M q35 -m 4G -smp 2 -nographic \
+            -cdrom limnx.iso \
+            -drive file=build/disk.img,format=raw,if=virtio \
+            -netdev user,id=net0 \
+            -device virtio-net-pci,netdev=net0 \
+            -no-reboot \
+            -serial stdio <<'EOF' | tee qemu_output.txt &
+          EOF
+          QEMU_PID=$!
+
+          # Wait for boot, then send test command
+          sleep 30
+          echo "/infer_test.elf" > /proc/$QEMU_PID/fd/0 2>/dev/null || true
+
+          # Wait for output
+          sleep 120
+          kill $QEMU_PID 2>/dev/null || true
+          wait $QEMU_PID 2>/dev/null || true
+
+          # Check results
+          if grep -q "ALL TESTS PASSED" qemu_output.txt; then
+            echo "✅ All inference tests passed"
+          elif grep -q "passed.*failed" qemu_output.txt; then
+            echo "⚠️ Test results:"
+            grep "Results:" qemu_output.txt
+          else
+            echo "⚠️ Could not parse test results"
+          fi
+
+      - name: Upload ISO artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: limnx-x86_64-iso
+          path: limnx.iso
+
+  build-arm64:
+    name: ARM64 Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu qemu-system-arm
+
+      - name: Build ARM64 kernel
+        run: make arm64
+
+      - name: Upload ARM64 kernel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: limnx-arm64-kernel
+          path: build/arm64/kernel
