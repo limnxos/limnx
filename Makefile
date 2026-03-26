@@ -217,7 +217,7 @@ disk: $(DISK_IMG)
 $(INITRD): $(USER_ELFS) $(wildcard initrd/*)
 	@mkdir -p build/initrd_staging
 	cp -f initrd/* build/initrd_staging/ 2>/dev/null || true
-	cp -f $(USER_ELFS) build/initrd_staging/
+	@for f in $(USER_ELFS); do cp -f "$$f" build/initrd_staging/; done
 	COPYFILE_DISABLE=1 tar cf $@ --format ustar -C build/initrd_staging .
 	rm -rf build/initrd_staging
 
@@ -470,7 +470,7 @@ build/arm64/user/%.elf: build/arm64/user/%.o $(ARM64_LIBC_C_OBJS) user/arch/arm6
 $(ARM64_INITRD): $(ARM64_USER_C_ELFS)
 	@mkdir -p build/arm64/initrd_staging
 	cp -f initrd/* build/arm64/initrd_staging/ 2>/dev/null || true
-	cp -f $(ARM64_USER_C_ELFS) build/arm64/initrd_staging/
+	@for f in $(ARM64_USER_C_ELFS); do cp -f "$$f" build/arm64/initrd_staging/; done
 	COPYFILE_DISABLE=1 tar cf $@ --format ustar -C build/arm64/initrd_staging .
 	rm -rf build/arm64/initrd_staging
 
