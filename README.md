@@ -1,85 +1,170 @@
 # Limnx
 
-The Limnx kernel — the first AI-native operating system designed to run AI agent and inference workloads as first-class citizens.
+An operating system where AI agents are first-class citizens.
 
-## What is Limnx?
+Limnx is a from-scratch x86_64/ARM64 kernel with built-in primitives for AI inference, agent orchestration, and security isolation. The kernel doesn't just run AI workloads — it **governs** them: routing inference requests, enforcing capability tokens, sandboxing workers with seccomp, and orchestrating multi-agent workflows through task graphs and pub/sub.
 
-Limnx is an operating system where AI agents are the primary inhabitants, not an afterthought. Every layer — from the scheduler to IPC to security — is built with autonomous agent workflows in mind: sandboxed tool execution, capability-based isolation, kernel-routed inference, and structured inter-agent communication.
+## Try It
 
-It boots on real hardware (BIOS and UEFI), runs a preemptive SMP kernel, and provides a syscall interface with over 130 system calls. The kernel targets x86_64 as the primary architecture with an ARM64 HAL layer and early boot support.
+```bash
+# Build and boot (x86_64)
+make clean && make
+make disk
+make run
 
-## Features
+# In the shell:
+/orchestrator.elf     # Full AI-native demo
+/generate.elf         # Interactive text generation
+/infer_test.elf       # 49 inference pipeline tests
+```
 
-**Kernel**
-- 4-level paging, kernel heap (1GB), demand paging, swap (2048 pages)
-- Preemptive SMP scheduler (2 CPUs, per-CPU run queues, work stealing)
-- Fork with copy-on-write, ELF64 loader, signals (sigaction/sigreturn)
-- LimnFS disk filesystem (ext2-inspired, triple indirect blocks, 64MB)
-- Block cache (256 entries, LRU, write-back)
-- TCP/IP stack (full state machine, software loopback, dynamic receive window)
-- Virtio-net and virtio-blk drivers
-- PTY subsystem, framebuffer console
-
-**Agent Infrastructure**
-- Unix domain sockets, eventfd, epoll for multiplexed I/O
-- Agent registry (name-based discovery, auto-cleanup)
-- Capability tokens (12 capabilities: NET_BIND, KILL, EXEC, FS_READ, XNS_INFER, ...)
-- Agent namespaces with quota enforcement
-- Per-process seccomp filters, resource limits, UID/GID isolation
-- Sandboxed tool dispatch (fork + capability drop + pipe)
-- Kernel-routed inference service registry with health monitoring, model hot-swap, namespace-aware routing
-- Pub/sub messaging (topic-based multi-agent communication)
-- Task graph DAGs (dependency tracking, cross-namespace support)
-- Supervisor trees (auto-restart, ONE_FOR_ONE / ONE_FOR_ALL policies)
-- io_uring-style async I/O
-
-**User Space**
-- Minimal libc (printf, string, math, HTTP, tokenizer, GGUF parser)
-- Interactive shell
-- Tool-using AI agent with multi-tool chains
-- Inference daemon (unix socket server)
-- Incremental test suites
-
-## Build
-
-**x86_64** requires: `x86_64-elf-gcc`, `x86_64-elf-ld`, `nasm`, `xorriso`, `qemu-system-x86_64`
-**ARM64** requires: `aarch64-elf-gcc` (or `aarch64-linux-gnu-gcc`), `qemu-system-aarch64`
+The orchestrator demo exercises 7 kernel primitives in one command:
 
 ```
-make clean && make     # build x86_64 limnx.iso
-make disk              # create 64MB virtio-blk disk image
-make run               # boot in QEMU with virtio-net + virtio-blk
-make arm64             # build ARM64 kernel ELF
-make arm64-run         # boot ARM64 in QEMU (virt machine, PL011 serial)
+=============================================
+  Limnx Agent Orchestration Demo
+=============================================
+
+Step 1: Creating namespace...          → Isolated agent group
+Step 2: Starting inference daemon...   → GGUF model loaded (dim=64, 2 layers)
+Step 3: Creating pub/sub topics...     → Task distribution + result collection
+Step 4: Creating supervisor...         → Managed worker lifecycle
+Step 5: Creating capability tokens...  → Scoped CAP_INFER bearer token
+Step 6: Adding 3 workers...            → Sandboxed with seccomp
+Step 7: Creating task graph...         → A→B→C dependency chain
+Step 8: Starting supervisor...         → Workers launch, subscribe, sandbox
+
+=== Executing Task Graph ===
+
+Task A completed ✓  (worker calls inference, publishes result)
+Task B completed ✓  (waits for A, then executes)
+Task C completed ✓  (waits for B, then executes)
+
+=== Results ===
+
+RESULT:8:1:<generated text from transformer>
+RESULT:7:2:<generated text from transformer>
+RESULT:8:3:<generated text from transformer>
+Collected 3/3 results
+
+Demo Complete
 ```
+
+## What Makes It AI-Native
+
+Traditional OSes treat AI as "just another process." Limnx provides **kernel primitives** purpose-built for AI workloads:
+
+| Primitive | Syscalls | What It Does |
+|-----------|----------|-------------|
+| **Inference Service** | `infer_register`, `infer_request`, `infer_submit/poll/result` | Kernel-routed model serving with health monitoring, load balancing, result caching, async completion, model hot-swap |
+| **Agent Namespaces** | `ns_create`, `ns_join`, `ns_setquota` | Resource-isolated agent groups with process/memory quotas |
+| **Capability Tokens** | `token_create`, `token_delegate`, `token_revoke` | Fine-grained, delegated, revocable authorization (depth-4 delegation chains, cascading revocation) |
+| **Task Graphs** | `task_create`, `task_depend`, `task_start`, `task_complete` | DAG workflow orchestration with cross-namespace dependencies |
+| **Supervisor Trees** | `super_create`, `super_add`, `super_start`, `super_stop` | Erlang-style process supervision with ONE_FOR_ONE/ONE_FOR_ALL restart policies |
+| **Pub/Sub** | `topic_create`, `topic_publish`, `topic_subscribe`, `topic_recv` | Broadcast messaging across agent groups |
+| **Seccomp Sandbox** | `seccomp` | Syscall allowlist — workers can only call inference + I/O, not fork/exec/kill |
+
+The security model is a **trifecta**:
+- **Namespaces** isolate what agents can see
+- **Capability tokens** control what agents can access
+- **Seccomp** restricts how agents interact with the kernel
 
 ## Architecture
 
 ```
  User Space (Ring 3 / EL0)
- ┌──────────────────────────────────────────────────┐
- │  shell   toolagent    inferd    agent programs   │
- │                                                  │
- │  libc (syscalls, printf, math, HTTP, tokenizer)  │
- ├──────────────────────────────────────────────────┤
- │              SYSCALL / SYSRET (x86_64)           │
- │              SVC (ARM64)                         │
- ├──────────────────────────────────────────────────┤
+ ┌─────────────────────────────────────────────────────────┐
+ │  orchestrator   agent_worker(×3)   inferd   generate    │
+ │  chat           toolagent          shell    busybox     │
+ │                                                         │
+ │  libc: syscalls, printf, math, tokenizer, GGUF, HTTP   │
+ ├─────────────────────────────────────────────────────────┤
+ │           SYSCALL/SYSRET (x86_64) | SVC (ARM64)         │
+ ├─────────────────────────────────────────────────────────┤
  Kernel (Ring 0 / EL1)
- │                                                  │
- │  Process     Scheduler    Memory     Filesystem  │
- │  fork/exec   SMP/steal    COW/swap   LimnFS/VFS  │
- │                                                  │
- │  Networking  IPC          Security   Device      │
- │  TCP/IP/UDP  unix/epoll   caps/sec   virtio      │
- │              uring/evfd   seccomp    PCI/LAPIC   │
- │              pubsub/tg    tokens/ns              │
- │                                                  │
- │  HAL (arch/)                                     │
- │  x86_64: CR3, LAPIC, MSR    ARM64: TTBR, GIC     │
- └──────────────────────────────────────────────────┘
-        Limine (x86_64 BIOS/UEFI) | Direct boot (ARM64)
+ │                                                         │
+ │  Process        Scheduler       Memory       Filesystem │
+ │  fork/exec/COW  SMP preemptive  4-level PT   LimnFS/VFS │
+ │  signals        2 CPUs          swap/demand  block cache │
+ │                                                         │
+ │  AI Primitives                  Security                │
+ │  infer_svc (routing/cache)      namespaces              │
+ │  supervisor trees               capability tokens       │
+ │  task graphs (DAG)              seccomp filters         │
+ │  pub/sub messaging              UID/GID/caps            │
+ │  agent registry                                         │
+ │                                                         │
+ │  Networking     IPC             Devices                 │
+ │  TCP/IP/UDP     unix sockets    virtio-net/blk          │
+ │  ICMP/ARP       epoll/eventfd   PCI / MMIO              │
+ │                 io_uring        LAPIC / GIC              │
+ │                 pipes/shm       PL011 / COM1             │
+ │                                                         │
+ │  HAL (arch/)                                            │
+ │  x86_64: GDT/IDT/TSS, LAPIC, MSR, CR3, SYSCALL/SYSRET │
+ │  ARM64:  GIC, TTBR, VBAR, SVC, PSCI SMP                │
+ └─────────────────────────────────────────────────────────┘
+       Limine (x86_64 BIOS/UEFI)  |  Direct boot (ARM64)
 ```
+
+## Inference Pipeline
+
+```
+User program                    Kernel                         inferd daemon
+     │                            │                                │
+     │ sys_infer_request ──────►  │ route to service ────────────► │
+     │  ("default", prompt)       │ (namespace-aware,              │ load GGUF model
+     │                            │  health-checked,               │ BPE tokenize
+     │                            │  cached results)               │ transformer forward
+     │                            │                                │ temperature + top-k sample
+     │ ◄────── response ───────── │ ◄──── unix socket ─────────── │ BPE decode
+     │                            │ cache result                   │
+     │                            │                                │
+     │ sys_infer_submit ────────► │ async worker thread ─────────► │
+     │  (non-blocking)            │                                │
+     │ sys_infer_poll ──────────► │ check completion               │
+     │ sys_infer_result ────────► │ copy response                  │
+```
+
+Supported model formats: GGUF v3 (F32, F16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K–Q6_K). BPE tokenizer loaded from GGUF metadata. Transformer: RMS norm, multi-head attention, GQA, RoPE, SwiGLU, KV cache.
+
+## Build
+
+**x86_64** requires: `x86_64-elf-gcc`, `x86_64-elf-ld`, `nasm`, `xorriso`, `qemu-system-x86_64`
+
+**ARM64** requires: `aarch64-elf-gcc` (or `aarch64-linux-gnu-gcc`), `qemu-system-aarch64`
+
+```bash
+make clean && make     # build x86_64 ISO (fetches Limine on first run)
+make run               # boot in QEMU with virtio-net + virtio-blk
+make disk              # create 64MB virtio-blk disk image
+make arm64             # build ARM64 kernel ELF
+./run-arm64.sh         # clean build + boot ARM64 in QEMU
+```
+
+## Test Suite
+
+```bash
+# In the Limnx shell:
+/infer_test.elf        # 49 inference pipeline tests (both archs)
+/fs_test.elf           # Filesystem tests
+/proc_test.elf         # Process/fork/exec tests
+/ipc_test.elf          # IPC tests
+/mm_test.elf           # Memory management tests
+/net_test.elf          # Network tests
+/security_test.elf     # Security tests
+/system_test.elf       # System integration tests
+```
+
+## Kernel Stats
+
+- **140+ syscalls** (Linux-compatible numbers + Limnx-specific 512+)
+- **2 architectures**: x86_64 (primary), ARM64 (full feature parity)
+- **SMP**: 2 CPUs, per-CPU data, LAPIC timer preemption
+- **Memory**: 4-level paging, HHDM, kernel heap up to 1GB, mmap up to 2GB
+- **Filesystem**: LimnFS (ext2-inspired, triple indirect blocks, 64MB disk)
+- **Networking**: TCP (full state machine), UDP, ICMP, ARP, software loopback
+- **Userspace**: Busybox ash (47 applets), custom libc, init system
 
 ## License
 
