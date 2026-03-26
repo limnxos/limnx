@@ -73,37 +73,37 @@ The security model is a **trifecta**:
 
 ```
  User Space (Ring 3 / EL0)
- ┌─────────────────────────────────────────────────────────┐
- │  orchestrator   agent_worker(×3)   inferd   generate    │
- │  chat           toolagent          shell    busybox     │
- │                                                         │
- │  libc: syscalls, printf, math, tokenizer, GGUF, HTTP   │
- ├─────────────────────────────────────────────────────────┤
- │           SYSCALL/SYSRET (x86_64) | SVC (ARM64)         │
- ├─────────────────────────────────────────────────────────┤
+ ┌──────────────────────────────────────────────────────────┐
+ │  orchestrator   agent_worker(×3)   inferd   generate     │
+ │  chat           toolagent          shell    busybox      │
+ │                                                          │
+ │  libc: syscalls, printf, math, tokenizer, GGUF, HTTP     │
+ ├──────────────────────────────────────────────────────────┤
+ │           SYSCALL/SYSRET (x86_64) | SVC (ARM64)          │
+ ├──────────────────────────────────────────────────────────┤
  Kernel (Ring 0 / EL1)
- │                                                         │
- │  Process        Scheduler       Memory       Filesystem │
- │  fork/exec/COW  SMP preemptive  4-level PT   LimnFS/VFS │
+ │                                                          │
+ │  Process        Scheduler       Memory       Filesystem  │
+ │  fork/exec/COW  SMP preemptive  4-level PT   LimnFS/VFS  │
  │  signals        2 CPUs          swap/demand  block cache │
- │                                                         │
- │  AI Primitives                  Security                │
- │  infer_svc (routing/cache)      namespaces              │
- │  supervisor trees               capability tokens       │
- │  task graphs (DAG)              seccomp filters         │
- │  pub/sub messaging              UID/GID/caps            │
- │  agent registry                                         │
- │                                                         │
- │  Networking     IPC             Devices                 │
- │  TCP/IP/UDP     unix sockets    virtio-net/blk          │
- │  ICMP/ARP       epoll/eventfd   PCI / MMIO              │
+ │                                                          │
+ │  AI Primitives                  Security                 │
+ │  infer_svc (routing/cache)      namespaces               │
+ │  supervisor trees               capability tokens        │
+ │  task graphs (DAG)              seccomp filters          │
+ │  pub/sub messaging              UID/GID/caps             │
+ │  agent registry                                          │
+ │                                                          │
+ │  Networking     IPC             Devices                  │
+ │  TCP/IP/UDP     unix sockets    virtio-net/blk           │
+ │  ICMP/ARP       epoll/eventfd   PCI / MMIO               │
  │                 io_uring        LAPIC / GIC              │
  │                 pipes/shm       PL011 / COM1             │
- │                                                         │
- │  HAL (arch/)                                            │
- │  x86_64: GDT/IDT/TSS, LAPIC, MSR, CR3, SYSCALL/SYSRET │
- │  ARM64:  GIC, TTBR, VBAR, SVC, PSCI SMP                │
- └─────────────────────────────────────────────────────────┘
+ │                                                          │
+ │  HAL (arch/)                                             │
+ │  x86_64: GDT/IDT/TSS, LAPIC, MSR, CR3, SYSCALL/SYSRET    │
+ │  ARM64:  GIC, TTBR, VBAR, SVC, PSCI SMP                  │
+ └──────────────────────────────────────────────────────────┘
        Limine (x86_64 BIOS/UEFI)  |  Direct boot (ARM64)
 ```
 
@@ -117,7 +117,7 @@ User program                    Kernel                         inferd daemon
      │                            │  health-checked,               │ BPE tokenize
      │                            │  cached results)               │ transformer forward
      │                            │                                │ temperature + top-k sample
-     │ ◄────── response ───────── │ ◄──── unix socket ─────────── │ BPE decode
+     │ ◄────── response ───────── │ ◄──── unix socket ───────────  │ BPE decode
      │                            │ cache result                   │
      │                            │                                │
      │ sys_infer_submit ────────► │ async worker thread ─────────► │
@@ -133,20 +133,20 @@ Supported model formats: GGUF v3 (F32, F16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K�
 ### 1. Loading and Serving an AI Model
 
 ```
-┌─────────────┐     sys_infer_register      ┌──────────────────┐
-│   inferd     │ ──────────────────────────► │  Kernel           │
-│              │   "summarizer"              │  infer_svc        │
-│  1. Open     │   "/tmp/summarizer.sock"    │  registry         │
-│     model.gguf                             │                   │
-│  2. Parse    │     sys_infer_health ──────►│  health monitor   │
-│     GGUF v3  │     (heartbeat)             │  load balancer    │
-│  3. Dequant  │                             │  result cache     │
-│     Q4_0→F32 │◄────── unix socket ────────│  request router   │
-│  4. Init     │   receive prompt            │                   │
-│     transformer                            └──────────────────┘
-│  5. Listen   │
-│     on socket│
-└─────────────┘
+┌────────────────┐     sys_infer_register      ┌───────────────────┐
+│   inferd       │ ──────────────────────────► │  Kernel           │
+│                │   "summarizer"              │  infer_svc        │
+│  1. Open       │   "/tmp/summarizer.sock"    │  registry         │
+│     model.gguf |                             │                   │
+│  2. Parse      │     sys_infer_health ──────►│  health monitor   │
+│     GGUF v3    │     (heartbeat)             │  load balancer    │
+│  3. Dequant    │                             │  result cache     │
+│     Q4_0→F32   │◄────── unix socket ──────── │  request router   │
+│  4. Init       │   receive prompt            │                   │
+│     transformer|                             └───────────────────┘
+│  5. Listen     │
+│     on socket  │
+└────────────────┘
 
 # Start the inference daemon:
 /inferd.elf /model.gguf summarizer /tmp/summarizer.sock
@@ -157,14 +157,14 @@ Multiple daemons can register under the same name — the kernel load-balances a
 ### 2. Chatting with an AI Model
 
 ```
-┌──────────┐   sys_infer_request    ┌────────┐   unix sock   ┌─────────┐
+┌───────────┐   sys_infer_request   ┌─────────┐   unix sock  ┌──────────┐
 │  chat.elf │ ───────────────────►  │ Kernel  │ ───────────► │  inferd  │
 │           │  "summarizer"         │ infer   │              │          │
 │ you> Hi   │  "Hi there"           │ _svc    │              │ tokenize │
 │           │                       │         │              │ forward  │
-│ [bot] ... │ ◄─────────────────── │ cache?  │ ◄─────────── │ sample   │
+│ [bot] ... │ ◄───────────────────  │ cache?  │ ◄─────────── │ sample   │
 │           │   response            │ return  │  response    │ decode   │
-└──────────┘                        └────────┘               └─────────┘
+└───────────┘                       └─────────┘              └──────────┘
 
 # Interactive chat with RAG memory:
 /chat.elf
@@ -180,7 +180,7 @@ The kernel caches responses — repeated prompts return instantly without hittin
 ### 3. Setting Up a Single AI Agent
 
 ```
-┌──────────────────┐
+┌───────────────────┐
 │   toolagent.elf   │
 │                   │
 │  1. Register      │─── sys_agent_register("code_reviewer")
@@ -194,7 +194,7 @@ The kernel caches responses — repeated prompts return instantly without hittin
 │    act        ────│─── sys_exec / sys_fwrite / sys_sendto
 │    publish    ────│─── sys_topic_publish(results_topic)
 │                   │
-└──────────────────┘
+└───────────────────┘
 ```
 
 Agents discover each other via `sys_agent_lookup("code_reviewer")` → returns PID.
@@ -227,7 +227,7 @@ Limnx provides 5 IPC channels, each suited to different agent patterns:
 
 ```
                     ┌──────────────────┐
-                    │   orchestrator    │
+                    │   orchestrator   │
                     │                  │
                     │ 1. ns_create     │─── isolated namespace
                     │ 2. token_create  │─── CAP_INFER bearer token
@@ -238,24 +238,24 @@ Limnx provides 5 IPC channels, each suited to different agent patterns:
                            │
               ┌────────────┼────────────┐
               │            │            │
-         ┌────▼───┐   ┌───▼────┐   ┌───▼────┐
-         │worker_0│   │worker_1│   │worker_2│
-         │        │   │        │   │        │
-         │seccomp │   │seccomp │   │seccomp │    sandboxed
-         │sandbox │   │sandbox │   │sandbox │    (no fork/exec/kill)
-         │        │   │        │   │        │
-         │cap_token│  │cap_token│  │cap_token│   scoped CAP_INFER
-         │(bearer)│   │(bearer)│   │(bearer)│
-         │        │   │        │   │        │
-         │topic_  │   │topic_  │   │topic_  │    receive tasks
-         │ recv   │   │ recv   │   │ recv   │    via pub/sub
-         │        │   │        │   │        │
-         │infer_  │   │infer_  │   │infer_  │    call AI model
-         │request │   │request │   │request │    via kernel router
-         │        │   │        │   │        │
-         │topic_  │   │topic_  │   │topic_  │    publish results
-         │ pub    │   │ pub    │   │ pub    │    via pub/sub
-         └────────┘   └────────┘   └────────┘
+         ┌────▼────┐   ┌───▼─────┐   ┌───▼─────┐
+         │worker_0 │   │worker_1 │   │worker_2 │
+         │         │   │         │   │         │
+         │seccomp  │   │seccomp  │   │seccomp  │    sandboxed
+         │sandbox  │   │sandbox  │   │sandbox  │    (no fork/exec/kill)
+         │         │   │         │   │         │
+         │cap_token│   │cap_token│   │cap_token│   scoped CAP_INFER
+         │(bearer) │   │(bearer) │   │(bearer) │
+         │         │   │         │   │         │
+         │topic_   │   │topic_   │   │topic_   │    receive tasks
+         │ recv    │   │ recv    │   │ recv    │    via pub/sub
+         │         │   │         │   │         │
+         │infer_   │   │infer_   │   │infer_   │    call AI model
+         │request  │   │request  │   │request  │    via kernel router
+         │         │   │         │   │         │
+         │topic_   │   │topic_   │   │topic_   │    publish results
+         │ pub     │   │ pub     │   │ pub     │    via pub/sub
+         └─────────┘   └─────────┘   └─────────┘
 
 Task graph enforces execution order:
   Task A (analyze)  ─── must complete before ───►  Task B (transform)
