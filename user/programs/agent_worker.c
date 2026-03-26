@@ -33,6 +33,37 @@ int main(void) {
     long task_topic = 0;
     sys_topic_subscribe(task_topic);
 
+    /* Apply seccomp sandbox — only allow essential syscalls.
+     * Blocks: fork, exec, open, unlink, kill, socket, mmap (except brk).
+     * Allows: read(0), write(1), close(3), fstat(5), mmap(9), munmap(11),
+     *         brk(12), sigaction(13), sigreturn(15), ioctl(16), writev(20),
+     *         yield(24), nanosleep(35), getpid(39), exit(60), exit_group(231).
+     * All Limnx syscalls (512+) pass through automatically. */
+    {
+        unsigned long mask_lo = 0;
+        unsigned long mask_hi = 0;
+        /* Bits 0-63 */
+        mask_lo |= (1UL << 0);   /* read */
+        mask_lo |= (1UL << 1);   /* write */
+        mask_lo |= (1UL << 3);   /* close */
+        mask_lo |= (1UL << 5);   /* fstat */
+        mask_lo |= (1UL << 9);   /* mmap */
+        mask_lo |= (1UL << 11);  /* munmap */
+        mask_lo |= (1UL << 12);  /* brk */
+        mask_lo |= (1UL << 13);  /* rt_sigaction */
+        mask_lo |= (1UL << 15);  /* rt_sigreturn */
+        mask_lo |= (1UL << 16);  /* ioctl */
+        mask_lo |= (1UL << 20);  /* writev */
+        mask_lo |= (1UL << 24);  /* sched_yield */
+        mask_lo |= (1UL << 35);  /* nanosleep */
+        mask_lo |= (1UL << 39);  /* getpid */
+        mask_lo |= (1UL << 60);  /* exit */
+        /* Bits 64-127 */
+        mask_hi |= (1UL << (231 - 64));  /* exit_group */
+        sys_seccomp(mask_lo, 1 /* strict */, mask_hi);
+        printf("[worker %d] seccomp sandbox active\n", worker_id);
+    }
+
     /* Process tasks */
     int tasks_done = 0;
     for (int attempt = 0; attempt < 200; attempt++) {

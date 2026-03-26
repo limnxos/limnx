@@ -96,7 +96,7 @@ long sys_getcap(void);
 long sys_setcap(long pid, long caps);
 long sys_getrlimit(long resource, void *rlimit_ptr);
 long sys_setrlimit(long resource, const void *rlimit_ptr);
-long sys_seccomp(unsigned long mask, long strict);
+long sys_seccomp(unsigned long mask, long strict, unsigned long mask_hi);
 long sys_setaudit(long pid, long flags);
 long sys_unix_socket(void);
 long sys_unix_bind(long fd, const char *path);

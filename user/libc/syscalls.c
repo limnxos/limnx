@@ -354,8 +354,8 @@ long sys_setrlimit(long resource, const void *rlimit_ptr) {
     return __syscall2(SYS_SETRLIMIT, resource, (long)rlimit_ptr);
 }
 
-long sys_seccomp(unsigned long mask, long strict) {
-    return __syscall2(SYS_SECCOMP, (long)mask, strict);
+long sys_seccomp(unsigned long mask, long strict, unsigned long mask_hi) {
+    return __syscall3(SYS_SECCOMP, (long)mask, strict, (long)mask_hi);
 }
 
 long sys_setaudit(long pid, long flags) {
