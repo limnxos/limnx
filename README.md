@@ -472,6 +472,27 @@ The kernel provides the **guarantees**:
 - Crashed skills auto-restart (supervisor tree)
 - Resource exhaustion is bounded (rlimits + namespace quotas)
 
+## Implementation Status
+
+| Use Case | Status | Notes |
+|----------|--------|-------|
+| 1. Load & serve model | **Verified** | inferd + GGUF + kernel registry, 49/49 tests both archs |
+| 2. Chat with model | **Verified** | chat.elf + generate.elf, kernel cache, sync + async |
+| 3. Single AI agent | **Partial** | toolagent.c uses local model, not routed through infer_svc |
+| 4. Communication channels | **Verified** | pub/sub, unix sockets, pipes, inference service all tested |
+| 5. Agent swarm | **Verified** | orchestrator.elf: supervisor + task graph + pub/sub + seccomp |
+| 6. Dynamic spawning | **Verified** | Supervisor auto-restart, fork+execve, bearer token delegation |
+| 7. Orchestration as service | **Partial** | Single namespace tested, multi-namespace concurrent not demonstrated |
+| 8. Tool use (MCP-style) | **Primitives exist** | tooldispatch.c works, standalone tool ELFs not yet written |
+| 9. Multi-tool chains | **Primitives exist** | Task graph + pub/sub support chains, end-to-end demo not built |
+| 10. Skill/plugin system | **Primitives exist** | Agent registry + supervisor support the pattern, no runtime demo |
+
+**Planned work for use cases 8-10:**
+- Write standalone tool ELFs (file_reader, code_executor, web_fetcher)
+- Build a tool-calling agent that discovers and invokes tools via kernel IPC
+- Expose `tool_result_t` in libc.h (currently internal to tooldispatch.c)
+- Demonstrate multi-tool chain through task graph with real tool outputs
+
 ## Build
 
 **x86_64** requires: `x86_64-elf-gcc`, `x86_64-elf-ld`, `nasm`, `xorriso`, `qemu-system-x86_64`
