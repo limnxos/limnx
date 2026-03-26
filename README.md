@@ -128,6 +128,218 @@ User program                    Kernel                         inferd daemon
 
 Supported model formats: GGUF v3 (F32, F16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K–Q6_K). BPE tokenizer loaded from GGUF metadata. Transformer: RMS norm, multi-head attention, GQA, RoPE, SwiGLU, KV cache.
 
+## Use Cases
+
+### 1. Loading and Serving an AI Model
+
+```
+┌─────────────┐     sys_infer_register      ┌──────────────────┐
+│   inferd     │ ──────────────────────────► │  Kernel           │
+│              │   "summarizer"              │  infer_svc        │
+│  1. Open     │   "/tmp/summarizer.sock"    │  registry         │
+│     model.gguf                             │                   │
+│  2. Parse    │     sys_infer_health ──────►│  health monitor   │
+│     GGUF v3  │     (heartbeat)             │  load balancer    │
+│  3. Dequant  │                             │  result cache     │
+│     Q4_0→F32 │◄────── unix socket ────────│  request router   │
+│  4. Init     │   receive prompt            │                   │
+│     transformer                            └──────────────────┘
+│  5. Listen   │
+│     on socket│
+└─────────────┘
+
+# Start the inference daemon:
+/inferd.elf /model.gguf summarizer /tmp/summarizer.sock
+```
+
+Multiple daemons can register under the same name — the kernel load-balances across them.
+
+### 2. Chatting with an AI Model
+
+```
+┌──────────┐   sys_infer_request    ┌────────┐   unix sock   ┌─────────┐
+│  chat.elf │ ───────────────────►  │ Kernel  │ ───────────► │  inferd  │
+│           │  "summarizer"         │ infer   │              │          │
+│ you> Hi   │  "Hi there"           │ _svc    │              │ tokenize │
+│           │                       │         │              │ forward  │
+│ [bot] ... │ ◄─────────────────── │ cache?  │ ◄─────────── │ sample   │
+│           │   response            │ return  │  response    │ decode   │
+└──────────┘                        └────────┘               └─────────┘
+
+# Interactive chat with RAG memory:
+/chat.elf
+
+# Or direct text generation:
+/generate.elf
+prompt> The quick brown fox
+[gen] jumps over the lazy...
+```
+
+The kernel caches responses — repeated prompts return instantly without hitting the daemon.
+
+### 3. Setting Up a Single AI Agent
+
+```
+┌──────────────────┐
+│   toolagent.elf   │
+│                   │
+│  1. Register      │─── sys_agent_register("code_reviewer")
+│  2. Load model    │─── gguf_load / transformer_init
+│  3. Listen        │─── sys_topic_subscribe(review_topic)
+│                   │
+│  Loop:            │
+│    recv task  ◄───│─── sys_topic_recv(review_topic)
+│    think      ────│─── transformer_forward (local)
+│         or    ────│─── sys_infer_request (remote)
+│    act        ────│─── sys_exec / sys_fwrite / sys_sendto
+│    publish    ────│─── sys_topic_publish(results_topic)
+│                   │
+└──────────────────┘
+```
+
+Agents discover each other via `sys_agent_lookup("code_reviewer")` → returns PID.
+
+### 4. Agent Communication Channels
+
+Limnx provides 5 IPC channels, each suited to different agent patterns:
+
+```
+ Agent A                              Agent B
+ ┌──────┐    pub/sub (broadcast)     ┌──────┐
+ │      │ ═══════════════════════════│      │    1-to-many, fire-and-forget
+ │      │                            │      │    sys_topic_publish / _recv
+ │      │    unix socket (stream)    │      │
+ │      │ ───────────────────────────│      │    1-to-1, bidirectional
+ │      │                            │      │    sys_unix_connect / _send
+ │      │    pipe (parent→child)     │      │
+ │      │ ──────────────────────────►│      │    1-to-1, unidirectional
+ │      │                            │      │    sys_pipe + sys_fork
+ │      │    shared memory (fast)    │      │
+ │      │ ◄═══════════════════════►  │      │    zero-copy, lock-free
+ │      │                            │      │    sys_shmget / _shmat
+ │      │    inference service       │      │
+ │      │ ─────── kernel ───────────►│      │    routed, cached, load-balanced
+ │      │                            │      │    sys_infer_request
+ └──────┘                            └──────┘
+```
+
+### 5. Agent Swarm with Orchestration
+
+```
+                    ┌──────────────────┐
+                    │   orchestrator    │
+                    │                  │
+                    │ 1. ns_create     │─── isolated namespace
+                    │ 2. token_create  │─── CAP_INFER bearer token
+                    │ 3. super_create  │─── supervisor tree
+                    │ 4. task_create   │─── A → B → C (DAG)
+                    │ 5. super_start   │─── launch workers
+                    └──────┬───────────┘
+                           │
+              ┌────────────┼────────────┐
+              │            │            │
+         ┌────▼───┐   ┌───▼────┐   ┌───▼────┐
+         │worker_0│   │worker_1│   │worker_2│
+         │        │   │        │   │        │
+         │seccomp │   │seccomp │   │seccomp │    sandboxed
+         │sandbox │   │sandbox │   │sandbox │    (no fork/exec/kill)
+         │        │   │        │   │        │
+         │cap_token│  │cap_token│  │cap_token│   scoped CAP_INFER
+         │(bearer)│   │(bearer)│   │(bearer)│
+         │        │   │        │   │        │
+         │topic_  │   │topic_  │   │topic_  │    receive tasks
+         │ recv   │   │ recv   │   │ recv   │    via pub/sub
+         │        │   │        │   │        │
+         │infer_  │   │infer_  │   │infer_  │    call AI model
+         │request │   │request │   │request │    via kernel router
+         │        │   │        │   │        │
+         │topic_  │   │topic_  │   │topic_  │    publish results
+         │ pub    │   │ pub    │   │ pub    │    via pub/sub
+         └────────┘   └────────┘   └────────┘
+
+Task graph enforces execution order:
+  Task A (analyze)  ─── must complete before ───►  Task B (transform)
+  Task B (transform) ── must complete before ───►  Task C (summarize)
+```
+
+### 6. Spawning Agents Dynamically
+
+```
+# Supervisor handles lifecycle — crashed agents auto-restart
+
+super_id = sys_super_create("data_pipeline")
+sys_super_set_policy(super_id, ONE_FOR_ONE)    # restart only crashed child
+
+sys_super_add(super_id, "/fetcher.elf",   ns_id, CAP_NET)
+sys_super_add(super_id, "/parser.elf",    ns_id, CAP_FS_READ)
+sys_super_add(super_id, "/analyzer.elf",  ns_id, CAP_INFER)
+sys_super_add(super_id, "/writer.elf",    ns_id, CAP_FS_WRITE)
+
+sys_super_start(super_id)    # launch all 4
+
+# If analyzer crashes → supervisor restarts only analyzer
+# If using ONE_FOR_ALL → supervisor restarts all 4
+
+sys_super_stop(super_id)     # clean shutdown
+```
+
+Agents can also be spawned ad-hoc via `fork + execve` with scoped capabilities:
+
+```c
+long pid = sys_fork();
+if (pid == 0) {
+    sys_seccomp(allowed_mask, 1, allowed_mask_hi);  // sandbox
+    sys_execve("/agent.elf", argv);
+}
+// Parent delegates a capability token to the child:
+sys_token_delegate(parent_token, pid, CAP_INFER, "summarizer");
+```
+
+### 7. AI Agent Orchestration as a Service
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   Limnx Kernel                           │
+│                                                         │
+│  ┌─────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐ │
+│  │Namespace │  │Supervisor│  │Task Graph│  │Inference│ │
+│  │  ns=1    │  │  tree    │  │  DAG     │  │ Service │ │
+│  │ agents   │  │ restart  │  │ deps     │  │ routing │ │
+│  │ quotas   │  │ policy   │  │ fan-out  │  │ caching │ │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬────┘ │
+│       │             │             │              │      │
+│  ┌────▼─────────────▼─────────────▼──────────────▼────┐ │
+│  │              Pub/Sub Message Bus                    │ │
+│  │   topics: tasks, results, alerts, model_updates    │ │
+│  └────────────────────────────────────────────────────┘ │
+│                                                         │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
+│  │Cap Tokens│  │ Seccomp  │  │  Epoll   │              │
+│  │ delegate │  │ sandbox  │  │ I/O mux  │              │
+│  │ revoke   │  │ restrict │  │ events   │              │
+│  └──────────┘  └──────────┘  └──────────┘              │
+└─────────────────────────────────────────────────────────┘
+
+The kernel IS the orchestration layer:
+
+  ┌──────────┐        ┌──────────┐        ┌──────────┐
+  │ Customer │        │ Internal │        │ External │
+  │ Service  │        │ Pipeline │        │ API      │
+  │          │        │          │        │          │
+  │ ns=1     │        │ ns=2     │        │ ns=3     │
+  │ 3 agents │        │ 5 agents │        │ 2 agents │
+  │ CAP_NET  │        │ CAP_INFER│        │ CAP_NET  │
+  │          │        │ CAP_FS   │        │ CAP_INFER│
+  └──────────┘        └──────────┘        └──────────┘
+
+  Each namespace is a self-contained service:
+  - Own supervisor tree (auto-restart)
+  - Own task graphs (workflow DAGs)
+  - Own capability tokens (scoped permissions)
+  - Own pub/sub topics (internal messaging)
+  - Cross-namespace access requires CAP_XNS_* tokens
+```
+
 ## Build
 
 **x86_64** requires: `x86_64-elf-gcc`, `x86_64-elf-ld`, `nasm`, `xorriso`, `qemu-system-x86_64`
