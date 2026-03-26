@@ -7,6 +7,7 @@
  */
 
 #include "../libc/libc.h"
+#include "limnx/syscall_nr.h"
 
 int main(void) {
     long my_pid = sys_getpid();
@@ -33,33 +34,41 @@ int main(void) {
     long task_topic = 0;
     sys_topic_subscribe(task_topic);
 
-    /* Apply seccomp sandbox — only allow essential syscalls.
-     * Blocks: fork, exec, open, unlink, kill, socket, mmap (except brk).
-     * Allows: read(0), write(1), close(3), fstat(5), mmap(9), munmap(11),
-     *         brk(12), sigaction(13), sigreturn(15), ioctl(16), writev(20),
-     *         yield(24), nanosleep(35), getpid(39), exit(60), exit_group(231).
+    /* Apply seccomp sandbox — arch-aware syscall bitmask.
+     * Uses SYS_* macros which resolve to correct numbers per arch.
      * All Limnx syscalls (512+) pass through automatically. */
     {
         unsigned long mask_lo = 0;
         unsigned long mask_hi = 0;
-        /* Bits 0-63 */
-        mask_lo |= (1UL << 0);   /* read */
-        mask_lo |= (1UL << 1);   /* write */
-        mask_lo |= (1UL << 3);   /* close */
-        mask_lo |= (1UL << 5);   /* fstat */
-        mask_lo |= (1UL << 9);   /* mmap */
-        mask_lo |= (1UL << 11);  /* munmap */
-        mask_lo |= (1UL << 12);  /* brk */
-        mask_lo |= (1UL << 13);  /* rt_sigaction */
-        mask_lo |= (1UL << 15);  /* rt_sigreturn */
-        mask_lo |= (1UL << 16);  /* ioctl */
-        mask_lo |= (1UL << 20);  /* writev */
-        mask_lo |= (1UL << 24);  /* sched_yield */
-        mask_lo |= (1UL << 35);  /* nanosleep */
-        mask_lo |= (1UL << 39);  /* getpid */
-        mask_lo |= (1UL << 60);  /* exit */
-        /* Bits 64-127 */
-        mask_hi |= (1UL << (231 - 64));  /* exit_group */
+        /* Helper: set bit N in the appropriate mask half */
+        #define ALLOW(nr) do { \
+            if ((nr) < 64) mask_lo |= (1UL << (nr)); \
+            else if ((nr) < 128) mask_hi |= (1UL << ((nr) - 64)); \
+        } while(0)
+
+        ALLOW(SYS_READ);           /* read from fd */
+        ALLOW(SYS_WRITE);          /* write to fd */
+        ALLOW(SYS_CLOSE);          /* close fd */
+        ALLOW(SYS_FSTAT);          /* stat by fd */
+        ALLOW(SYS_MMAP);           /* memory mapping */
+        ALLOW(SYS_MUNMAP);         /* unmap */
+        ALLOW(SYS_BRK);            /* heap */
+        ALLOW(SYS_RT_SIGACTION);   /* signal handlers */
+        /* RT_SIGRETURN + EXIT always bypassed by kernel seccomp */
+        ALLOW(SYS_IOCTL);          /* terminal (printf) */
+        ALLOW(SYS_WRITEV);         /* vectored write */
+        ALLOW(SYS_SCHED_YIELD);    /* cooperative yield */
+        ALLOW(SYS_NANOSLEEP);      /* sleep */
+        ALLOW(SYS_GETPID);         /* identity */
+        ALLOW(SYS_EXIT);           /* exit */
+        ALLOW(SYS_EXIT_GROUP);     /* exit group */
+        ALLOW(SYS_SECCOMP);        /* allow seccomp itself (for re-entry) */
+        ALLOW(SYS_PPOLL);          /* poll (ARM64 uses ppoll) */
+        #ifdef SYS_POLL
+        ALLOW(SYS_POLL);           /* poll (x86_64 has native poll) */
+        #endif
+
+        #undef ALLOW
         sys_seccomp(mask_lo, 1 /* strict */, mask_hi);
         printf("[worker %d] seccomp sandbox active\n", worker_id);
     }

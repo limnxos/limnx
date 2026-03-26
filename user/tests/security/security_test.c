@@ -4,6 +4,7 @@
  * Portable — no arch-specific code.
  */
 #include "../limntest.h"
+#include "limnx/syscall_nr.h"
 
 static void test_uid_gid(void) {
     long uid = sys_getuid();
@@ -57,6 +58,79 @@ static void test_setuid_setgid(void) {
     lt_ok(ret == 0, "setgid(0) succeeds as root");
 }
 
+static void test_seccomp(void) {
+    /* Fork a child, apply seccomp, try a blocked syscall */
+    long pid = sys_fork();
+    if (pid == 0) {
+        /* Child: apply seccomp with arch-aware numbers */
+        unsigned long mask_lo = 0;
+        unsigned long mask_hi = 0;
+        #define SALLOW(nr) do { \
+            if ((nr) < 64) mask_lo |= (1UL << (nr)); \
+            else if ((nr) < 128) mask_hi |= (1UL << ((nr) - 64)); \
+        } while(0)
+        SALLOW(SYS_READ);
+        SALLOW(SYS_WRITE);
+        SALLOW(SYS_SCHED_YIELD);
+        SALLOW(SYS_GETPID);
+        SALLOW(SYS_EXIT);
+        SALLOW(SYS_EXIT_GROUP);
+        SALLOW(SYS_SECCOMP);
+        #undef SALLOW
+        sys_seccomp(mask_lo, 0 /* not strict — return EACCES */, mask_hi);
+
+        /* getpid should work (allowed) */
+        long my_pid = sys_getpid();
+        if (my_pid > 0) {
+            /* Try fork — should be blocked (-EACCES) */
+            long ret = sys_fork();
+            if (ret == -13 /* EACCES */) {
+                sys_exit(42);  /* success signal */
+            }
+            sys_exit(99);
+        }
+        sys_exit(99);
+    }
+
+    lt_ok(pid > 0, "seccomp test fork");
+    if (pid > 0) {
+        long status = sys_waitpid(pid);
+        lt_ok(status == 42, "seccomp blocks fork (child exit=42)");
+    }
+}
+
+static void test_seccomp_strict(void) {
+    /* Strict mode: blocked syscall → SIGKILL.
+     * Use arch-aware syscall numbers for the allowlist. */
+    long pid = sys_fork();
+    if (pid == 0) {
+        unsigned long mask_lo = 0;
+        unsigned long mask_hi = 0;
+        #define SALLOW(nr) do { \
+            if ((nr) < 64) mask_lo |= (1UL << (nr)); \
+            else if ((nr) < 128) mask_hi |= (1UL << ((nr) - 64)); \
+        } while(0)
+        SALLOW(SYS_WRITE);
+        SALLOW(SYS_EXIT);
+        SALLOW(SYS_EXIT_GROUP);
+        #undef SALLOW
+        sys_seccomp(mask_lo, 1 /* strict */, mask_hi);
+
+        /* Try getpid — not in allowlist, strict → SIGKILL */
+        sys_getpid();
+        /* Should never reach here — write a marker to prove */
+        sys_write("ALIVE", 5);
+        sys_exit(99);
+    }
+
+    lt_ok(pid > 0, "seccomp strict fork");
+    if (pid > 0) {
+        long status = sys_waitpid(pid);
+        /* Child killed → status should NOT be 99 (normal exit) */
+        lt_ok(status != 99 && status != 0, "seccomp strict kills on blocked syscall");
+    }
+}
+
 int main(void) {
     lt_suite("security");
     test_uid_gid();
@@ -65,5 +139,7 @@ int main(void) {
     test_chmod_chown();
     test_capabilities();
     test_setuid_setgid();
+    test_seccomp();
+    test_seccomp_strict();
     return lt_done();
 }
