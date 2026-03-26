@@ -1,5 +1,7 @@
 # Limnx
 
+[![Build & Test](https://github.com/limnxos/limnx/actions/workflows/build.yml/badge.svg)](https://github.com/limnxos/limnx/actions/workflows/build.yml)
+
 An operating system where AI agents are first-class citizens.
 
 Limnx is a from-scratch x86_64/ARM64 kernel with built-in primitives for AI inference, agent orchestration, and security isolation. The kernel doesn't just run AI workloads — it **governs** them: routing inference requests, enforcing capability tokens, sandboxing workers with seccomp, and orchestrating multi-agent workflows through task graphs and pub/sub.
