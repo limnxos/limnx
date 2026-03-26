@@ -16,13 +16,12 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y nasm xorriso qemu-system-x86 mtools
+          sudo apt-get install -y nasm xorriso qemu-system-x86 mtools unzip
 
       - name: Install x86_64-elf cross-compiler
         run: |
-          # Download pre-built x86_64-elf-gcc toolchain
-          wget -q https://github.com/lordmilko/i686-elf-tools/releases/download/13.2.0/x86_64-elf-tools-linux-amd64.tar.gz
-          sudo tar xf x86_64-elf-tools-linux-amd64.tar.gz -C /usr/local
+          wget -q https://github.com/lordmilko/i686-elf-tools/releases/download/15.2.0/x86_64-elf-tools-linux.zip
+          sudo unzip -q x86_64-elf-tools-linux.zip -d /usr/local
           echo "/usr/local/bin" >> $GITHUB_PATH
 
       - name: Build x86_64 ISO
