@@ -340,6 +340,138 @@ The kernel IS the orchestration layer:
   - Cross-namespace access requires CAP_XNS_* tokens
 ```
 
+### 8. Real-World Tool Use (MCP-Style)
+
+Modern agents need to call tools — browse the web, read files, execute code, query APIs. Limnx supports this through **tools-as-agents**: each tool registers as a named agent, and the AI agent invokes tools through the kernel's IPC:
+
+```
+                    ┌──────────────┐
+                    │  AI Agent     │
+                    │              │
+                    │  1. Think    │── transformer_forward (what tool to call?)
+                    │  2. Decide   │── "I need to read config.txt"
+                    │  3. Call     │── sys_agent_lookup("file_reader") → pid
+                    │  4. Request  │── sys_topic_publish(tool_topic, "read config.txt")
+                    │  5. Wait     │── sys_topic_recv(result_topic)
+                    │  6. Process  │── feed result back into transformer
+                    │  7. Respond  │── final answer
+                    └──────┬───────┘
+                           │ pub/sub
+          ┌────────────────┼────────────────┐
+          │                │                │
+     ┌────▼────┐     ┌────▼────┐     ┌────▼────┐
+     │file_    │     │web_     │     │code_    │
+     │reader   │     │fetcher  │     │executor │
+     │         │     │         │     │         │
+     │CAP_FS   │     │CAP_NET  │     │seccomp  │
+     │_READ    │     │         │     │sandbox  │
+     │         │     │         │     │         │
+     │sys_open │     │sys_tcp_ │     │sys_fork │
+     │sys_read │     │connect  │     │sys_exec │
+     │sys_stat │     │sys_tcp_ │     │sys_pipe │
+     │         │     │send/recv│     │         │
+     └─────────┘     └─────────┘     └─────────┘
+
+Each tool has ONLY the capabilities it needs:
+  - file_reader: CAP_FS_READ (can read, cannot write or delete)
+  - web_fetcher: CAP_NET (can connect, cannot touch filesystem)
+  - code_executor: seccomp sandbox (can exec, cannot network)
+```
+
+**Sandboxed tool execution** via `tooldispatch.c`:
+
+```c
+// Agent wants to run a tool:
+tool_result_t result;
+tool_dispatch(
+    "/web_fetcher.elf",              // tool binary
+    argv,                             // arguments
+    CAP_NET,                          // scoped capability
+    1000,                             // CPU time limit (ticks)
+    "GET https://api.example.com",    // input via stdin pipe
+    input_len,
+    &result                           // output via stdout pipe
+);
+// result.output = "{ \"data\": ... }"
+// result.exit_status = 0 (success)
+```
+
+The kernel enforces isolation:
+- Tool runs in a **forked child process** with capability-dropped permissions
+- Input/output via **pipes** (no shared memory, no side channels)
+- **Seccomp** restricts syscalls (web_fetcher can't call `sys_open`)
+- **Capability tokens** scope access (file_reader can't call `sys_tcp_connect`)
+- **Resource limits** cap CPU time and memory
+- Child is **reaped on completion** — no persistent state
+
+### 9. Multi-Tool Chains (Agent Planning)
+
+Agents can plan multi-step tool sequences, where each step's output feeds the next:
+
+```
+User: "Summarize the contents of /data/report.txt"
+
+Agent planning (transformer-based):
+  Step 1: read /data/report.txt    → tool: file_reader
+  Step 2: summarize the content    → tool: inference (summarizer model)
+  Step 3: write summary to output  → tool: file_writer
+
+Execution:
+  ┌─────────┐  pipe   ┌──────────┐  pipe   ┌──────────┐  pipe   ┌─────────┐
+  │ Agent    │────────►│file_     │────────►│ inferd   │────────►│file_    │
+  │ (plan)   │ "read"  │reader    │ content │summarizer│ summary │writer   │
+  │          │◄────────│          │◄────────│          │◄────────│         │
+  └─────────┘  result  └──────────┘  result └──────────┘  result └─────────┘
+
+Each step:
+  1. Agent publishes task to tool topic
+  2. Appropriate tool picks it up (capability-scoped)
+  3. Tool executes, publishes result
+  4. Agent receives result, feeds to next step
+  5. Task graph tracks dependencies (step 2 waits for step 1)
+```
+
+```c
+// Multi-tool chain in code:
+long t1 = sys_task_create("read_file", ns_id);
+long t2 = sys_task_create("summarize", ns_id);
+long t3 = sys_task_create("write_output", ns_id);
+sys_task_depend(t2, t1);    // summarize waits for read
+sys_task_depend(t3, t2);    // write waits for summarize
+
+sys_task_start(t1);
+sys_topic_publish(tool_topic, "TASK:1:read /data/report.txt");
+// ... agent loop handles results and advances the chain
+```
+
+### 10. Skill and Plugin System
+
+Tools can be extended at runtime. A "skill" is just an ELF binary that follows the tool convention (read stdin, write stdout, exit):
+
+```
+/skills/
+  web_search.elf       # CAP_NET — search the web
+  db_query.elf         # CAP_FS_READ — query local database
+  image_gen.elf        # CAP_INFER — call image model
+  email_send.elf       # CAP_NET — send email
+  calculator.elf       # no caps needed — pure compute
+
+# Register a new skill at runtime:
+sys_agent_register("calculator")
+
+# Discovery — agent lists available skills:
+for each registered agent:
+    sys_agent_lookup(skill_name, &pid)
+    if pid > 0: skill is available
+```
+
+The kernel provides the **guarantees**:
+- Skills can't escape their sandbox (seccomp + capabilities)
+- Skills can't access other skills' data (namespace isolation)
+- Skills can be revoked instantly (token revocation + SIGKILL)
+- Crashed skills auto-restart (supervisor tree)
+- Resource exhaustion is bounded (rlimits + namespace quotas)
+
 ## Build
 
 **x86_64** requires: `x86_64-elf-gcc`, `x86_64-elf-ld`, `nasm`, `xorriso`, `qemu-system-x86_64`
