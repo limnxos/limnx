@@ -299,25 +299,25 @@ sys_token_delegate(parent_token, pid, CAP_INFER, "summarizer");
 
 ```
 ┌─────────────────────────────────────────────────────────┐
-│                   Limnx Kernel                           │
+│                   Limnx Kernel                          │
 │                                                         │
-│  ┌─────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐ │
-│  │Namespace │  │Supervisor│  │Task Graph│  │Inference│ │
-│  │  ns=1    │  │  tree    │  │  DAG     │  │ Service │ │
-│  │ agents   │  │ restart  │  │ deps     │  │ routing │ │
-│  │ quotas   │  │ policy   │  │ fan-out  │  │ caching │ │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬────┘ │
+│  ┌─────────┐  ┌──────────┐  ┌──────────┐  ┌─────────┐   │
+│  │Namespace │  │Supervisor│  │Task Graph│  │Inference│  │
+│  │  ns=1    │  │  tree    │  │  DAG     │  │ Service │  │
+│  │ agents   │  │ restart  │  │ deps     │  │ routing │  │
+│  │ quotas   │  │ policy   │  │ fan-out  │  │ caching │  │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └────┬────┘  │
 │       │             │             │              │      │
 │  ┌────▼─────────────▼─────────────▼──────────────▼────┐ │
-│  │              Pub/Sub Message Bus                    │ │
+│  │              Pub/Sub Message Bus                   │ │
 │  │   topics: tasks, results, alerts, model_updates    │ │
 │  └────────────────────────────────────────────────────┘ │
 │                                                         │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐              │
-│  │Cap Tokens│  │ Seccomp  │  │  Epoll   │              │
-│  │ delegate │  │ sandbox  │  │ I/O mux  │              │
-│  │ revoke   │  │ restrict │  │ events   │              │
-│  └──────────┘  └──────────┘  └──────────┘              │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐               │
+│  │Cap Tokens│  │ Seccomp  │  │  Epoll   │               │
+│  │ delegate │  │ sandbox  │  │ I/O mux  │               │
+│  │ revoke   │  │ restrict │  │ events   │               │
+│  └──────────┘  └──────────┘  └──────────┘               │
 └─────────────────────────────────────────────────────────┘
 
 The kernel IS the orchestration layer:
@@ -346,7 +346,7 @@ Modern agents need to call tools — browse the web, read files, execute code, q
 
 ```
                     ┌──────────────┐
-                    │  AI Agent     │
+                    │  AI Agent    │
                     │              │
                     │  1. Think    │── transformer_forward (what tool to call?)
                     │  2. Decide   │── "I need to read config.txt"
@@ -418,10 +418,10 @@ Agent planning (transformer-based):
 
 Execution:
   ┌─────────┐  pipe   ┌──────────┐  pipe   ┌──────────┐  pipe   ┌─────────┐
-  │ Agent    │────────►│file_     │────────►│ inferd   │────────►│file_    │
-  │ (plan)   │ "read"  │reader    │ content │summarizer│ summary │writer   │
-  │          │◄────────│          │◄────────│          │◄────────│         │
-  └─────────┘  result  └──────────┘  result └──────────┘  result └─────────┘
+  │ Agent   │────────►│file_     │────────►│ inferd   │────────►│file_    │
+  │ (plan)  │ "read"  │reader    │ content │summarizer│ summary │writer   │
+  │         │◄────────│          │◄────────│          │◄────────│         │
+  └─────────┘  result └──────────┘  result └──────────┘  result └─────────┘
 
 Each step:
   1. Agent publishes task to tool topic
@@ -483,15 +483,9 @@ The kernel provides the **guarantees**:
 | 5. Agent swarm | **Verified** | orchestrator.elf: supervisor + task graph + pub/sub + seccomp |
 | 6. Dynamic spawning | **Verified** | Supervisor auto-restart, fork+execve, bearer token delegation |
 | 7. Orchestration as service | **Partial** | Single namespace tested, multi-namespace concurrent not demonstrated |
-| 8. Tool use (MCP-style) | **Primitives exist** | tooldispatch.c works, standalone tool ELFs not yet written |
-| 9. Multi-tool chains | **Primitives exist** | Task graph + pub/sub support chains, end-to-end demo not built |
-| 10. Skill/plugin system | **Primitives exist** | Agent registry + supervisor support the pattern, no runtime demo |
-
-**Planned work for use cases 8-10:**
-- Write standalone tool ELFs (file_reader, code_executor, web_fetcher)
-- Build a tool-calling agent that discovers and invokes tools via kernel IPC
-- Expose `tool_result_t` in libc.h (currently internal to tooldispatch.c)
-- Demonstrate multi-tool chain through task graph with real tool outputs
+| 8. Tool use (MCP-style) | **Verified** | file_reader.elf + code_executor.elf + tool_demo.elf, sandboxed via tool_dispatch |
+| 9. Multi-tool chains | **Verified** | tool_demo.elf chains tools: "read /hello.txt and count words" |
+| 10. Skill/plugin system | **Verified** | Tools are ELF binaries, discovered at runtime, sandboxed execution |
 
 ## Build
 

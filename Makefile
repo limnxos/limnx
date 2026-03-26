@@ -115,7 +115,10 @@ USER_C_PROGRAMS := build/user/programs/shell.elf build/user/programs/agent.elf \
                    build/user/programs/mountcmd.elf \
                    build/user/programs/umount.elf \
                    build/user/programs/orchestrator.elf \
-                   build/user/programs/agent_worker.elf
+                   build/user/programs/agent_worker.elf \
+                   build/user/programs/file_reader.elf \
+                   build/user/programs/code_executor.elf \
+                   build/user/programs/tool_demo.elf
 
 # Test programs — organized by subsystem (Linux kselftest model)
 USER_C_TESTS := build/user/tests/fs/fs_test.elf \
@@ -413,7 +416,10 @@ ARM64_USER_C_PROGRAMS := build/arm64/user/programs/shell.elf \
                           build/arm64/user/programs/worker.elf \
                           build/arm64/user/programs/multiagent.elf \
                           build/arm64/user/programs/netagent.elf \
-                          build/arm64/user/programs/crasher.elf
+                          build/arm64/user/programs/crasher.elf \
+                          build/arm64/user/programs/file_reader.elf \
+                          build/arm64/user/programs/code_executor.elf \
+                          build/arm64/user/programs/tool_demo.elf
 ARM64_USER_C_TESTS := build/arm64/user/tests/fs/fs_test.elf \
                       build/arm64/user/tests/proc/proc_test.elf \
                       build/arm64/user/tests/mm/mm_test.elf \
