@@ -70,6 +70,43 @@ jobs:
           name: limnx-x86_64-iso
           path: limnx.iso
 
+  rebuild-busybox-x86:
+    name: Rebuild Busybox (x86_64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential linux-headers-generic perl
+
+      - name: Build busybox with full applets
+        run: |
+          cd third_party/busybox
+          make mrproper
+          make defconfig
+          # Static non-PIE (required by Limnx ELF loader)
+          sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
+          sed -i 's/^CONFIG_PIE=y/# CONFIG_PIE is not set/' .config
+          # Disable applets needing unavailable kernel headers
+          for app in TC IPTABLES IP BRCTL MODPROBE RMMOD INSMOD LSMOD DEPMOD \
+                     MODINFO MDEV SWAPON SWAPOFF LOSETUP FSCK MKFS_EXT2 \
+                     MKFS_MINIX MKFS_REISER MKFS_VFAT FDISK ACPID BLKID \
+                     BLOCKDEV SWITCH_ROOT PIVOT_ROOT HDPARM HWCLOCK DEVMEM UEVENT; do
+            sed -i "s/^CONFIG_${app}=y/# CONFIG_${app} is not set/" .config
+          done
+          make oldconfig </dev/null
+          make -j$(nproc)
+          file busybox
+          ./busybox --list | wc -l
+
+      - name: Upload busybox binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: busybox-x86_64
+          path: third_party/busybox/busybox
+
   build-arm64:
     name: ARM64 Build
     runs-on: ubuntu-latest
