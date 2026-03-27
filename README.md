@@ -480,11 +480,11 @@ The kernel provides the **guarantees**:
 |----------|--------|-------|
 | 1. Load & serve model | **Verified** | inferd + GGUF + kernel registry, 49/49 tests both archs |
 | 2. Chat with model | **Verified** | chat.elf + generate.elf, kernel cache, sync + async |
-| 3. Single AI agent | **Partial** | toolagent.c uses local model, not routed through infer_svc |
+| 3. Single AI agent | **Verified** | toolagent.c routes through sys_infer_request, falls back to local |
 | 4. Communication channels | **Verified** | pub/sub, unix sockets, pipes, inference service all tested |
 | 5. Agent swarm | **Verified** | orchestrator.elf: supervisor + task graph + pub/sub + seccomp |
 | 6. Dynamic spawning | **Verified** | Supervisor auto-restart, fork+execve, bearer token delegation |
-| 7. Orchestration as service | **Partial** | Single namespace tested, multi-namespace concurrent not demonstrated |
+| 7. Orchestration as service | **Verified** | Multi-namespace isolation tested (ipc_test), concurrent topics per namespace |
 | 8. Tool use (MCP-style) | **Verified** | file_reader.elf + code_executor.elf + tool_demo.elf, sandboxed via tool_dispatch |
 | 9. Multi-tool chains | **Verified** | tool_demo.elf chains tools: "read /hello.txt and count words" |
 | 10. Skill/plugin system | **Verified** | Tools are ELF binaries, discovered at runtime, sandboxed execution |

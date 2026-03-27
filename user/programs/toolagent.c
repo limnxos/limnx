@@ -687,31 +687,37 @@ static void interactive(void) {
         summary[0] = '\0';
         execute_chain(&plan, summary, SUMMARY_MAX);
 
-        /* Generate brief transformer commentary using RAG prompt */
-        tf_reset(&tf);
-        uint32_t tokens[MAX_TOKENS];
-        uint32_t n_tok = tok_encode(&tok, rag_prompt, (uint32_t)rag_len,
-                                     tokens, MAX_TOKENS);
-        float *logits = NULL;
-        for (uint32_t i = 0; i < n_tok; i++)
-            logits = transformer_forward(&tf, tokens[i]);
+        /* Generate brief AI commentary — try inference service first */
+        {
+            char ai_resp[256];
+            long ai_ret = sys_infer_request("default", rag_prompt,
+                                             (unsigned long)rag_len,
+                                             ai_resp, sizeof(ai_resp) - 1);
+            if (ai_ret > 0) {
+                ai_resp[ai_ret] = '\0';
+                printf("  [ai] %s\n", ai_resp);
+            } else {
+                /* Fall back to local transformer */
+                tf_reset(&tf);
+                uint32_t tokens[MAX_TOKENS];
+                uint32_t n_tok = tok_encode(&tok, rag_prompt, (uint32_t)rag_len,
+                                             tokens, MAX_TOKENS);
+                float *logits = NULL;
+                for (uint32_t i = 0; i < n_tok; i++)
+                    logits = transformer_forward(&tf, tokens[i]);
 
-        if (logits) {
-            printf("  [ai] ");
-            for (int i = 0; i < RESP_TOKENS && logits; i++) {
-                uint32_t best = 0;
-                float best_val = logits[0];
-                for (uint32_t j = 1; j < tf.cfg.vocab_size; j++) {
-                    if (logits[j] > best_val) {
-                        best_val = logits[j];
-                        best = j;
+                if (logits) {
+                    printf("  [ai] ");
+                    for (int i = 0; i < RESP_TOKENS && logits; i++) {
+                        uint32_t best = transformer_sample(logits,
+                            tf.cfg.vocab_size, 0.8f, 20);
+                        char c = (best < tok.vocab_size) ? tok.chars[best] : '?';
+                        printf("%c", c);
+                        logits = transformer_forward(&tf, best);
                     }
+                    printf("\n");
                 }
-                char c = (best < tok.vocab_size) ? tok.chars[best] : '?';
-                printf("%c", c);
-                logits = transformer_forward(&tf, best);
             }
-            printf("\n");
         }
 
         /* Store interaction in memory */
