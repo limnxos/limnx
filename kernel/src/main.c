@@ -930,13 +930,42 @@ void kmain(void) {
     vfs_mkdir("/bin");
     {
         const char *applets[] = {
-            "vi", "ash", "sh", "sed", "awk", "grep", "cat", "ls", "cp",
-            "mv", "rm", "mkdir", "rmdir", "echo", "printf", "head", "tail",
-            "wc", "sort", "uniq", "cut", "tr", "tee", "find", "xargs",
-            "chmod", "chown", "touch", "ps", "kill", "sleep",
-            "true", "false", "test", "uname", "whoami", "id", "env",
-            "readlink", "basename", "dirname", "seq", "yes", "pwd",
-            "tar", "diff", "less", "more",
+            /* shell */
+            "vi", "ash", "sh", "ed",
+            /* text processing */
+            "sed", "awk", "grep", "cat", "head", "tail", "wc", "sort",
+            "uniq", "cut", "tr", "tee", "xargs", "diff", "patch",
+            "less", "more", "fold", "nl", "paste", "expand",
+            "unexpand", "rev", "tac", "shuf", "comm", "cmp",
+            "strings", "xxd", "od", "hexdump",
+            /* file ops */
+            "ls", "cp", "mv", "rm", "mkdir", "rmdir", "touch",
+            "find", "chmod", "chown", "chgrp", "ln", "stat",
+            "readlink", "realpath", "basename", "dirname",
+            "mkfifo", "mknod", "truncate", "unlink", "sync",
+            "dd", "split", "install",
+            /* output */
+            "echo", "printf", "yes", "seq", "true", "false", "test",
+            "expr", "factor", "bc", "dc", "cal",
+            /* system info */
+            "uname", "whoami", "id", "env", "printenv", "pwd",
+            "hostname", "uptime", "free", "df", "du", "nproc",
+            "dmesg", "date", "stty", "tty", "clear", "time",
+            /* process */
+            "ps", "kill", "sleep", "usleep", "timeout", "nohup",
+            "nice", "renice", "pgrep", "pkill", "watch",
+            /* archive */
+            "tar", "cpio", "bunzip2", "bzcat", "bzip2",
+            "base32", "base64", "uudecode", "uuencode",
+            "cksum", "md5sum", "sha1sum", "sha256sum", "sha512sum",
+            "sum", "crc32",
+            /* network */
+            "wget", "nc", "ping", "traceroute", "telnet",
+            "ftpget", "ftpput", "arping", "whois",
+            "nslookup", "hostname",
+            /* misc */
+            "which", "chroot", "mktemp",
+            "unix2dos", "logger",
             NULL
         };
         for (int i = 0; applets[i]; i++) {
