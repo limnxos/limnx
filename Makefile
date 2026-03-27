@@ -78,7 +78,7 @@ LIBC_C_SRCS   := user/libc/start.c user/libc/syscalls.c \
                  user/libc/vecstore.c user/libc/agent.c user/libc/transformer.c \
                  user/libc/tokenizer.c user/libc/gguf.c user/libc/dequant.c \
                  user/libc/http.c user/libc/tooldispatch.c user/libc/malloc.c \
-                 user/libc/fio.c
+                 user/libc/fio.c user/libc/wasm.c
 LIBC_C_OBJS   := $(patsubst user/libc/%.c,build/user/libc/%.o,$(LIBC_C_SRCS))
 LIBC_OBJS     := $(LIBC_C_OBJS)
 
@@ -118,7 +118,8 @@ USER_C_PROGRAMS := build/user/programs/shell.elf build/user/programs/agent.elf \
                    build/user/programs/agent_worker.elf \
                    build/user/programs/file_reader.elf \
                    build/user/programs/code_executor.elf \
-                   build/user/programs/tool_demo.elf
+                   build/user/programs/tool_demo.elf \
+                   build/user/programs/wasm_runner.elf
 
 # Test programs — organized by subsystem (Linux kselftest model)
 USER_C_TESTS := build/user/tests/fs/fs_test.elf \
@@ -419,7 +420,8 @@ ARM64_USER_C_PROGRAMS := build/arm64/user/programs/shell.elf \
                           build/arm64/user/programs/crasher.elf \
                           build/arm64/user/programs/file_reader.elf \
                           build/arm64/user/programs/code_executor.elf \
-                          build/arm64/user/programs/tool_demo.elf
+                          build/arm64/user/programs/tool_demo.elf \
+                          build/arm64/user/programs/wasm_runner.elf
 ARM64_USER_C_TESTS := build/arm64/user/tests/fs/fs_test.elf \
                       build/arm64/user/tests/proc/proc_test.elf \
                       build/arm64/user/tests/mm/mm_test.elf \

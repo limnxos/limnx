@@ -672,5 +672,6 @@ long sys_pipe2(long *rfd_ptr, long *wfd_ptr, long flags);
 #include "tensor.h"
 #include "transformer.h"
 #include "http.h"
+#include "wasm.h"
 
 #endif

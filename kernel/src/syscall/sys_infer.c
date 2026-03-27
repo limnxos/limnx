@@ -102,36 +102,11 @@ int64_t sys_infer_request(uint64_t name_ptr, uint64_t req_buf,
     infer_service_t *svc = infer_get(svc_idx);
     if (!svc) return -ENOENT;
 
-    /* Connect to service via unix socket (internal, no fd_table entry) */
-    int client_idx = unix_sock_connect(svc->sock_path);
-    if (client_idx < 0) return -ECONNREFUSED;
-
-    unix_sock_t *client = unix_sock_get(client_idx);
-    if (!client) return -ECONNREFUSED;
-
-    /* Send request */
-    if (req_len > 0) {
-        int sent = unix_sock_send(client, (const uint8_t *)req_buf,
-                                  (uint32_t)req_len, 0);
-        if (sent < 0) {
-            unix_sock_close(client);
-            return sent;
-        }
-    }
-
-    /* Receive response (yield-based wait, max 1000 iterations) */
-    int received = 0;
-    if (resp_len > 0) {
-        for (int attempt = 0; attempt < 1000; attempt++) {
-            received = unix_sock_recv(client, (uint8_t *)resp_buf,
-                                      (uint32_t)resp_len, 1);
-            if (received > 0) break;
-            if (client->peer_closed) break;
-            sched_yield();
-        }
-    }
-
-    unix_sock_close(client);
+    /* Use batch submission — collects concurrent requests and sends together */
+    int received = infer_batch_submit(name, svc->sock_path,
+                                       (const void *)req_buf, (uint32_t)req_len,
+                                       (void *)resp_buf, (uint32_t)resp_len,
+                                       proc->pid);
 
     /* Cache the response for future lookups */
     if (received > 0 && req_len > 0 &&

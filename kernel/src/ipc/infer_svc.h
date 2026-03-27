@@ -141,6 +141,44 @@ void infer_queue_expire(void);
 /* Get queue statistics */
 void infer_queue_get_stat(infer_queue_stat_t *stat);
 
+/* --- Inference batching --- */
+
+#define INFER_BATCH_SIZE       4
+#define INFER_BATCH_REQ_MAX    256
+#define INFER_BATCH_RESP_MAX   256
+#define INFER_BATCH_WINDOW     2    /* ticks to wait for batch to fill */
+
+typedef struct infer_batch_entry {
+    uint8_t  request[INFER_BATCH_REQ_MAX];
+    uint32_t req_len;
+    uint8_t  response[INFER_BATCH_RESP_MAX];
+    uint32_t resp_len;
+    uint64_t caller_pid;
+    volatile uint8_t ready;   /* 0=waiting, 1=response ready, 2=error */
+} infer_batch_entry_t;
+
+typedef struct infer_batch {
+    char     name[INFER_NAME_MAX];
+    char     sock_path[INFER_SOCK_PATH_MAX];
+    infer_batch_entry_t entries[INFER_BATCH_SIZE];
+    uint32_t count;
+    uint32_t start_tick;
+    volatile uint8_t active;   /* 1 = collecting, 0 = idle */
+} infer_batch_t;
+
+typedef struct infer_batch_stat {
+    uint32_t total_batches;
+    uint32_t total_requests;
+    uint32_t batches_of_1;
+    uint32_t batches_of_2plus;
+} infer_batch_stat_t;
+
+int  infer_batch_submit(const char *name, const char *sock_path,
+                         const void *req, uint32_t req_len,
+                         void *resp_buf, uint32_t resp_max,
+                         uint64_t caller_pid);
+void infer_batch_get_stat(infer_batch_stat_t *stat);
+
 /* --- Async inference --- */
 
 #define INFER_ASYNC_SIZE       16

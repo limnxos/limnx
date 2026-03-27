@@ -154,6 +154,38 @@ int main(void) {
     long launched = sys_super_start(super_id);
     printf("[orch] Launched %ld workers\n", launched);
 
+    /* Step 8b: Delegate targeted tokens to each worker */
+    if (infer_token >= 0 && launched > 0) {
+        super_info_t sinfo[4];
+        long nsupers = sys_super_list(sinfo, 4);
+        int delegated = 0;
+        for (long s = 0; s < nsupers; s++) {
+            if (sinfo[s].id == (uint32_t)super_id) {
+                for (int w = 0; w < (int)sinfo[s].child_count; w++) {
+                    long wpid = (long)sinfo[s].child_pids[w];
+                    if (wpid <= 0) continue;
+                    long dtok = sys_token_delegate(infer_token, wpid,
+                                                   CAP_INFER | CAP_XNS_INFER,
+                                                   "default");
+                    if (dtok >= 0) {
+                        printf("[orch] Delegated token %ld to worker pid %ld\n",
+                               dtok, wpid);
+                        delegated++;
+                    } else {
+                        printf("[orch] WARN: delegate to pid %ld failed (%ld)\n",
+                               wpid, dtok);
+                    }
+                }
+                break;
+            }
+        }
+        if (delegated > 0)
+            printf("[orch] %d/%ld workers received targeted tokens\n",
+                   delegated, launched);
+        else
+            printf("[orch] WARN: no targeted tokens delegated, bearer token active as fallback\n");
+    }
+
     /* Give workers time to register and subscribe */
     for (int i = 0; i < 100; i++) sys_yield();
 

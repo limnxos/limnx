@@ -674,6 +674,179 @@ void infer_queue_get_stat(infer_queue_stat_t *stat) {
     spin_unlock_irqrestore(&infer_lock, flags);
 }
 
+/* --- Inference batching --- */
+
+static infer_batch_t batch;
+static infer_batch_stat_t batch_stats;
+
+static void infer_batch_flush(void) {
+    /* Send all collected requests as newline-separated batch to inferd */
+    if (batch.count == 0) return;
+
+    int client_idx = unix_sock_connect(batch.sock_path);
+    if (client_idx < 0) {
+        /* Mark all entries as error */
+        for (uint32_t i = 0; i < batch.count; i++)
+            batch.entries[i].ready = 2;
+        batch.active = 0;
+        batch.count = 0;
+        return;
+    }
+
+    unix_sock_t *client = unix_sock_get(client_idx);
+    if (!client) {
+        for (uint32_t i = 0; i < batch.count; i++)
+            batch.entries[i].ready = 2;
+        batch.active = 0;
+        batch.count = 0;
+        return;
+    }
+
+    /* Send requests separated by newlines */
+    for (uint32_t i = 0; i < batch.count; i++) {
+        unix_sock_send(client, batch.entries[i].request,
+                       batch.entries[i].req_len, 0);
+        if (i < batch.count - 1) {
+            uint8_t nl = '\n';
+            unix_sock_send(client, &nl, 1, 0);
+        }
+    }
+
+    /* Receive response (blocking) */
+    uint8_t resp_all[INFER_BATCH_RESP_MAX * INFER_BATCH_SIZE];
+    int total = unix_sock_recv(client, resp_all, sizeof(resp_all), 0);
+    unix_sock_close(client);
+
+    if (total <= 0) {
+        for (uint32_t i = 0; i < batch.count; i++)
+            batch.entries[i].ready = 2;
+    } else {
+        /* Split response by newlines — one response per request */
+        int pos = 0;
+        for (uint32_t i = 0; i < batch.count; i++) {
+            int start = pos;
+            while (pos < total && resp_all[pos] != '\n') pos++;
+            int rlen = pos - start;
+            if (rlen > (int)INFER_BATCH_RESP_MAX) rlen = INFER_BATCH_RESP_MAX;
+            if (rlen > 0) {
+                mem_copy(batch.entries[i].response, &resp_all[start], (uint32_t)rlen);
+                batch.entries[i].resp_len = (uint32_t)rlen;
+                batch.entries[i].ready = 1;
+            } else {
+                batch.entries[i].ready = 2;
+            }
+            if (pos < total && resp_all[pos] == '\n') pos++;
+        }
+        /* If only one response came back (non-batching inferd), give it to first */
+        if (batch.count > 1) {
+            int got_responses = 0;
+            for (uint32_t i = 0; i < batch.count; i++)
+                if (batch.entries[i].ready == 1) got_responses++;
+            if (got_responses == 0 && total > 0) {
+                /* Give entire response to first entry */
+                int rlen = total;
+                if (rlen > (int)INFER_BATCH_RESP_MAX) rlen = INFER_BATCH_RESP_MAX;
+                mem_copy(batch.entries[0].response, resp_all, (uint32_t)rlen);
+                batch.entries[0].resp_len = (uint32_t)rlen;
+                batch.entries[0].ready = 1;
+                /* Copy same response to others */
+                for (uint32_t i = 1; i < batch.count; i++) {
+                    mem_copy(batch.entries[i].response, resp_all, (uint32_t)rlen);
+                    batch.entries[i].resp_len = (uint32_t)rlen;
+                    batch.entries[i].ready = 1;
+                }
+            }
+        }
+    }
+
+    batch_stats.total_batches++;
+    batch_stats.total_requests += batch.count;
+    if (batch.count == 1) batch_stats.batches_of_1++;
+    else batch_stats.batches_of_2plus++;
+
+    pr_info("Batch flushed: %u requests for '%s'\n", batch.count, batch.name);
+    batch.active = 0;
+    batch.count = 0;
+}
+
+int infer_batch_submit(const char *name, const char *sock_path,
+                        const void *req, uint32_t req_len,
+                        void *resp_buf, uint32_t resp_max,
+                        uint64_t caller_pid) {
+    uint64_t flags;
+    spin_lock_irqsave(&infer_lock, &flags);
+
+    /* If batch is active for a different service, flush it first */
+    if (batch.active && !str_eq(batch.name, name)) {
+        spin_unlock_irqrestore(&infer_lock, flags);
+        infer_batch_flush();
+        spin_lock_irqsave(&infer_lock, &flags);
+    }
+
+    /* Start new batch if needed */
+    if (!batch.active) {
+        batch.active = 1;
+        batch.count = 0;
+        batch.start_tick = (uint32_t)arch_timer_get_ticks();
+        str_copy(batch.name, name, INFER_NAME_MAX);
+        str_copy(batch.sock_path, sock_path, INFER_SOCK_PATH_MAX);
+    }
+
+    /* Add to batch */
+    if (batch.count >= INFER_BATCH_SIZE) {
+        spin_unlock_irqrestore(&infer_lock, flags);
+        infer_batch_flush();
+        /* Re-submit as new batch */
+        return infer_batch_submit(name, sock_path, req, req_len,
+                                   resp_buf, resp_max, caller_pid);
+    }
+
+    int my_slot = (int)batch.count;
+    infer_batch_entry_t *e = &batch.entries[my_slot];
+    uint32_t copy_len = req_len;
+    if (copy_len > INFER_BATCH_REQ_MAX) copy_len = INFER_BATCH_REQ_MAX;
+    mem_copy(e->request, req, copy_len);
+    e->req_len = copy_len;
+    e->resp_len = 0;
+    e->caller_pid = caller_pid;
+    e->ready = 0;
+    batch.count++;
+
+    spin_unlock_irqrestore(&infer_lock, flags);
+
+    /* Wait for batch window or batch full */
+    uint32_t now = (uint32_t)arch_timer_get_ticks();
+    while (batch.active && !e->ready) {
+        uint32_t elapsed = (uint32_t)arch_timer_get_ticks() - batch.start_tick;
+        if (elapsed >= INFER_BATCH_WINDOW || batch.count >= INFER_BATCH_SIZE) {
+            /* I'm the one to flush */
+            infer_batch_flush();
+            break;
+        }
+        sched_yield();
+    }
+
+    /* Wait for my response */
+    for (int i = 0; i < 5000 && !e->ready; i++)
+        sched_yield();
+
+    if (e->ready == 1 && e->resp_len > 0) {
+        uint32_t copy = e->resp_len;
+        if (copy > resp_max) copy = resp_max;
+        mem_copy(resp_buf, e->response, copy);
+        return (int)copy;
+    }
+
+    return -ENOENT;
+}
+
+void infer_batch_get_stat(infer_batch_stat_t *stat) {
+    uint64_t flags;
+    spin_lock_irqsave(&infer_lock, &flags);
+    *stat = batch_stats;
+    spin_unlock_irqrestore(&infer_lock, flags);
+}
+
 /* --- Async inference --- */
 
 static infer_async_entry_t infer_async[INFER_ASYNC_SIZE];
