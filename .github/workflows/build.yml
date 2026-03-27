@@ -83,6 +83,8 @@ jobs:
 
       - name: Build busybox with full applets
         run: |
+          mkdir -p third_party
+          git clone --depth 1 https://git.busybox.net/busybox third_party/busybox
           cd third_party/busybox
           make mrproper
           make defconfig
