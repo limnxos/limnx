@@ -208,7 +208,7 @@ build/user/%.elf: build/user/%.o $(LIBC_OBJS) user/arch/x86_64/linker.ld
 
 $(DISK_IMG):
 	@mkdir -p build
-	dd if=/dev/zero of=$@ bs=1M count=64 2>/dev/null
+	dd if=/dev/zero of=$@ bs=1M count=256 2>/dev/null
 	@echo "Created 64MB disk image: $@"
 
 disk: $(DISK_IMG)

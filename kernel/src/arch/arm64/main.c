@@ -239,7 +239,7 @@ void kmain(uint64_t dtb_addr) {
         bcache_read(0, sb_buf);
         uint32_t magic = *(uint32_t *)sb_buf;
 
-        uint32_t disk_blocks = 14336;  /* 56MB / 4KB = 14336 (last 8MB for swap) */
+        uint32_t disk_blocks = 63488;  /* 248MB / 4KB = 63488 (last 8MB for swap) */
         if (magic != LIMNFS_MAGIC) {
             /* First boot: format */
             if (limnfs_format(disk_blocks) != 0)

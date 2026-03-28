@@ -12,7 +12,7 @@ make arm64
 
 echo "=== Creating ARM64 disk ==="
 mkdir -p build/arm64
-dd if=/dev/zero of=build/arm64/disk.img bs=1M count=64 2>/dev/null
+dd if=/dev/zero of=build/arm64/disk.img bs=1M count=256 2>/dev/null
 
 echo "=== Booting ARM64 ==="
 

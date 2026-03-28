@@ -3,8 +3,8 @@
 
 #include <stdint.h>
 
-/* Swap area uses the last 8MB of the 64MB disk (blocks 14336-16383) */
-#define SWAP_START_BLOCK     14336
+/* Swap area uses the last 8MB of the 256MB disk (blocks 63488-65535) */
+#define SWAP_START_BLOCK     63488
 #define SWAP_NUM_PAGES       2048    /* 8MB / 4KB */
 #define SWAP_SECTORS_PER_PAGE 8      /* 4KB / 512B */
 
