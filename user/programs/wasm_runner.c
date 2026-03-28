@@ -6,6 +6,7 @@
 
 #include "libc/libc.h"
 #include "libc/wasm.h"
+#include "limnx/stat.h"
 
 /* Host function: print(i32) — prints the value and returns it */
 static int32_t host_print(int32_t *args, int nargs) {
@@ -43,29 +44,14 @@ int main(int argc, char **argv) {
     }
 
     /* Get file size via stat */
-    struct {
-        uint64_t dev;
-        uint64_t ino;
-        uint32_t mode;
-        uint32_t nlink;
-        uint32_t uid;
-        uint32_t gid;
-        uint64_t rdev;
-        int64_t  size;
-        int64_t  atime;
-        int64_t  mtime;
-        int64_t  ctime;
-        uint64_t blksize;
-        uint64_t blocks;
-    } st;
-
+    struct linux_stat st;
     if (sys_fstat(fd, &st) < 0) {
         printf("wasm_runner: cannot stat '%s'\n", path);
         sys_close(fd);
         return 1;
     }
 
-    uint32_t file_size = (uint32_t)st.size;
+    uint32_t file_size = (uint32_t)st.st_size;
     if (file_size == 0 || file_size > 1024 * 1024) {
         printf("wasm_runner: invalid file size %u\n", file_size);
         sys_close(fd);

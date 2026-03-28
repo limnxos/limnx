@@ -10,57 +10,47 @@ int tool_dispatch(const char *path, const char **argv, long caps,
     (void)caps;
     (void)cpu_ticks;
 
-    /* Create stdin pipe (parent writes → child reads) */
-    long stdin_rfd = -1, stdin_wfd = -1;
-    if (sys_pipe(&stdin_rfd, &stdin_wfd) < 0)
-        return -1;
-
     /* Create stdout pipe (child writes → parent reads) */
     long stdout_rfd = -1, stdout_wfd = -1;
-    if (sys_pipe(&stdout_rfd, &stdout_wfd) < 0) {
-        sys_close(stdin_rfd);
-        sys_close(stdin_wfd);
+    if (sys_pipe(&stdout_rfd, &stdout_wfd) < 0)
         return -1;
-    }
 
     /* Fork child */
     long child_pid = sys_fork();
     if (child_pid < 0) {
-        sys_close(stdin_rfd);
-        sys_close(stdin_wfd);
         sys_close(stdout_rfd);
         sys_close(stdout_wfd);
         return -1;
     }
 
     if (child_pid == 0) {
-        /* Child: redirect fd 0 and fd 1 to pipes */
-        sys_close(stdin_wfd);   /* parent's write end */
+        /* Child: redirect stdout to pipe write end */
         sys_close(stdout_rfd);  /* parent's read end */
-
-        sys_dup2(stdin_rfd, 0);    /* stdin ← pipe read end */
-        sys_dup2(stdout_wfd, 1);   /* stdout → pipe write end */
-
-        sys_close(stdin_rfd);   /* close original after dup */
+        sys_dup2(stdout_wfd, 1);
         sys_close(stdout_wfd);
 
-        /* Exec the tool */
-        sys_execve(path, argv);
-        /* If exec fails, exit */
-        sys_exit(127);
+        /* Write input to a temp file if needed (tool reads via argv) */
+        /* For now, tools get input via argv[1] */
+
+        /* Exec the tool — sys_execve creates a NEW process that
+         * inherits our fd table (including the dup2'd fd 1).
+         * We then exit so the parent only waits for us. */
+        const char *exec_argv[4];
+        exec_argv[0] = path;
+        exec_argv[1] = (argv && argv[1]) ? argv[1] : (void *)0;
+        exec_argv[2] = (void *)0;
+
+        long grandchild = sys_execve(path, exec_argv);
+        if (grandchild > 0) {
+            /* Wait for grandchild to finish */
+            sys_waitpid(grandchild);
+        }
+        sys_exit(grandchild > 0 ? 0 : 127);
     }
 
-    /* Parent: close child-side pipe ends */
-    sys_close(stdin_rfd);
+    /* Parent: close write end, read child's output */
     sys_close(stdout_wfd);
 
-    /* Write input to child's stdin */
-    if (input && input_len > 0) {
-        sys_fwrite(stdin_wfd, input, input_len);
-    }
-    sys_close(stdin_wfd);  /* signal EOF */
-
-    /* Read child's stdout */
     uint32_t total = 0;
     while (total < sizeof(result->output) - 1) {
         long n = sys_read(stdout_rfd, result->output + total,
