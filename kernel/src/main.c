@@ -744,14 +744,25 @@ void kmain(void) {
     /* --- LimnFS init --- */
     if (blk_ok) {
         bcache_init();
-        swap_init();
+
+        /* Query disk capacity and compute layout dynamically */
+        uint64_t total_sectors = virtio_blk_get_capacity();
+        uint32_t total_4k_blocks = (uint32_t)(total_sectors / 8);  /* 512B sectors → 4KB blocks */
+        uint32_t swap_blocks = SWAP_NUM_PAGES;  /* 2048 = 8MB */
+        uint32_t disk_blocks = total_4k_blocks > swap_blocks ?
+                               total_4k_blocks - swap_blocks : 1;
+        uint32_t swap_start = disk_blocks;  /* swap starts right after filesystem */
+
+        pr_info("Disk: %lu sectors (%lu MB), filesystem: %u blocks (%u MB), swap at block %u\n",
+                total_sectors, total_sectors / 2048,
+                disk_blocks, disk_blocks / 256, swap_start);
+
+        swap_init_at(swap_start);
 
         /* Check if disk already has LimnFS */
         uint8_t sb_buf[4096];
         bcache_read(0, sb_buf);
         uint32_t magic = *(uint32_t *)sb_buf;
-
-        uint32_t disk_blocks = 63488;  /* 248MB / 4KB = 63488 (last 8MB reserved for swap) */
         if (magic != 0x4C494D46) {
             /* First boot: format */
             if (limnfs_format(disk_blocks) != 0)

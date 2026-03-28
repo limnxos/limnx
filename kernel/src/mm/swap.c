@@ -7,8 +7,15 @@
 #include "blk/bcache.h"
 #include "arch/serial.h"
 
+uint32_t swap_start_block = 63488;  /* default for 256MB disk, overridden by swap_init_at() */
+
 static uint8_t swap_bitmap[SWAP_NUM_PAGES / 8];  /* 256 bytes */
 static uint32_t swap_used_count;
+
+void swap_init_at(uint32_t start_block) {
+    swap_start_block = start_block;
+    swap_init();
+}
 
 void swap_init(void) {
     for (int i = 0; i < SWAP_NUM_PAGES / 8; i++)

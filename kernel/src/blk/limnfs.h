@@ -18,7 +18,7 @@
 #define LIMNFS_DENTRY_SIZE  64
 #define LIMNFS_DENTRIES_PER_BLOCK (LIMNFS_BLOCK_SIZE / LIMNFS_DENTRY_SIZE)  /* 64 */
 #define LIMNFS_PTRS_PER_BLOCK     (LIMNFS_BLOCK_SIZE / 4)                   /* 1024 */
-#define LIMNFS_BLOCK_BITMAP_BYTES 2048  /* supports up to 16384 blocks (64MB) */
+#define LIMNFS_BLOCK_BITMAP_BYTES_DEFAULT 32768  /* initial allocation, grows as needed */
 
 /* Superblock (4096 bytes, block 0) */
 typedef struct {

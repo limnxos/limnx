@@ -2,6 +2,7 @@
 #include "klog.h"
 #include "blk/limnfs.h"
 #include "blk/bcache.h"
+#include "mm/kheap.h"
 #include "arch/serial.h"
 
 /* --- In-memory state --- */
@@ -9,7 +10,8 @@
 typedef struct {
     int mounted;
     limnfs_super_t super;
-    uint8_t block_bitmap[LIMNFS_BLOCK_BITMAP_BYTES]; /* 16384 blocks max (64MB) */
+    uint8_t *block_bitmap;        /* dynamically allocated from kheap */
+    uint32_t block_bitmap_bytes;  /* actual size = total_blocks / 8 */
     uint8_t inode_bitmap[128];    /* 1024 inodes max */
 } limnfs_state_t;
 
@@ -63,19 +65,33 @@ static void bitmap_clear(uint8_t *bitmap, uint32_t bit) {
 /* --- Flush bitmaps to disk --- */
 
 static int flush_block_bitmap(void) {
-    for (int i = 0; i < LIMNFS_BLOCK_SIZE; i++)
-        scratch_block[i] = 0;
-    for (int i = 0; i < LIMNFS_BLOCK_BITMAP_BYTES; i++)
-        scratch_block[i] = lfs.block_bitmap[i];
-    return bcache_write(1, scratch_block);
+    /* Block bitmap may span multiple disk blocks */
+    uint32_t bitmap_blocks = lfs.block_bitmap_bytes / LIMNFS_BLOCK_SIZE;
+    if (bitmap_blocks == 0) bitmap_blocks = 1;
+    for (uint32_t b = 0; b < bitmap_blocks; b++) {
+        for (int i = 0; i < LIMNFS_BLOCK_SIZE; i++)
+            scratch_block[i] = 0;
+        uint32_t offset = b * LIMNFS_BLOCK_SIZE;
+        uint32_t remain = lfs.block_bitmap_bytes - offset;
+        if (remain > LIMNFS_BLOCK_SIZE) remain = LIMNFS_BLOCK_SIZE;
+        for (uint32_t i = 0; i < remain; i++)
+            scratch_block[i] = lfs.block_bitmap[offset + i];
+        if (bcache_write(1 + b, scratch_block) != 0)
+            return -1;
+    }
+    return 0;
 }
 
 static int flush_inode_bitmap(void) {
+    /* Inode bitmap always 1 block (follows block bitmap) */
+    uint32_t bitmap_blocks = lfs.block_bitmap_bytes / LIMNFS_BLOCK_SIZE;
+    if (bitmap_blocks == 0) bitmap_blocks = 1;
+    uint32_t inode_bm_block = 1 + bitmap_blocks;
     for (int i = 0; i < LIMNFS_BLOCK_SIZE; i++)
         scratch_block[i] = 0;
     for (int i = 0; i < 128; i++)
         scratch_block[i] = lfs.inode_bitmap[i];
-    return bcache_write(2, scratch_block);
+    return bcache_write(inode_bm_block, scratch_block);
 }
 
 static int flush_superblock(void) {
@@ -297,14 +313,33 @@ static uint32_t alloc_file_block(limnfs_inode_t *inode, uint32_t logical_block) 
 /* --- Public API: Format + Mount --- */
 
 int limnfs_format(uint32_t total_blocks) {
-    pr_info("Formatting disk (%u blocks, %uKB each)...\n",
-            total_blocks, LIMNFS_BLOCK_SIZE / 1024);
+    pr_info("Formatting disk (%u blocks, %u MB)...\n",
+            total_blocks, total_blocks / 256);
+
+    /* Allocate block bitmap dynamically */
+    uint32_t bitmap_bytes = (total_blocks + 7) / 8;
+    if (bitmap_bytes < 4096) bitmap_bytes = 4096;  /* minimum 1 block */
+    /* Round up to block boundary */
+    bitmap_bytes = (bitmap_bytes + LIMNFS_BLOCK_SIZE - 1) & ~(LIMNFS_BLOCK_SIZE - 1);
+
+    if (lfs.block_bitmap) kfree(lfs.block_bitmap);
+    lfs.block_bitmap = (uint8_t *)kmalloc(bitmap_bytes);
+    if (!lfs.block_bitmap) {
+        pr_err("Failed to allocate block bitmap (%u bytes)\n", bitmap_bytes);
+        return -1;
+    }
+    lfs.block_bitmap_bytes = bitmap_bytes;
 
     /* Calculate layout */
+    uint32_t bitmap_blocks = bitmap_bytes / LIMNFS_BLOCK_SIZE;
     uint32_t inode_blocks = (LIMNFS_MAX_INODES * 128 + LIMNFS_BLOCK_SIZE - 1) / LIMNFS_BLOCK_SIZE;
-    uint32_t inode_tbl_start = 3;  /* after super + block bitmap + inode bitmap */
-    uint32_t data_start = inode_tbl_start + inode_blocks;  /* 3 + 32 = 35 */
-    uint32_t reserved = data_start;  /* blocks 0..data_start-1 are metadata */
+    /* Layout: super(1) + block_bitmap(N) + inode_bitmap(1) + inode_table(32) + data */
+    uint32_t inode_tbl_start = 1 + bitmap_blocks + 1;
+    uint32_t data_start = inode_tbl_start + inode_blocks;
+    uint32_t reserved = data_start;
+
+    pr_info("Layout: bitmap=%u blocks, inodes at %u, data at %u\n",
+            bitmap_blocks, inode_tbl_start, data_start);
 
     /* Prepare superblock */
     for (uint32_t i = 0; i < sizeof(limnfs_super_t); i++)
@@ -325,7 +360,7 @@ int limnfs_format(uint32_t total_blocks) {
     }
 
     /* Prepare block bitmap: mark blocks 0..data_start-1 as used */
-    for (int i = 0; i < LIMNFS_BLOCK_BITMAP_BYTES; i++)
+    for (uint32_t i = 0; i < lfs.block_bitmap_bytes; i++)
         lfs.block_bitmap[i] = 0;
     for (uint32_t b = 0; b < reserved; b++)
         bitmap_set(lfs.block_bitmap, b);
@@ -400,16 +435,37 @@ int limnfs_mount(void) {
             lfs.super.total_blocks, lfs.super.total_inodes,
             lfs.super.data_start);
 
-    /* Read block bitmap */
-    if (bcache_read(1, scratch_block) != 0) {
-        pr_err("Failed to read block bitmap\n");
+    /* Allocate block bitmap based on superblock total_blocks */
+    uint32_t bitmap_bytes = (lfs.super.total_blocks + 7) / 8;
+    if (bitmap_bytes < 4096) bitmap_bytes = 4096;
+    bitmap_bytes = (bitmap_bytes + LIMNFS_BLOCK_SIZE - 1) & ~(LIMNFS_BLOCK_SIZE - 1);
+
+    if (lfs.block_bitmap) kfree(lfs.block_bitmap);
+    lfs.block_bitmap = (uint8_t *)kmalloc(bitmap_bytes);
+    if (!lfs.block_bitmap) {
+        pr_err("Failed to allocate block bitmap (%u bytes)\n", bitmap_bytes);
         return -1;
     }
-    for (int i = 0; i < LIMNFS_BLOCK_BITMAP_BYTES; i++)
-        lfs.block_bitmap[i] = scratch_block[i];
+    lfs.block_bitmap_bytes = bitmap_bytes;
 
-    /* Read inode bitmap */
-    if (bcache_read(2, scratch_block) != 0) {
+    /* Read block bitmap (may span multiple blocks) */
+    uint32_t bitmap_blocks = bitmap_bytes / LIMNFS_BLOCK_SIZE;
+    if (bitmap_blocks == 0) bitmap_blocks = 1;
+    for (uint32_t b = 0; b < bitmap_blocks; b++) {
+        if (bcache_read(1 + b, scratch_block) != 0) {
+            pr_err("Failed to read block bitmap (block %u)\n", 1 + b);
+            return -1;
+        }
+        uint32_t offset = b * LIMNFS_BLOCK_SIZE;
+        uint32_t remain = bitmap_bytes - offset;
+        if (remain > LIMNFS_BLOCK_SIZE) remain = LIMNFS_BLOCK_SIZE;
+        for (uint32_t i = 0; i < remain; i++)
+            lfs.block_bitmap[offset + i] = scratch_block[i];
+    }
+
+    /* Read inode bitmap (follows block bitmap) */
+    uint32_t inode_bm_block = 1 + bitmap_blocks;
+    if (bcache_read(inode_bm_block, scratch_block) != 0) {
         pr_err("Failed to read inode bitmap\n");
         return -1;
     }

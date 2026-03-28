@@ -318,3 +318,13 @@ fail:
     pr_err("FAILED to initialize\n");
     return -1;
 }
+
+/* Read disk capacity from device config (MMIO offset 0x100) */
+uint64_t virtio_blk_get_capacity(void) {
+    if (dev_base == 0) return 0;
+    /* Device config at VIRTIO_MMIO_CONFIG (0x100).
+     * First field: uint64_t capacity in 512-byte sectors. */
+    uint32_t lo = mmio_read32(dev_base, VIRTIO_MMIO_CONFIG + 0);
+    uint32_t hi = mmio_read32(dev_base, VIRTIO_MMIO_CONFIG + 4);
+    return ((uint64_t)hi << 32) | lo;
+}

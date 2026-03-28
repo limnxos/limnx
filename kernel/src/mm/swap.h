@@ -3,8 +3,9 @@
 
 #include <stdint.h>
 
-/* Swap area uses the last 8MB of the 256MB disk (blocks 63488-65535) */
-#define SWAP_START_BLOCK     63488
+/* Swap area: last 8MB of disk. Start block set at runtime by swap_init_at(). */
+extern uint32_t swap_start_block;    /* set dynamically from disk capacity */
+#define SWAP_START_BLOCK     swap_start_block
 #define SWAP_NUM_PAGES       2048    /* 8MB / 4KB */
 #define SWAP_SECTORS_PER_PAGE 8      /* 4KB / 512B */
 
@@ -13,6 +14,7 @@
 #define SWAP_SLOT_MASK     0x7FF    /* 11 bits, max 2048 slots */
 
 void swap_init(void);
+void swap_init_at(uint32_t start_block);  /* set swap area start from disk capacity */
 
 /* Allocate a swap slot, returns slot index or -1 */
 int  swap_alloc_slot(void);

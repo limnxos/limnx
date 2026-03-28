@@ -26,8 +26,9 @@ typedef struct {
 #define VIRTIO_BLK_SECTOR_SIZE 512
 
 /* Public API */
-int  virtio_blk_init(void);
-int  virtio_blk_read(uint64_t sector, void *buf);    /* read 1 sector */
-int  virtio_blk_write(uint64_t sector, const void *buf); /* write 1 sector */
+int      virtio_blk_init(void);
+int      virtio_blk_read(uint64_t sector, void *buf);    /* read 1 sector */
+int      virtio_blk_write(uint64_t sector, const void *buf); /* write 1 sector */
+uint64_t virtio_blk_get_capacity(void);  /* total 512-byte sectors */
 
 #endif

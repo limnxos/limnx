@@ -256,3 +256,13 @@ fail:
     pr_err("FAILED to initialize\n");
     return -1;
 }
+
+/* Read disk capacity from device config (offset 0x14 for PCI legacy) */
+uint64_t virtio_blk_get_capacity(void) {
+    if (io_base == 0) return 0;
+    /* Device config starts at BAR0 + 0x14 for legacy PCI virtio.
+     * Capacity is the first field: uint64_t in 512-byte sectors. */
+    uint32_t lo = inl(io_base + 0x14);
+    uint32_t hi = inl(io_base + 0x18);
+    return ((uint64_t)hi << 32) | lo;
+}
