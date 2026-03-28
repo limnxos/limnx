@@ -81,18 +81,21 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential linux-headers-generic perl
+          sudo apt-get install -y build-essential musl-tools linux-headers-generic perl
 
-      - name: Build busybox with full applets
+      - name: Build busybox with full applets (musl-linked)
         run: |
           mkdir -p third_party
           git clone --depth 1 https://git.busybox.net/busybox third_party/busybox
           cd third_party/busybox
           make mrproper
           make defconfig
-          # Static non-PIE (required by Limnx ELF loader)
+          # Use musl-gcc for static linking (avoids glibc/modern-kernel deps)
           sed -i 's/^# CONFIG_STATIC is not set/CONFIG_STATIC=y/' .config
           sed -i 's/^CONFIG_PIE=y/# CONFIG_PIE is not set/' .config
+          sed -i 's|^CONFIG_CROSS_COMPILER_PREFIX=.*|CONFIG_CROSS_COMPILER_PREFIX=""|' .config
+          sed -i 's|^CONFIG_EXTRA_CFLAGS=.*|CONFIG_EXTRA_CFLAGS=""|' .config
+          sed -i 's|^CONFIG_EXTRA_LDFLAGS=.*|CONFIG_EXTRA_LDFLAGS=""|' .config
           # Disable applets needing unavailable kernel headers
           for app in TC IPTABLES IP BRCTL MODPROBE RMMOD INSMOD LSMOD DEPMOD \
                      MODINFO MDEV SWAPON SWAPOFF LOSETUP FSCK MKFS_EXT2 \
@@ -101,7 +104,7 @@ jobs:
             sed -i "s/^CONFIG_${app}=y/# CONFIG_${app} is not set/" .config
           done
           make oldconfig </dev/null
-          make -j$(nproc)
+          CC=musl-gcc make -j$(nproc)
           file busybox
           ./busybox --list | wc -l
 
