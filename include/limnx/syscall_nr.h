@@ -93,6 +93,8 @@
 #define SYS_IO_URING_SETUP  __NR_io_uring_setup
 #define SYS_IO_URING_ENTER  __NR_io_uring_enter
 #define SYS_GETRANDOM       __NR_getrandom
+#define SYS_SET_ROBUST_LIST __NR_set_robust_list
+#define SYS_RSEQ            __NR_rseq
 #define SYS_UTIMENSAT       __NR_utimensat
 #define SYS_PPOLL           __NR_ppoll
 /* *at() variants — both archs */

@@ -233,6 +233,8 @@ int64_t sys_set_tid_address(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_exit_group(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_getppid(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_writev(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_set_robust_list(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_rseq(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_getsid(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_tcsetpgrp(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_tcgetpgrp(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);

@@ -211,6 +211,8 @@ static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
     [SYS_READV]            = sys_readv,
     [SYS_SECCOMP]          = sys_seccomp,
     [SYS_GETRANDOM]        = sys_getrandom,
+    [SYS_SET_ROBUST_LIST]  = sys_set_robust_list,
+    [SYS_RSEQ]             = sys_rseq,
     [SYS_IO_URING_SETUP]   = sys_uring_setup,
     [SYS_IO_URING_ENTER]   = sys_uring_enter,
     /* *at() variants — wrappers that skip dirfd arg, both archs */

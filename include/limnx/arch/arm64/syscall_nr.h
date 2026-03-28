@@ -115,8 +115,10 @@
 #define __NR_wait4           260
 #define __NR_prlimit64       261
 #define __NR_renameat2       276
+#define __NR_set_robust_list  99
 #define __NR_seccomp         277
 #define __NR_getrandom       278
+#define __NR_rseq            293
 #define __NR_io_uring_setup  425
 #define __NR_io_uring_enter  426
 #define __NR_clone3          435

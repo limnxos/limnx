@@ -925,6 +925,20 @@ int64_t sys_getrandom(uint64_t buf_ptr, uint64_t buflen,
 }
 
 
+/* set_robust_list — thread-safety futex list, no-op stub */
+int64_t sys_set_robust_list(uint64_t head, uint64_t len,
+                            uint64_t a3, uint64_t a4, uint64_t a5) {
+    (void)head; (void)len; (void)a3; (void)a4; (void)a5;
+    return 0;
+}
+
+/* rseq — restartable sequences, no-op stub */
+int64_t sys_rseq(uint64_t rseq_ptr, uint64_t rseq_len,
+                 uint64_t flags, uint64_t sig, uint64_t a5) {
+    (void)rseq_ptr; (void)rseq_len; (void)flags; (void)sig; (void)a5;
+    return 0;
+}
+
 int64_t sys_brk(uint64_t addr, uint64_t a2,
                          uint64_t a3, uint64_t a4, uint64_t a5) {
     (void)a2; (void)a3; (void)a4; (void)a5;

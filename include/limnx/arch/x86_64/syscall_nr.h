@@ -162,8 +162,10 @@
 #define __NR_dup3           292
 #define __NR_pipe2          293
 #define __NR_prlimit64      302
+#define __NR_set_robust_list 273
 #define __NR_seccomp        317
 #define __NR_getrandom      318
+#define __NR_rseq           334
 #define __NR_io_uring_setup 425
 #define __NR_io_uring_enter 426
 #define __NR_clone3         435
