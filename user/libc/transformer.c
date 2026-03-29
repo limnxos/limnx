@@ -1,9 +1,9 @@
 #include "libc.h"
 
-/* --- Static helpers --- */
+/* --- Static helpers (CPU fallbacks) --- */
 
-static void rms_norm(float *out, const float *x, const float *weight,
-                     uint32_t dim) {
+static void rms_norm_cpu(float *out, const float *x, const float *weight,
+                         uint32_t dim) {
     float ss = 0.0f;
     for (uint32_t i = 0; i < dim; i++)
         ss += x[i] * x[i];
@@ -12,8 +12,8 @@ static void rms_norm(float *out, const float *x, const float *weight,
         out[i] = x[i] * ss * weight[i];
 }
 
-static void matmul(float *out, const float *x, const float *w,
-                   uint32_t n, uint32_t d) {
+static void matmul_cpu(float *out, const float *x, const float *w,
+                       uint32_t n, uint32_t d) {
     /* out[d] = x[n] @ W[n×d]  (W is row-major: W[i*d + j]) */
     for (uint32_t j = 0; j < d; j++) {
         float sum = 0.0f;
@@ -23,7 +23,7 @@ static void matmul(float *out, const float *x, const float *w,
     }
 }
 
-static void softmax(float *x, uint32_t size) {
+static void softmax_cpu(float *x, uint32_t size) {
     float max_val = x[0];
     for (uint32_t i = 1; i < size; i++)
         if (x[i] > max_val)
@@ -35,6 +35,25 @@ static void softmax(float *x, uint32_t size) {
     }
     for (uint32_t i = 0; i < size; i++)
         x[i] /= sum;
+}
+
+/* --- Accelerated wrappers (try GPU/TPU, fall back to CPU) --- */
+
+static void rms_norm(float *out, const float *x, const float *weight,
+                     uint32_t dim) {
+    if (accel_rmsnorm(out, x, weight, dim, 1e-5f) == 0) return;
+    rms_norm_cpu(out, x, weight, dim);
+}
+
+static void matmul(float *out, const float *x, const float *w,
+                   uint32_t n, uint32_t d) {
+    if (accel_matmul(out, x, w, 1, n, n, d) == 0) return;
+    matmul_cpu(out, x, w, n, d);
+}
+
+static void softmax(float *x, uint32_t size) {
+    if (accel_softmax(x, size) == 0) return;
+    softmax_cpu(x, size);
 }
 
 static void apply_rope(float *vec, uint32_t dim, uint32_t pos, float theta) {

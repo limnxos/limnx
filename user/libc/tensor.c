@@ -87,8 +87,12 @@ void tensor_add_bias(tensor_t *dst, const tensor_t *src, const tensor_t *bias) {
 /* --- Matrix multiplication --- */
 
 void tensor_matmul(tensor_t *dst, const tensor_t *a, const tensor_t *b) {
-    /* dst(a.rows x b.cols) = a(a.rows x a.cols) * b(a.cols x b.cols) */
-    /* Zero destination first */
+    /* Try accelerator first */
+    if (accel_matmul(dst->data, a->data, b->data,
+                     a->rows, a->cols, a->cols, b->cols) == 0)
+        return;
+
+    /* CPU fallback: dst(a.rows x b.cols) = a(a.rows x a.cols) * b(a.cols x b.cols) */
     for (uint32_t i = 0; i < dst->size; i++)
         dst->data[i] = 0.0f;
 
@@ -108,20 +112,21 @@ void tensor_relu(tensor_t *t) {
 }
 
 void tensor_softmax(tensor_t *t) {
-    /* Find max for numerical stability */
+    /* Try accelerator first */
+    if (accel_softmax(t->data, t->size) == 0) return;
+
+    /* CPU fallback */
     float max_val = t->data[0];
     for (uint32_t i = 1; i < t->size; i++)
         if (t->data[i] > max_val)
             max_val = t->data[i];
 
-    /* exp(x - max) and sum */
     float sum = 0.0f;
     for (uint32_t i = 0; i < t->size; i++) {
         t->data[i] = expf(t->data[i] - max_val);
         sum += t->data[i];
     }
 
-    /* Normalize */
     for (uint32_t i = 0; i < t->size; i++)
         t->data[i] /= sum;
 }
