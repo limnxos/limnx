@@ -76,7 +76,7 @@ The security model is a **trifecta**:
 ```
  User Space (Ring 3 / EL0)
  ┌──────────────────────────────────────────────────────────┐
- │  orchestrator   agent_worker(×3)   inferd   generate     │
+ │  orchestrator   agent_worker(×3)   inferd   agentd       │
  │  chat           toolagent          shell    busybox      │
  │                                                          │
  │  libc: syscalls, printf, math, tokenizer, GGUF, HTTP     │
@@ -129,6 +129,55 @@ User program                    Kernel                         inferd daemon
 ```
 
 Supported model formats: GGUF v3 (F32, F16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K–Q6_K). BPE tokenizer loaded from GGUF metadata. Transformer: RMS norm, multi-head attention, GQA, RoPE, SwiGLU, KV cache.
+
+Inference runs on **CPU only** — no GPU compute. Future versions will support network/cloud inference backends (inferd proxying to remote model servers) via the same `sys_infer_request` interface.
+
+## Agent Daemon (agentd)
+
+agentd is the persistent agent runtime — the "brain" that ties together inference, tools, and memory into a continuously running service.
+
+```
+                     ┌─────────────────────────────────────┐
+                     │              agentd                  │
+                     │                                      │
+ client ──unix──►    │  ┌──────────┐  ┌────────┐  ┌──────┐ │
+ (shell,             │  │ Session  │  │  Tool  │  │Memory│ │
+  chat,              │  │ Manager  │  │Registry│  │System│ │
+  agent)             │  │(8 slots) │  │(16)    │  │(RAG) │ │
+                     │  └────┬─────┘  └───┬────┘  └──┬───┘ │
+                     │       │            │          │     │
+                     │  ┌────┴─────────���──┴──────────┴───┐ │
+                     │  │       Event Loop (accept)       │ │
+                     │  └────────────┬────────────────────┘ │
+                     └───────────────┼─────────────────────┘
+                                     │ sys_infer_request
+                                     ▼
+                                  inferd
+```
+
+**Boot order**: `init → serviced → inferd → agentd → shell`
+
+### How It Works
+
+1. Client connects to `/tmp/agentd.sock` and sends a prompt
+2. agentd appends it to the session's context buffer (2KB sliding window)
+3. Retrieves relevant memories from vecstore (semantic similarity / RAG)
+4. Assembles full prompt: `[recalled memories] + [conversation history] + [user input]`
+5. Calls `sys_infer_request("default", ...)` → routed to inferd by the kernel
+6. Checks response for tool-use intent (keyword matching)
+7. If tool needed: `fork + exec + pipe` via `tool_dispatch()`, captures output
+8. Appends tool output to context, re-infers (up to 4 tool chain iterations)
+9. Returns final response to client
+10. Stores interaction embedding in session vecstore for future recall
+
+### Features
+
+- **8 concurrent sessions** with independent context and memory
+- **Dual-layer memory**: per-session vecstore + global vecstore
+- **7 built-in tools**: ls, cat, echo, ps, wc, grep, head
+- **Custom tools** via `/etc/agentd/tools.conf` (name|path|description|keywords)
+- **Tool chaining**: infer → tool → re-infer, up to 4 iterations
+- **Agent registry**: registered as `"agentd"` for system-level IPC
 
 ## Use Cases
 
@@ -523,7 +572,7 @@ make arm64             # build ARM64 kernel ELF
 - **2 architectures**: x86_64 (primary), ARM64 (full feature parity)
 - **SMP**: 2 CPUs, per-CPU data, LAPIC timer preemption
 - **Memory**: 4-level paging, HHDM, kernel heap up to 1GB, mmap up to 2GB
-- **Filesystem**: LimnFS (ext2-inspired, triple indirect blocks, 64MB disk)
+- **Filesystem**: LimnFS (ext2-inspired, triple indirect blocks, dynamic disk size up to 1GB+)
 - **Networking**: TCP (full state machine), UDP, ICMP, ARP, software loopback
 - **Userspace**: Busybox ash (47 applets), custom libc, init system
 
