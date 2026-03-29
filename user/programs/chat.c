@@ -27,6 +27,11 @@ static int readline(char *buf, int max) {
     int pos = 0;
     while (pos < max - 1) {
         long ch = sys_getchar();
+        if (ch < 0) break;  /* error / signal */
+        if (ch == 3 || ch == 4) {  /* Ctrl-C or Ctrl-D */
+            buf[0] = '\0';
+            return -1;
+        }
         if (ch == '\n' || ch == '\r') {
             char nl = '\n';
             sys_write(&nl, 1);
@@ -145,9 +150,11 @@ int main(void) {
     for (;;) {
         printf("you> ");
         int len = readline(line, MAX_INPUT);
+        if (len < 0)  /* Ctrl-C / Ctrl-D */
+            break;
         if (len == 0)
             continue;
-        if (strcmp(line, "quit") == 0)
+        if (strcmp(line, "quit") == 0 || strcmp(line, "exit") == 0)
             break;
 
         /* Get embedding of user message */
