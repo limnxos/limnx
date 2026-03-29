@@ -27,6 +27,7 @@ volatile int kernel_quiet = 0;
 #include "net/virtio_net.h"
 #include "net/net.h"
 #include "blk/virtio_blk.h"
+#include "accel/virtio_accel_mmio.h"
 #include "blk/limnfs.h"
 #include "blk/bcache.h"
 #include "ipc/infer_svc.h"
@@ -740,6 +741,9 @@ void kmain(void) {
     } else {
         serial_puts("[blk]  Skipping virtio-blk (no device)\n");
     }
+
+    /* --- Compute accelerator (optional) --- */
+    virtio_accel_init();  /* non-fatal if no device present */
 
     /* --- LimnFS init --- */
     if (blk_ok) {

@@ -32,6 +32,7 @@ volatile int kernel_quiet = 0;
 #include "net/net.h"
 #include "net/tcp.h"
 #include "blk/virtio_blk.h"
+#include "accel/virtio_accel_mmio.h"
 #include "blk/bcache.h"
 #include "blk/limnfs.h"
 #include "ipc/supervisor.h"
@@ -228,6 +229,9 @@ void kmain(uint64_t dtb_addr) {
     } else {
         serial_puts("[blk]  Skipping virtio-blk (no device)\n");
     }
+
+    /* Compute accelerator (optional) */
+    virtio_accel_init();
 
     /* LimnFS init */
     if (blk_ok) {

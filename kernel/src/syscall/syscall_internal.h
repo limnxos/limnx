@@ -248,4 +248,9 @@ int64_t sys_readv(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_ftruncate(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 int64_t sys_utimensat(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
+/* Accelerator */
+int64_t sys_accel_submit(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_accel_poll(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+int64_t sys_accel_info(uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
+
 #endif /* LIMNX_SYSCALL_INTERNAL_H */

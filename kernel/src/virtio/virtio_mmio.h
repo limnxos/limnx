@@ -56,6 +56,7 @@
 #define VIRTIO_MMIO_DEVID_NET          1
 #define VIRTIO_MMIO_DEVID_BLK          2
 #define VIRTIO_MMIO_DEVID_GPU          16
+#define VIRTIO_MMIO_DEVID_ACCEL        48
 
 /* ------------------------------------------------------------------ */
 /* MMIO accessors (volatile)                                          */

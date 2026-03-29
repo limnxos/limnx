@@ -368,6 +368,11 @@ static syscall_fn_t syscall_table[SYS_NR] __attribute__((section(".data"))) = {
     [SYS_TCGETPGRP]        = sys_tcgetpgrp,
     [SYS_GETPGID]          = sys_getpgid,
     [SYS_OPENPTY]          = sys_openpty,
+
+    /* Accelerator */
+    [SYS_ACCEL_SUBMIT]     = sys_accel_submit,
+    [SYS_ACCEL_POLL]       = sys_accel_poll,
+    [SYS_ACCEL_INFO]       = sys_accel_info,
 };
 
 /* Signal delivery is now per-CPU via percpu_t (GS-relative in asm).

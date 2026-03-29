@@ -233,7 +233,10 @@
 #define SYS_TCGETPGRP      592
 #define SYS_GETPGID        593
 #define SYS_OPENPTY        594
+#define SYS_ACCEL_SUBMIT   595
+#define SYS_ACCEL_POLL     596
+#define SYS_ACCEL_INFO     597
 
-#define SYS_NR             600
+#define SYS_NR             610
 
 #endif /* LIMNX_SYSCALL_NR_H */

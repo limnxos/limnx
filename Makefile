@@ -46,6 +46,8 @@ SRCS     := kernel/src/main.c \
             kernel/src/syscall/sys_security.c \
             kernel/src/syscall/sys_infer.c \
             kernel/src/syscall/sys_misc.c \
+            kernel/src/syscall/sys_accel.c \
+            kernel/src/accel/virtio_accel_mmio.c \
             kernel/src/proc/process.c kernel/src/proc/elf.c \
             kernel/src/fs/vfs.c kernel/src/fs/tar.c \
             kernel/src/pci/pci.c \
@@ -78,7 +80,7 @@ LIBC_C_SRCS   := user/libc/start.c user/libc/syscalls.c \
                  user/libc/vecstore.c user/libc/agent.c user/libc/transformer.c \
                  user/libc/tokenizer.c user/libc/gguf.c user/libc/dequant.c \
                  user/libc/http.c user/libc/tooldispatch.c user/libc/malloc.c \
-                 user/libc/fio.c user/libc/wasm.c
+                 user/libc/fio.c user/libc/wasm.c user/libc/accel.c
 LIBC_C_OBJS   := $(patsubst user/libc/%.c,build/user/libc/%.o,$(LIBC_C_SRCS))
 LIBC_OBJS     := $(LIBC_C_OBJS)
 
@@ -348,6 +350,8 @@ ARM64_C_SRCS := kernel/src/arch/arm64/main.c \
                 kernel/src/syscall/sys_security.c \
                 kernel/src/syscall/sys_infer.c \
                 kernel/src/syscall/sys_misc.c \
+                kernel/src/syscall/sys_accel.c \
+                kernel/src/accel/virtio_accel_mmio.c \
                 kernel/src/ipc/unix_sock.c kernel/src/ipc/eventfd.c \
                 kernel/src/ipc/agent_reg.c kernel/src/ipc/epoll.c \
                 kernel/src/ipc/infer_svc.c kernel/src/ipc/uring.c \

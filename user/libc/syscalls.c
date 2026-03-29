@@ -700,3 +700,12 @@ long sys_mount(const char *path, const char *fstype) {
 long sys_umount(const char *path) {
     return __syscall1(SYS_UMOUNT2, (long)path);
 }
+
+/* Accelerator */
+long sys_accel_submit(void *req) {
+    return __syscall1(SYS_ACCEL_SUBMIT, (long)req);
+}
+
+long sys_accel_info(void *info) {
+    return __syscall1(SYS_ACCEL_INFO, (long)info);
+}

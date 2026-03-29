@@ -123,6 +123,22 @@ long sys_mkfifo(const char *path);
 long sys_mount(const char *path, const char *fstype);
 long sys_umount(const char *path);
 
+/* Accelerator */
+long sys_accel_submit(void *req);
+long sys_accel_info(void *info);
+
+/* Accelerator HAL (auto-falls back to CPU if no device) */
+#include "limnx/virtio_accel.h"
+int  accel_available(void);
+int  accel_get_info(accel_info_t *info);
+int  accel_matmul(float *out, const float *a, const float *b,
+                  uint32_t a_rows, uint32_t a_cols,
+                  uint32_t b_rows, uint32_t b_cols);
+int  accel_softmax(float *x, uint32_t size);
+int  accel_rmsnorm(float *out, const float *x, const float *weight,
+                   uint32_t dim, float eps);
+int  accel_silu(float *x, uint32_t size);
+
 /* Signal constants */
 #define SIGTSTP  21
 #define SIGTTIN  22
