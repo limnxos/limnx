@@ -358,6 +358,7 @@ void kmain(uint64_t dtb_addr) {
             const char *inittab =
                 "# Init config: name:path:flags\n"
                 "serviced:/serviced.elf:respawn\n"
+                "inferd:/inferd.elf:respawn\n"
                 "shell:/bin/ash:wait\n";
             int len = 0;
             while (inittab[len]) len++;
