@@ -67,8 +67,36 @@ int64_t sys_infer_request(uint64_t name_ptr, uint64_t req_buf,
         svc_idx = infer_route_ns(name, 0);
     }
     if (svc_idx < 0) {
-        /* No provider registered — return immediately so caller can fall back */
-        return -ENOENT;
+        /* No provider available — queue the request and wait */
+        int slot = infer_queue_enqueue(name, proc->pid);
+        if (slot < 0) return -ENOBUFS;  /* queue full */
+
+        /* Block until provider becomes available or timeout */
+        for (;;) {
+            int status = infer_queue_check(slot);
+            if (status == 1) {
+                /* Provider available — retry route */
+                infer_queue_remove(slot);
+                svc_idx = infer_route_ns(name, proc->ns_id);
+                if (svc_idx < 0 && proc->ns_id != 0) {
+                    if ((proc->capabilities & CAP_XNS_INFER) ||
+                        cap_token_check(proc->pid, CAP_XNS_INFER, name))
+                        svc_idx = infer_route_ns(name, 0);
+                }
+                if (svc_idx < 0) return -ENOENT;
+                break;
+            }
+            if (status == -EAGAIN) {
+                /* Timed out */
+                infer_queue_remove(slot);
+                return -EAGAIN;
+            }
+            if (proc->pending_signals & ~proc->signal_mask) {
+                infer_queue_remove(slot);
+                return -EINTR;
+            }
+            sched_yield();
+        }
     }
 
     infer_service_t *svc = infer_get(svc_idx);
