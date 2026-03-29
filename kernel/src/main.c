@@ -889,6 +889,7 @@ void kmain(void) {
                 "# flags: respawn, once, wait\n"
                 "serviced:/serviced.elf:respawn\n"
                 "inferd:/inferd.elf:respawn\n"
+                "agentd:/agentd.elf:respawn\n"
                 "shell:/bin/ash:wait\n";
             int len = 0;
             while (inittab[len]) len++;
@@ -915,6 +916,22 @@ void kmain(void) {
 
     /* Create home directories */
     vfs_mkdir("/root");
+
+    /* Create agentd directories */
+    vfs_mkdir("/var");
+    vfs_mkdir("/var/agentd");
+    vfs_mkdir("/etc/agentd");
+    {
+        int tools_conf = vfs_create("/etc/agentd/tools.conf");
+        if (tools_conf >= 0) {
+            const char *conf =
+                "# Tool config: name|path|description|keywords\n"
+                "# Default tools are built-in, add extras here\n";
+            int len = 0;
+            while (conf[len]) len++;
+            vfs_write(tools_conf, 0, (const uint8_t *)conf, len);
+        }
+    }
 
     /* Create /dev with device nodes */
     vfs_mkdir("/dev");

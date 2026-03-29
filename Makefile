@@ -116,6 +116,7 @@ USER_C_PROGRAMS := build/user/programs/shell.elf build/user/programs/agent.elf \
                    build/user/programs/umount.elf \
                    build/user/programs/orchestrator.elf \
                    build/user/programs/agent_worker.elf \
+                   build/user/programs/agentd.elf \
                    build/user/programs/file_reader.elf \
                    build/user/programs/code_executor.elf \
                    build/user/programs/tool_demo.elf \
@@ -406,6 +407,7 @@ ARM64_USER_C_PROGRAMS := build/arm64/user/programs/shell.elf \
                           build/arm64/user/programs/umount.elf \
                           build/arm64/user/programs/orchestrator.elf \
                           build/arm64/user/programs/agent_worker.elf \
+                          build/arm64/user/programs/agentd.elf \
                           build/arm64/user/programs/inferd.elf \
                           build/arm64/user/programs/infer.elf \
                           build/arm64/user/programs/generate.elf \
