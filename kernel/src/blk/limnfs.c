@@ -473,6 +473,8 @@ int limnfs_mount(void) {
         lfs.inode_bitmap[i] = scratch_block[i];
 
     lfs.mounted = 1;
+
+
     pr_info("Mounted (%u free blocks, %u free inodes)\n",
             lfs.super.free_blocks, lfs.super.free_inodes);
     return 0;

@@ -197,6 +197,7 @@ int64_t sys_fmmap(uint64_t fd, uint64_t a2,
     if (file_size == 0)
         return -1;
 
+
     /* Allocate mmap pages */
     uint64_t num_pages = (file_size + PAGE_SIZE - 1) / PAGE_SIZE;
     if (num_pages > MMAP_MAX_PAGES)
@@ -213,22 +214,30 @@ int64_t sys_fmmap(uint64_t fd, uint64_t a2,
     if (slot < 0)
         return -1;
 
-    /* Allocate contiguous physical pages */
-    uint64_t phys = pmm_alloc_contiguous((uint32_t)num_pages);
-    if (phys == 0)
-        return -1;
-
-    /* Map pages into process address space and copy file data */
     int node_idx = vfs_node_index(node);
-    if (node_idx < 0) {
-        for (uint64_t k = 0; k < num_pages; k++)
-            pmm_free_page(phys + k * PAGE_SIZE);
+    if (node_idx < 0)
         return -1;
-    }
 
+    /* Allocate individual pages and map + populate each one.
+     * This avoids needing contiguous physical memory, which is
+     * essential for large files (e.g. 1GB GGUF models). */
     uint64_t virt = proc->mmap_next_addr;
+
     for (uint64_t i = 0; i < num_pages; i++) {
-        uint64_t page_phys = phys + i * PAGE_SIZE;
+        uint64_t page_phys = pmm_alloc_page();
+        if (page_phys == 0) {
+            /* Cleanup: unmap and free all previously allocated pages */
+            for (uint64_t k = 0; k < i; k++) {
+                uint64_t kv = virt + k * PAGE_SIZE;
+                uint64_t *pte = vmm_get_pte(proc->cr3, kv);
+                if (pte && (*pte & PTE_PRESENT)) {
+                    uint64_t kp = *pte & PTE_ADDR_MASK;
+                    *pte = 0;
+                    pmm_free_page(kp);
+                }
+            }
+            return -1;
+        }
         uint64_t page_virt = virt + i * PAGE_SIZE;
 
         /* Copy file data into physical page via HHDM */
@@ -245,15 +254,23 @@ int64_t sys_fmmap(uint64_t fd, uint64_t a2,
 
         if (vmm_map_page_in(proc->cr3, page_virt, page_phys,
                             PTE_USER | PTE_WRITABLE | PTE_NX) != 0) {
-            for (uint64_t k = 0; k < num_pages; k++)
-                pmm_free_page(phys + k * PAGE_SIZE);
+            pmm_free_page(page_phys);
+            for (uint64_t k = 0; k < i; k++) {
+                uint64_t kv = virt + k * PAGE_SIZE;
+                uint64_t *pte = vmm_get_pte(proc->cr3, kv);
+                if (pte && (*pte & PTE_PRESENT)) {
+                    uint64_t kp = *pte & PTE_ADDR_MASK;
+                    *pte = 0;
+                    pmm_free_page(kp);
+                }
+            }
             return -1;
         }
     }
 
-    /* Record the mapping */
+    /* Record the mapping (phys_addr=0 since pages are non-contiguous) */
     proc->mmap_table[slot].virt_addr = virt;
-    proc->mmap_table[slot].phys_addr = phys;
+    proc->mmap_table[slot].phys_addr = 0;
     proc->mmap_table[slot].num_pages = (uint32_t)num_pages;
     proc->mmap_table[slot].used = 1;
     proc->mmap_table[slot].shm_id = -1;

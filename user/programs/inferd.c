@@ -126,8 +126,8 @@ static int generate_response(const char *prompt, uint32_t prompt_len,
                                           TEMPERATURE, TOP_K);
         gen_tokens[gen_count++] = tok;
 
-        /* Stop on EOS (token 0 or 2 are common EOS markers) */
-        if (tok == 0 || tok == 2) break;
+        /* Stop on EOS (token 0, 2, or vocab-specific EOS like Qwen's 151645) */
+        if (tok == 0 || tok == 2 || tok == 151643 || tok == 151645) break;
 
         logits = transformer_forward(&tf, tok);
     }
@@ -139,7 +139,7 @@ static int generate_response(const char *prompt, uint32_t prompt_len,
 }
 
 int main(int argc, char **argv) {
-    const char *model_path = "/test.gguf";
+    const char *model_path = "/model.gguf";  /* disk-backed (LimnFS), fallback to initrd */
     const char *svc_name   = "default";
     const char *sock_path  = "/tmp/inferd.sock";
     int max_requests = 0;  /* 0 = serve forever */
@@ -156,8 +156,18 @@ int main(int argc, char **argv) {
 
     /* Load model */
     if (load_model(model_path) != 0) {
-        printf("[inferd] Failed to load model: %s\n", model_path);
-        return 1;
+        /* Fallback: try /test.gguf (initrd) if /model.gguf (disk) fails */
+        if (strcmp(model_path, "/model.gguf") == 0) {
+            printf("[inferd] /model.gguf not found, trying /test.gguf...\n");
+            model_path = "/test.gguf";
+            if (load_model(model_path) != 0) {
+                printf("[inferd] Failed to load any model\n");
+                return 1;
+            }
+        } else {
+            printf("[inferd] Failed to load model: %s\n", model_path);
+            return 1;
+        }
     }
 
     /* Create and bind unix socket */

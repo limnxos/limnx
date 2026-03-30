@@ -19,10 +19,18 @@ typedef struct tf_config {
     float    rope_theta; /* 0.0 = default 10000.0 */
 } tf_config_t;
 
+/* Quantized weight descriptor — points into mmap'd GGUF data */
+typedef struct qweight {
+    const uint8_t *data;    /* raw quantized bytes (in GGUF mmap) */
+    uint32_t qtype;         /* GGML type (Q4_K=12, Q6_K=14, etc.) */
+    uint32_t rows;          /* GGUF shape[0] (output dim) */
+    uint32_t cols;          /* GGUF shape[1] (input dim) */
+} qweight_t;
+
 typedef struct transformer {
     tf_config_t cfg;
 
-    /* Weights: 1 mmap buffer + pointer views */
+    /* === F32 weights (used when quantized=0) === */
     float   *weights_buf;
     uint64_t weights_mmap_addr;
     uint32_t weights_mmap_pages;
@@ -43,6 +51,30 @@ typedef struct transformer {
     /* Per-layer pointer arrays: 1 mmap buffer */
     uint64_t ptrs_mmap_addr;
     uint32_t ptrs_mmap_pages;
+
+    /* === Quantized weights (used when quantized=1) === */
+    uint32_t quantized;         /* 0 = F32, 1 = quantized (GGUF zero-copy) */
+    uint64_t gguf_mmap_addr;    /* GGUF file mmap (kept alive for quantized data) */
+    uint32_t gguf_mmap_pages;
+
+    qweight_t  q_token_emb;     /* [vocab_size, dim] quantized */
+    qweight_t  q_wcls;          /* [vocab_size, dim] quantized */
+    qweight_t *qqwq, *qqwk, *qqwv, *qqwo;   /* per-layer quantized projections */
+    qweight_t *qqw1, *qqw2, *qqw3;           /* per-layer quantized FFN */
+
+    /* Norm weights buffer (always F32, small — allocated for quantized mode) */
+    float   *norms_buf;
+    uint64_t norms_mmap_addr;
+    uint32_t norms_mmap_pages;
+
+    /* qweight_t pointer arrays mmap */
+    uint64_t qptrs_mmap_addr;
+    uint32_t qptrs_mmap_pages;
+
+    /* Dequant scratch: one row at a time */
+    float   *dq_row;            /* max(dim, hidden_dim, vocab_size) floats */
+    uint64_t dq_mmap_addr;
+    uint32_t dq_mmap_pages;
 
     /* KV cache: 1 mmap buffer */
     float   *kv_buf;
@@ -70,6 +102,7 @@ typedef struct transformer {
 
 int      transformer_init(transformer_t *tf, const tf_config_t *cfg,
                            uint32_t seed);
+int      transformer_init_quantized(transformer_t *tf, const tf_config_t *cfg);
 void     transformer_destroy(transformer_t *tf);
 float   *transformer_forward(transformer_t *tf, uint32_t token);
 uint32_t transformer_generate(transformer_t *tf, uint32_t start_token,

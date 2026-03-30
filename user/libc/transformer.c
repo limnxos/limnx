@@ -37,6 +37,52 @@ static void softmax_cpu(float *x, uint32_t size) {
         x[i] /= sum;
 }
 
+/* --- Quantized matmul: dequantize one row at a time --- */
+
+static void matmul_q_cpu(float *out, const float *x, const qweight_t *qw,
+                         float *dq_row) {
+    /*
+     * qw->data is [rows, cols] in quantized format (row-major blocks).
+     * We compute: out[j] = sum_i(x[i] * W[i,j]) where W is [cols, rows]
+     * But GGUF stores weights as [rows, cols] and we need W transposed.
+     *
+     * Strategy: for each output element j (0..rows-1), dequantize row j
+     * of qw (which is qw->cols elements), then dot with x.
+     */
+    uint32_t block_size, block_bytes;
+    if (dequant_block_info(qw->qtype, &block_size, &block_bytes) != 0)
+        return;
+
+    uint32_t cols = qw->cols;
+    uint32_t rows = qw->rows;
+    uint32_t blocks_per_row = cols / block_size;
+    uint32_t row_bytes = blocks_per_row * block_bytes;
+
+    for (uint32_t j = 0; j < rows; j++) {
+        const uint8_t *row_data = qw->data + (uint64_t)j * row_bytes;
+        dequant(row_data, dq_row, cols, qw->qtype);
+
+        float sum = 0.0f;
+        for (uint32_t i = 0; i < cols; i++)
+            sum += x[i] * dq_row[i];
+        out[j] = sum;
+    }
+}
+
+/* Quantized embedding lookup: dequantize one row (the token's embedding) */
+static void embed_q(float *out, const qweight_t *qw, uint32_t token,
+                    float *dq_row) {
+    uint32_t block_size, block_bytes;
+    if (dequant_block_info(qw->qtype, &block_size, &block_bytes) != 0)
+        return;
+
+    uint32_t cols = qw->cols;
+    uint32_t blocks_per_row = cols / block_size;
+    uint32_t row_bytes = blocks_per_row * block_bytes;
+    const uint8_t *row_data = qw->data + (uint64_t)token * row_bytes;
+    dequant(row_data, out, cols, qw->qtype);
+}
+
 /* --- Accelerated wrappers (try GPU/TPU, fall back to CPU) --- */
 
 static void rms_norm(float *out, const float *x, const float *weight,
@@ -282,6 +328,172 @@ int transformer_init(transformer_t *tf, const tf_config_t *cfg,
     return 0;
 }
 
+/* --- Quantized init (no F32 weight buffer — only norms, KV, scratch) --- */
+
+int transformer_init_quantized(transformer_t *tf, const tf_config_t *cfg) {
+    if (cfg->dim == 0 || cfg->hidden_dim == 0 || cfg->n_heads == 0 ||
+        cfg->n_layers == 0 || cfg->vocab_size == 0 || cfg->max_seq_len == 0)
+        return -1;
+    if (cfg->dim % cfg->n_heads != 0)
+        return -1;
+
+    memset(tf, 0, sizeof(*tf));
+    tf->cfg = *cfg;
+    tf->pos = 0;
+    tf->quantized = 1;
+
+    uint64_t dim = cfg->dim;
+    uint64_t hdim = cfg->hidden_dim;
+    uint64_t nl = cfg->n_layers;
+    uint64_t vs = cfg->vocab_size;
+    uint64_t head_dim = dim / cfg->n_heads;
+    uint64_t kv_heads = (cfg->n_kv_heads > 0) ? cfg->n_kv_heads : cfg->n_heads;
+    uint64_t kv_dim = kv_heads * head_dim;
+
+    /* --- Norm weights buffer (always F32, relatively small) --- */
+    uint64_t norm_count = nl * dim           /* rms_att_w */
+                        + nl * dim           /* rms_ffn_w */
+                        + dim;               /* rms_final_w */
+    if (cfg->qk_norm)
+        norm_count += nl * head_dim * 2;     /* wq_norm + wk_norm */
+    uint64_t norm_bytes = norm_count * sizeof(float);
+    tf->norms_mmap_pages = (norm_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    long addr = sys_mmap(tf->norms_mmap_pages);
+    if (addr <= 0) return -1;
+    tf->norms_mmap_addr = (uint64_t)addr;
+    tf->norms_buf = (float *)addr;
+
+    /* Assign norm pointer views */
+    float *p = tf->norms_buf;
+
+    /* We reuse the same pointer arrays as F32 mode for norms */
+    /* Need per-layer pointer arrays for norms */
+    uint64_t n_norm_arrays = 2;  /* rms_att_w, rms_ffn_w */
+    if (cfg->qk_norm) n_norm_arrays += 2;
+    uint64_t ptrs_size = n_norm_arrays * nl * sizeof(float *);
+    tf->ptrs_mmap_pages = (ptrs_size + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    addr = sys_mmap(tf->ptrs_mmap_pages);
+    if (addr <= 0) goto fail_norms;
+    tf->ptrs_mmap_addr = (uint64_t)addr;
+
+    float **base = (float **)addr;
+    tf->rms_att_w = base;  base += nl;
+    tf->rms_ffn_w = base;  base += nl;
+    if (cfg->qk_norm) {
+        tf->wq_norm = base;  base += nl;
+        tf->wk_norm = base;  base += nl;
+    }
+
+    for (uint64_t l = 0; l < nl; l++) {
+        tf->rms_att_w[l] = p;  p += dim;
+    }
+    for (uint64_t l = 0; l < nl; l++) {
+        tf->rms_ffn_w[l] = p;  p += dim;
+    }
+    tf->rms_final_w = p;  p += dim;
+    if (cfg->qk_norm) {
+        for (uint64_t l = 0; l < nl; l++) {
+            tf->wq_norm[l] = p;  p += head_dim;
+        }
+        for (uint64_t l = 0; l < nl; l++) {
+            tf->wk_norm[l] = p;  p += head_dim;
+        }
+    }
+
+    /* --- qweight_t pointer arrays for per-layer quantized weights --- */
+    uint64_t n_qw_arrays = 4;  /* wq, wk, wv, wo */
+    if (cfg->swiglu) n_qw_arrays += 3;  /* w1, w2, w3 */
+    else n_qw_arrays += 2;              /* w1, w2 */
+    uint64_t qptrs_size = n_qw_arrays * nl * sizeof(qweight_t);
+    tf->qptrs_mmap_pages = (qptrs_size + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    addr = sys_mmap(tf->qptrs_mmap_pages);
+    if (addr <= 0) goto fail_ptrs;
+    tf->qptrs_mmap_addr = (uint64_t)addr;
+
+    qweight_t *qbase = (qweight_t *)addr;
+    tf->qqwq = qbase;  qbase += nl;
+    tf->qqwk = qbase;  qbase += nl;
+    tf->qqwv = qbase;  qbase += nl;
+    tf->qqwo = qbase;  qbase += nl;
+    tf->qqw1 = qbase;  qbase += nl;
+    tf->qqw2 = qbase;  qbase += nl;
+    if (cfg->swiglu) {
+        tf->qqw3 = qbase;  qbase += nl;
+    } else {
+        tf->qqw3 = NULL;
+    }
+
+    /* --- KV cache buffer (same as F32 mode, but cap seq_len) --- */
+    uint64_t kv_count = 2 * nl * cfg->max_seq_len * kv_dim;
+    uint64_t kv_bytes = kv_count * sizeof(float);
+    tf->kv_mmap_pages = (kv_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    addr = sys_mmap(tf->kv_mmap_pages);
+    if (addr <= 0) goto fail_qptrs;
+    tf->kv_mmap_addr = (uint64_t)addr;
+    tf->kv_buf = (float *)addr;
+    tf->key_cache = tf->kv_buf;
+    tf->value_cache = tf->kv_buf + nl * cfg->max_seq_len * kv_dim;
+    memset(tf->kv_buf, 0, kv_bytes);
+
+    /* --- Scratch buffer --- */
+    uint64_t scratch_count = 5 * dim + hdim + cfg->max_seq_len + vs;
+    if (cfg->swiglu)
+        scratch_count += hdim;
+    uint64_t scratch_bytes = scratch_count * sizeof(float);
+    tf->scratch_mmap_pages = (scratch_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    addr = sys_mmap(tf->scratch_mmap_pages);
+    if (addr <= 0) goto fail_kv;
+    tf->scratch_mmap_addr = (uint64_t)addr;
+    tf->scratch_buf = (float *)addr;
+
+    float *s = tf->scratch_buf;
+    tf->x      = s;  s += dim;
+    tf->xb     = s;  s += dim;
+    tf->xb2    = s;  s += dim;
+    tf->q      = s;  s += dim;
+    tf->k      = s;  s += dim;
+    tf->hb     = s;  s += hdim;
+    if (cfg->swiglu) {
+        tf->hb2 = s;  s += hdim;
+    } else {
+        tf->hb2 = NULL;
+    }
+    tf->att    = s;  s += cfg->max_seq_len;
+    tf->logits = s;
+    memset(tf->scratch_buf, 0, scratch_bytes);
+
+    /* --- Dequant row scratch (largest row: max of dim, hdim, vocab_size) --- */
+    uint64_t dq_size = dim;
+    if (hdim > dq_size) dq_size = hdim;
+    if (vs > dq_size) dq_size = vs;
+    uint64_t dq_bytes = dq_size * sizeof(float);
+    tf->dq_mmap_pages = (dq_bytes + PAGE_SIZE - 1) / PAGE_SIZE;
+
+    addr = sys_mmap(tf->dq_mmap_pages);
+    if (addr <= 0) goto fail_scratch;
+    tf->dq_mmap_addr = (uint64_t)addr;
+    tf->dq_row = (float *)addr;
+
+    return 0;
+
+fail_scratch:
+    sys_munmap(tf->scratch_mmap_addr);
+fail_kv:
+    sys_munmap(tf->kv_mmap_addr);
+fail_qptrs:
+    sys_munmap(tf->qptrs_mmap_addr);
+fail_ptrs:
+    sys_munmap(tf->ptrs_mmap_addr);
+fail_norms:
+    sys_munmap(tf->norms_mmap_addr);
+    return -1;
+}
+
 /* --- Destroy --- */
 
 void transformer_destroy(transformer_t *tf) {
@@ -301,6 +513,23 @@ void transformer_destroy(transformer_t *tf) {
         sys_munmap(tf->weights_mmap_addr);
         tf->weights_mmap_addr = 0;
     }
+    /* Quantized mode cleanup */
+    if (tf->dq_mmap_addr) {
+        sys_munmap(tf->dq_mmap_addr);
+        tf->dq_mmap_addr = 0;
+    }
+    if (tf->qptrs_mmap_addr) {
+        sys_munmap(tf->qptrs_mmap_addr);
+        tf->qptrs_mmap_addr = 0;
+    }
+    if (tf->norms_mmap_addr) {
+        sys_munmap(tf->norms_mmap_addr);
+        tf->norms_mmap_addr = 0;
+    }
+    if (tf->gguf_mmap_addr) {
+        sys_munmap(tf->gguf_mmap_addr);
+        tf->gguf_mmap_addr = 0;
+    }
 }
 
 /* --- Forward pass --- */
@@ -319,9 +548,13 @@ float *transformer_forward(transformer_t *tf, uint32_t token) {
     float theta = (tf->cfg.rope_theta > 0.0f) ? tf->cfg.rope_theta : 10000.0f;
 
     /* 1. Copy token embedding into x */
-    float *emb = tf->token_emb + token * dim;
-    for (uint32_t i = 0; i < dim; i++)
-        tf->x[i] = emb[i];
+    if (tf->quantized) {
+        embed_q(tf->x, &tf->q_token_emb, token, tf->dq_row);
+    } else {
+        float *emb = tf->token_emb + token * dim;
+        for (uint32_t i = 0; i < dim; i++)
+            tf->x[i] = emb[i];
+    }
 
     /* 2. For each layer */
     for (uint32_t l = 0; l < nl; l++) {
@@ -329,13 +562,21 @@ float *transformer_forward(transformer_t *tf, uint32_t token) {
         rms_norm(tf->xb, tf->x, tf->rms_att_w[l], dim);
 
         /* Q projection (always full dim) */
-        matmul(tf->q, tf->xb, tf->wq[l], dim, dim);
+        if (tf->quantized)
+            matmul_q_cpu(tf->q, tf->xb, &tf->qqwq[l], tf->dq_row);
+        else
+            matmul(tf->q, tf->xb, tf->wq[l], dim, dim);
 
         /* K, V projections into scratch then copy to cache */
         float *k_cache_l = tf->key_cache + l * seq_len * kv_dim + pos * kv_dim;
         float *v_cache_l = tf->value_cache + l * seq_len * kv_dim + pos * kv_dim;
-        matmul(tf->k, tf->xb, tf->wk[l], dim, kv_dim);
-        matmul(v_cache_l, tf->xb, tf->wv[l], dim, kv_dim);
+        if (tf->quantized) {
+            matmul_q_cpu(tf->k, tf->xb, &tf->qqwk[l], tf->dq_row);
+            matmul_q_cpu(v_cache_l, tf->xb, &tf->qqwv[l], tf->dq_row);
+        } else {
+            matmul(tf->k, tf->xb, tf->wk[l], dim, kv_dim);
+            matmul(v_cache_l, tf->xb, tf->wv[l], dim, kv_dim);
+        }
 
         /* QK-norm: per-head RMS norm on Q and K before RoPE */
         if (tf->cfg.qk_norm) {
@@ -387,7 +628,10 @@ float *transformer_forward(transformer_t *tf, uint32_t token) {
         }
 
         /* Output projection + residual */
-        matmul(tf->xb2, tf->xb, tf->wo[l], dim, dim);
+        if (tf->quantized)
+            matmul_q_cpu(tf->xb2, tf->xb, &tf->qqwo[l], tf->dq_row);
+        else
+            matmul(tf->xb2, tf->xb, tf->wo[l], dim, dim);
         for (uint32_t i = 0; i < dim; i++)
             tf->x[i] += tf->xb2[i];
 
@@ -397,18 +641,32 @@ float *transformer_forward(transformer_t *tf, uint32_t token) {
         /* FFN */
         if (tf->cfg.swiglu) {
             /* SwiGLU: hb = SiLU(W1(x)) * W3(x), then W2(hb) */
-            matmul(tf->hb, tf->xb, tf->w1[l], dim, hdim);
-            matmul(tf->hb2, tf->xb, tf->w3[l], dim, hdim);
+            if (tf->quantized) {
+                matmul_q_cpu(tf->hb, tf->xb, &tf->qqw1[l], tf->dq_row);
+                matmul_q_cpu(tf->hb2, tf->xb, &tf->qqw3[l], tf->dq_row);
+            } else {
+                matmul(tf->hb, tf->xb, tf->w1[l], dim, hdim);
+                matmul(tf->hb2, tf->xb, tf->w3[l], dim, hdim);
+            }
             for (uint32_t i = 0; i < hdim; i++)
                 tf->hb[i] = (tf->hb[i] * sigmoidf(tf->hb[i])) * tf->hb2[i];
-            matmul(tf->xb2, tf->hb, tf->w2[l], hdim, dim);
+            if (tf->quantized)
+                matmul_q_cpu(tf->xb2, tf->hb, &tf->qqw2[l], tf->dq_row);
+            else
+                matmul(tf->xb2, tf->hb, tf->w2[l], hdim, dim);
         } else {
             /* ReLU: W1 -> ReLU -> W2 */
-            matmul(tf->hb, tf->xb, tf->w1[l], dim, hdim);
+            if (tf->quantized)
+                matmul_q_cpu(tf->hb, tf->xb, &tf->qqw1[l], tf->dq_row);
+            else
+                matmul(tf->hb, tf->xb, tf->w1[l], dim, hdim);
             for (uint32_t i = 0; i < hdim; i++)
                 if (tf->hb[i] < 0.0f)
                     tf->hb[i] = 0.0f;
-            matmul(tf->xb2, tf->hb, tf->w2[l], hdim, dim);
+            if (tf->quantized)
+                matmul_q_cpu(tf->xb2, tf->hb, &tf->qqw2[l], tf->dq_row);
+            else
+                matmul(tf->xb2, tf->hb, tf->w2[l], hdim, dim);
         }
 
         /* Residual */
@@ -420,7 +678,10 @@ float *transformer_forward(transformer_t *tf, uint32_t token) {
     rms_norm(tf->x, tf->x, tf->rms_final_w, dim);
 
     /* 4. Classifier: logits = x @ wcls */
-    matmul(tf->logits, tf->x, tf->wcls, dim, tf->cfg.vocab_size);
+    if (tf->quantized)
+        matmul_q_cpu(tf->logits, tf->x, &tf->q_wcls, tf->dq_row);
+    else
+        matmul(tf->logits, tf->x, tf->wcls, dim, tf->cfg.vocab_size);
 
     /* 5. Increment position */
     tf->pos++;

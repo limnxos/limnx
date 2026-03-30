@@ -147,18 +147,27 @@ int gguf_load(const char *path, transformer_t *tf, tf_config_t *cfg,
               bpe_tokenizer_t *bpe) {
     /* Open and mmap the file */
     long fd = sys_open(path, O_RDONLY);
-    if (fd < 0) return -1;
+    if (fd < 0) {
+        printf("[gguf] open(%s) failed: %ld\n", path, fd);
+        return -1;
+    }
+
+    /* Get file size first */
+    struct linux_stat st;
+    if (sys_stat(path, &st) != 0) {
+        printf("[gguf] stat(%s) failed\n", path);
+        sys_close(fd);
+        return -1;
+    }
+    printf("[gguf] %s: size=%lu bytes\n", path, (unsigned long)st.st_size);
 
     long map_addr = sys_fmmap(fd);
     sys_close(fd);
-    if (map_addr <= 0) return -1;
-
-    /* Get file size via stat (uses Linux-compatible 144/128-byte struct) */
-    struct linux_stat st;
-    if (sys_stat(path, &st) != 0) {
-        sys_munmap((uint64_t)map_addr);
+    if (map_addr <= 0) {
+        printf("[gguf] fmmap failed: %ld\n", map_addr);
         return -1;
     }
+    printf("[gguf] mmap at 0x%lx\n", (unsigned long)map_addr);
 
     gguf_reader_t reader = { .base = (const uint8_t *)map_addr, .size = (uint64_t)st.st_size, .pos = 0 };
     gguf_reader_t *r = &reader;
@@ -371,135 +380,272 @@ int gguf_load(const char *path, transformer_t *tf, tf_config_t *cfg,
     uint32_t kv_heads = (cfg->n_kv_heads > 0) ? cfg->n_kv_heads : cfg->n_heads;
     uint32_t kv_dim = kv_heads * head_dim;
 
-    /* Initialize transformer */
-    if (transformer_init(tf, cfg, 0) != 0) {
-        sys_munmap((uint64_t)tensors_addr);
-        goto fail;
-    }
-
-    /* Allocate a temporary buffer for dequantization + transpose
-     * (max of all weight sizes in F32) */
-    uint64_t max_weight_size = (uint64_t)cfg->dim * cfg->vocab_size;
-    uint64_t tmp = (uint64_t)cfg->dim * cfg->hidden_dim;
-    if (tmp > max_weight_size) max_weight_size = tmp;
-    tmp = (uint64_t)cfg->dim * cfg->dim;
-    if (tmp > max_weight_size) max_weight_size = tmp;
-    /* Need 2x for dequant buffer + transpose buffer */
-    uint32_t temp_pages = (uint32_t)((max_weight_size * 4 * 2 + PAGE_SIZE - 1) / PAGE_SIZE);
-    long temp_addr = sys_mmap(temp_pages);
-    if (temp_addr <= 0) {
-        transformer_destroy(tf);
-        sys_munmap((uint64_t)tensors_addr);
-        goto fail;
-    }
-    float *dequant_buf = (float *)temp_addr;
-
-    /* Copy tensor data into transformer weight buffers */
+    /* Detect if model has quantized 2D tensors */
+    int has_quantized = 0;
     for (uint64_t t = 0; t < n_tensors; t++) {
-        const uint8_t *raw = r->base + data_start + tensors[t].offset;
-        const char *name = tensors[t].name;
-        uint32_t ttype = tensors[t].type;
-
-        /* Compute element count */
-        uint64_t n_elements = 1;
-        for (uint32_t d = 0; d < tensors[t].n_dims; d++)
-            n_elements *= tensors[t].shape[d];
-
-        /* Dequantize to F32 if needed */
-        const float *src_f32;
-        if (ttype == GGML_TYPE_F32) {
-            src_f32 = (const float *)raw;
-        } else {
-            if (dequant(raw, dequant_buf, n_elements, ttype) != 0)
-                continue;  /* skip unsupported types */
-            src_f32 = dequant_buf;
-        }
-
-        /* token_embd.weight → token_emb [vocab_size, dim] — NO transpose */
-        if (strcmp(name, "token_embd.weight") == 0) {
-            memcpy(tf->token_emb, src_f32, (uint64_t)cfg->vocab_size * cfg->dim * 4);
-            continue;
-        }
-
-        /* output.weight → wcls [vocab_size, dim] → transpose to [dim, vocab_size] */
-        if (strcmp(name, "output.weight") == 0) {
-            transpose_f32(tf->wcls, src_f32, cfg->vocab_size, cfg->dim);
-            continue;
-        }
-
-        /* output_norm.weight → rms_final_w [dim] */
-        if (strcmp(name, "output_norm.weight") == 0) {
-            memcpy(tf->rms_final_w, src_f32, (uint64_t)cfg->dim * 4);
-            continue;
-        }
-
-        /* Per-layer tensors: blk.N.xxx */
-        if (strncmp(name, "blk.", 4) != 0) continue;
-
-        /* Parse layer number */
-        uint32_t layer = 0;
-        uint32_t ni = 4;
-        while (name[ni] >= '0' && name[ni] <= '9') {
-            layer = layer * 10 + (name[ni] - '0');
-            ni++;
-        }
-        if (name[ni] != '.') continue;
-        ni++; /* skip '.' */
-        const char *tsuffix = &name[ni];
-
-        if (layer >= cfg->n_layers) continue;
-
-        /* attn_norm.weight → rms_att_w[layer] [dim] */
-        if (strcmp(tsuffix, "attn_norm.weight") == 0) {
-            memcpy(tf->rms_att_w[layer], src_f32, (uint64_t)cfg->dim * 4);
-        }
-        /* ffn_norm.weight → rms_ffn_w[layer] [dim] */
-        else if (strcmp(tsuffix, "ffn_norm.weight") == 0) {
-            memcpy(tf->rms_ffn_w[layer], src_f32, (uint64_t)cfg->dim * 4);
-        }
-        /* attn_q.weight → wq[layer] [dim, dim] → transpose */
-        else if (strcmp(tsuffix, "attn_q.weight") == 0) {
-            transpose_f32(tf->wq[layer], src_f32, cfg->dim, cfg->dim);
-        }
-        /* attn_k.weight → wk[layer] [kv_dim, dim] → transpose to [dim, kv_dim] */
-        else if (strcmp(tsuffix, "attn_k.weight") == 0) {
-            transpose_f32(tf->wk[layer], src_f32, kv_dim, cfg->dim);
-        }
-        /* attn_v.weight → wv[layer] [kv_dim, dim] → transpose to [dim, kv_dim] */
-        else if (strcmp(tsuffix, "attn_v.weight") == 0) {
-            transpose_f32(tf->wv[layer], src_f32, kv_dim, cfg->dim);
-        }
-        /* attn_output.weight → wo[layer] [dim, dim] → transpose */
-        else if (strcmp(tsuffix, "attn_output.weight") == 0) {
-            transpose_f32(tf->wo[layer], src_f32, cfg->dim, cfg->dim);
-        }
-        /* ffn_gate.weight → w1[layer] [hidden_dim, dim] → transpose to [dim, hidden_dim] */
-        else if (strcmp(tsuffix, "ffn_gate.weight") == 0) {
-            transpose_f32(tf->w1[layer], src_f32, cfg->hidden_dim, cfg->dim);
-        }
-        /* ffn_down.weight → w2[layer] [dim, hidden_dim] → transpose to [hidden_dim, dim] */
-        else if (strcmp(tsuffix, "ffn_down.weight") == 0) {
-            transpose_f32(tf->w2[layer], src_f32, cfg->dim, cfg->hidden_dim);
-        }
-        /* ffn_up.weight → w3[layer] [hidden_dim, dim] → transpose to [dim, hidden_dim] */
-        else if (strcmp(tsuffix, "ffn_up.weight") == 0 && tf->w3) {
-            transpose_f32(tf->w3[layer], src_f32, cfg->hidden_dim, cfg->dim);
-        }
-        /* attn_q_norm.weight → wq_norm[layer] [head_dim] */
-        else if (strcmp(tsuffix, "attn_q_norm.weight") == 0 && tf->wq_norm) {
-            memcpy(tf->wq_norm[layer], src_f32, (uint64_t)head_dim * 4);
-        }
-        /* attn_k_norm.weight → wk_norm[layer] [head_dim] */
-        else if (strcmp(tsuffix, "attn_k_norm.weight") == 0 && tf->wk_norm) {
-            memcpy(tf->wk_norm[layer], src_f32, (uint64_t)head_dim * 4);
+        if (tensors[t].n_dims >= 2 && tensors[t].type != GGML_TYPE_F32) {
+            has_quantized = 1;
+            break;
         }
     }
 
-    /* Cleanup */
-    sys_munmap((uint64_t)temp_addr);
-    sys_munmap((uint64_t)tensors_addr);
-    sys_munmap((uint64_t)map_addr);
-    return 0;
+    if (has_quantized) {
+        /* === QUANTIZED PATH: zero-copy, keep GGUF mmap alive === */
+
+        /* Cap max_seq_len for memory savings (KV cache) */
+        if (cfg->max_seq_len > 512)
+            cfg->max_seq_len = 512;
+
+        if (transformer_init_quantized(tf, cfg) != 0) {
+            sys_munmap((uint64_t)tensors_addr);
+            goto fail;
+        }
+
+        /* Store GGUF mmap in transformer for lifetime management */
+        tf->gguf_mmap_addr = (uint64_t)map_addr;
+        /* (pages computed from file size) */
+        tf->gguf_mmap_pages = (uint32_t)(((uint64_t)st.st_size + PAGE_SIZE - 1) / PAGE_SIZE);
+
+        /* Small temp buffer for dequanting 1D norm weights */
+        uint64_t max_norm_size = cfg->dim;
+        if (head_dim > max_norm_size) max_norm_size = head_dim;
+        uint32_t norm_temp_pages = (uint32_t)((max_norm_size * 4 + PAGE_SIZE - 1) / PAGE_SIZE);
+        long norm_temp_addr = sys_mmap(norm_temp_pages);
+        float *norm_dq = (norm_temp_addr > 0) ? (float *)norm_temp_addr : NULL;
+
+        int found_output = 0;
+
+        for (uint64_t t = 0; t < n_tensors; t++) {
+            const uint8_t *raw = r->base + data_start + tensors[t].offset;
+            const char *name = tensors[t].name;
+            uint32_t ttype = tensors[t].type;
+            uint32_t ndims = tensors[t].n_dims;
+
+            /* For 2D weight tensors: store qweight_t pointer */
+            if (ndims >= 2) {
+                qweight_t qw;
+                qw.data = raw;
+                qw.qtype = ttype;
+                qw.rows = (uint32_t)tensors[t].shape[0];
+                qw.cols = (uint32_t)tensors[t].shape[1];
+
+                if (strcmp(name, "token_embd.weight") == 0) {
+                    tf->q_token_emb = qw;
+                } else if (strcmp(name, "output.weight") == 0) {
+                    tf->q_wcls = qw;
+                    found_output = 1;
+                } else if (strncmp(name, "blk.", 4) == 0) {
+                    uint32_t layer = 0;
+                    uint32_t ni = 4;
+                    while (name[ni] >= '0' && name[ni] <= '9') {
+                        layer = layer * 10 + (name[ni] - '0');
+                        ni++;
+                    }
+                    if (name[ni] != '.' || layer >= cfg->n_layers) continue;
+                    ni++;
+                    const char *tsuffix = &name[ni];
+
+                    if (strcmp(tsuffix, "attn_q.weight") == 0)
+                        tf->qqwq[layer] = qw;
+                    else if (strcmp(tsuffix, "attn_k.weight") == 0)
+                        tf->qqwk[layer] = qw;
+                    else if (strcmp(tsuffix, "attn_v.weight") == 0)
+                        tf->qqwv[layer] = qw;
+                    else if (strcmp(tsuffix, "attn_output.weight") == 0)
+                        tf->qqwo[layer] = qw;
+                    else if (strcmp(tsuffix, "ffn_gate.weight") == 0)
+                        tf->qqw1[layer] = qw;
+                    else if (strcmp(tsuffix, "ffn_down.weight") == 0)
+                        tf->qqw2[layer] = qw;
+                    else if (strcmp(tsuffix, "ffn_up.weight") == 0 && tf->qqw3)
+                        tf->qqw3[layer] = qw;
+                }
+                continue;
+            }
+
+            /* For 1D norm tensors: dequantize to F32 */
+            uint64_t n_elements = 1;
+            for (uint32_t d = 0; d < ndims; d++)
+                n_elements *= tensors[t].shape[d];
+
+            const float *src_f32;
+            if (ttype == GGML_TYPE_F32) {
+                src_f32 = (const float *)raw;
+            } else if (norm_dq) {
+                if (dequant(raw, norm_dq, n_elements, ttype) != 0)
+                    continue;
+                src_f32 = norm_dq;
+            } else {
+                continue;
+            }
+
+            if (strcmp(name, "output_norm.weight") == 0) {
+                memcpy(tf->rms_final_w, src_f32, (uint64_t)cfg->dim * 4);
+            } else if (strncmp(name, "blk.", 4) == 0) {
+                uint32_t layer = 0;
+                uint32_t ni = 4;
+                while (name[ni] >= '0' && name[ni] <= '9') {
+                    layer = layer * 10 + (name[ni] - '0');
+                    ni++;
+                }
+                if (name[ni] != '.' || layer >= cfg->n_layers) continue;
+                ni++;
+                const char *tsuffix = &name[ni];
+
+                if (strcmp(tsuffix, "attn_norm.weight") == 0)
+                    memcpy(tf->rms_att_w[layer], src_f32, (uint64_t)cfg->dim * 4);
+                else if (strcmp(tsuffix, "ffn_norm.weight") == 0)
+                    memcpy(tf->rms_ffn_w[layer], src_f32, (uint64_t)cfg->dim * 4);
+                else if (strcmp(tsuffix, "attn_q_norm.weight") == 0 && tf->wq_norm)
+                    memcpy(tf->wq_norm[layer], src_f32, (uint64_t)head_dim * 4);
+                else if (strcmp(tsuffix, "attn_k_norm.weight") == 0 && tf->wk_norm)
+                    memcpy(tf->wk_norm[layer], src_f32, (uint64_t)head_dim * 4);
+            }
+        }
+
+        /* Weight tying: if output.weight missing, share with token_embd */
+        if (!found_output)
+            tf->q_wcls = tf->q_token_emb;
+
+        if (norm_temp_addr > 0)
+            sys_munmap((uint64_t)norm_temp_addr);
+        sys_munmap((uint64_t)tensors_addr);
+        /* DO NOT munmap map_addr — quantized data points into it */
+        return 0;
+
+    } else {
+        /* === F32 PATH: dequantize everything (existing behavior) === */
+
+        /* Initialize transformer */
+        if (transformer_init(tf, cfg, 0) != 0) {
+            sys_munmap((uint64_t)tensors_addr);
+            goto fail;
+        }
+
+        /* Allocate a temporary buffer for dequantization + transpose
+         * (max of all weight sizes in F32) */
+        uint64_t max_weight_size = (uint64_t)cfg->dim * cfg->vocab_size;
+        uint64_t tmp = (uint64_t)cfg->dim * cfg->hidden_dim;
+        if (tmp > max_weight_size) max_weight_size = tmp;
+        tmp = (uint64_t)cfg->dim * cfg->dim;
+        if (tmp > max_weight_size) max_weight_size = tmp;
+        /* Need 2x for dequant buffer + transpose buffer */
+        uint32_t temp_pages = (uint32_t)((max_weight_size * 4 * 2 + PAGE_SIZE - 1) / PAGE_SIZE);
+        long temp_addr = sys_mmap(temp_pages);
+        if (temp_addr <= 0) {
+            transformer_destroy(tf);
+            sys_munmap((uint64_t)tensors_addr);
+            goto fail;
+        }
+        float *dequant_buf = (float *)temp_addr;
+
+        /* Copy tensor data into transformer weight buffers */
+        for (uint64_t t = 0; t < n_tensors; t++) {
+            const uint8_t *raw = r->base + data_start + tensors[t].offset;
+            const char *name = tensors[t].name;
+            uint32_t ttype = tensors[t].type;
+
+            /* Compute element count */
+            uint64_t n_elements = 1;
+            for (uint32_t d = 0; d < tensors[t].n_dims; d++)
+                n_elements *= tensors[t].shape[d];
+
+            /* Dequantize to F32 if needed */
+            const float *src_f32;
+            if (ttype == GGML_TYPE_F32) {
+                src_f32 = (const float *)raw;
+            } else {
+                if (dequant(raw, dequant_buf, n_elements, ttype) != 0)
+                    continue;  /* skip unsupported types */
+                src_f32 = dequant_buf;
+            }
+
+            /* token_embd.weight → token_emb [vocab_size, dim] — NO transpose */
+            if (strcmp(name, "token_embd.weight") == 0) {
+                memcpy(tf->token_emb, src_f32, (uint64_t)cfg->vocab_size * cfg->dim * 4);
+                continue;
+            }
+
+            /* output.weight → wcls [vocab_size, dim] → transpose to [dim, vocab_size] */
+            if (strcmp(name, "output.weight") == 0) {
+                transpose_f32(tf->wcls, src_f32, cfg->vocab_size, cfg->dim);
+                continue;
+            }
+
+            /* output_norm.weight → rms_final_w [dim] */
+            if (strcmp(name, "output_norm.weight") == 0) {
+                memcpy(tf->rms_final_w, src_f32, (uint64_t)cfg->dim * 4);
+                continue;
+            }
+
+            /* Per-layer tensors: blk.N.xxx */
+            if (strncmp(name, "blk.", 4) != 0) continue;
+
+            /* Parse layer number */
+            uint32_t layer = 0;
+            uint32_t ni = 4;
+            while (name[ni] >= '0' && name[ni] <= '9') {
+                layer = layer * 10 + (name[ni] - '0');
+                ni++;
+            }
+            if (name[ni] != '.') continue;
+            ni++; /* skip '.' */
+            const char *tsuffix = &name[ni];
+
+            if (layer >= cfg->n_layers) continue;
+
+            /* attn_norm.weight → rms_att_w[layer] [dim] */
+            if (strcmp(tsuffix, "attn_norm.weight") == 0) {
+                memcpy(tf->rms_att_w[layer], src_f32, (uint64_t)cfg->dim * 4);
+            }
+            /* ffn_norm.weight → rms_ffn_w[layer] [dim] */
+            else if (strcmp(tsuffix, "ffn_norm.weight") == 0) {
+                memcpy(tf->rms_ffn_w[layer], src_f32, (uint64_t)cfg->dim * 4);
+            }
+            /* attn_q.weight → wq[layer] [dim, dim] → transpose */
+            else if (strcmp(tsuffix, "attn_q.weight") == 0) {
+                transpose_f32(tf->wq[layer], src_f32, cfg->dim, cfg->dim);
+            }
+            /* attn_k.weight → wk[layer] [kv_dim, dim] → transpose to [dim, kv_dim] */
+            else if (strcmp(tsuffix, "attn_k.weight") == 0) {
+                transpose_f32(tf->wk[layer], src_f32, kv_dim, cfg->dim);
+            }
+            /* attn_v.weight → wv[layer] [kv_dim, dim] → transpose to [dim, kv_dim] */
+            else if (strcmp(tsuffix, "attn_v.weight") == 0) {
+                transpose_f32(tf->wv[layer], src_f32, kv_dim, cfg->dim);
+            }
+            /* attn_output.weight → wo[layer] [dim, dim] → transpose */
+            else if (strcmp(tsuffix, "attn_output.weight") == 0) {
+                transpose_f32(tf->wo[layer], src_f32, cfg->dim, cfg->dim);
+            }
+            /* ffn_gate.weight → w1[layer] [hidden_dim, dim] → transpose to [dim, hidden_dim] */
+            else if (strcmp(tsuffix, "ffn_gate.weight") == 0) {
+                transpose_f32(tf->w1[layer], src_f32, cfg->hidden_dim, cfg->dim);
+            }
+            /* ffn_down.weight → w2[layer] [dim, hidden_dim] → transpose to [hidden_dim, dim] */
+            else if (strcmp(tsuffix, "ffn_down.weight") == 0) {
+                transpose_f32(tf->w2[layer], src_f32, cfg->dim, cfg->hidden_dim);
+            }
+            /* ffn_up.weight → w3[layer] [hidden_dim, dim] → transpose to [dim, hidden_dim] */
+            else if (strcmp(tsuffix, "ffn_up.weight") == 0 && tf->w3) {
+                transpose_f32(tf->w3[layer], src_f32, cfg->hidden_dim, cfg->dim);
+            }
+            /* attn_q_norm.weight → wq_norm[layer] [head_dim] */
+            else if (strcmp(tsuffix, "attn_q_norm.weight") == 0 && tf->wq_norm) {
+                memcpy(tf->wq_norm[layer], src_f32, (uint64_t)head_dim * 4);
+            }
+            /* attn_k_norm.weight → wk_norm[layer] [head_dim] */
+            else if (strcmp(tsuffix, "attn_k_norm.weight") == 0 && tf->wk_norm) {
+                memcpy(tf->wk_norm[layer], src_f32, (uint64_t)head_dim * 4);
+            }
+        }
+
+        /* Cleanup */
+        sys_munmap((uint64_t)temp_addr);
+        sys_munmap((uint64_t)tensors_addr);
+        sys_munmap((uint64_t)map_addr);
+        return 0;
+    }
 
 fail:
     sys_munmap((uint64_t)map_addr);

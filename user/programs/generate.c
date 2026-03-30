@@ -40,9 +40,10 @@ static int readline(char *buf, int max) {
 }
 
 static int init_model(transformer_t *tf) {
-    /* Try GGUF first (trained model) */
+    /* Try GGUF: /model.gguf (disk) first, then /test.gguf (initrd) */
     memset(&bpe, 0, sizeof(bpe));
-    if (gguf_load("/test.gguf", tf, &cfg, &bpe) == 0) {
+    if (gguf_load("/model.gguf", tf, &cfg, &bpe) == 0 ||
+        gguf_load("/test.gguf", tf, &cfg, &bpe) == 0) {
         use_gguf = 1;
         printf("Loaded GGUF model: dim=%u layers=%u vocab=%u\n",
                cfg.dim, cfg.n_layers, cfg.vocab_size);
@@ -100,7 +101,7 @@ static void local_generate(transformer_t *tf, const char *prompt, int len) {
     printf("[gen] ");
     for (int i = 0; i < GEN_TOKENS && logits; i++) {
         uint32_t tok = transformer_sample(logits, tf->cfg.vocab_size, 0.8f, 20);
-        if (tok == 0 || tok == 2) break;  /* EOS */
+        if (tok == 0 || tok == 2 || tok == 151643 || tok == 151645) break;  /* EOS */
 
         if (use_gguf) {
             char out[8];

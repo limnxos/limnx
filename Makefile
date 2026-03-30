@@ -214,9 +214,17 @@ build/user/%.elf: build/user/%.o $(LIBC_OBJS) user/arch/x86_64/linker.ld
 $(DISK_IMG):
 	@mkdir -p build
 	dd if=/dev/zero of=$@ bs=1M count=256 2>/dev/null
-	@echo "Created 64MB disk image: $@"
+	@echo "Created 256MB disk image: $@"
 
 disk: $(DISK_IMG)
+
+# --- Model disk: LimnFS image with GGUF model pre-loaded ---
+# Usage: make model-disk MODEL=/path/to/model.gguf
+MODEL ?=
+model-disk:
+	@if [ -z "$(MODEL)" ]; then echo "Usage: make model-disk MODEL=/path/to/model.gguf"; exit 1; fi
+	python3 tools/mklimnfs.py -o build/disk.img $(MODEL):model.gguf
+	@echo "Model disk ready: build/disk.img"
 
 # --- Initrd (tar archive with user ELFs + data files) ---
 
