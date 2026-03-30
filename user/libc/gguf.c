@@ -251,7 +251,6 @@ int gguf_load(const char *path, transformer_t *tf, tf_config_t *cfg,
             uint64_t count = read_u64(r);
 
             if (!bpe_initialized) {
-                /* Shouldn't happen in well-formed GGUF, but handle it */
                 for (uint64_t i = 0; i < count; i++)
                     if (skip_value(r, elem_type) != 0) goto fail;
                 continue;
@@ -260,64 +259,101 @@ int gguf_load(const char *path, transformer_t *tf, tf_config_t *cfg,
             bpe->n_merges = (uint32_t)count;
 
             if (elem_type == GGUF_TYPE_STRING) {
-                for (uint64_t i = 0; i < count; i++) {
-                    char merge_str[512];
-                    uint64_t merge_len;
-                    if (read_string(r, merge_str, sizeof(merge_str), &merge_len) != 0) goto fail;
+                /* Build a hash table for O(1) vocab string → token ID lookup.
+                 * Without this, merge parsing is O(merges × vocab) = ~23 billion ops
+                 * for Qwen3's 151K vocab. */
+                #define VOCAB_HT_SIZE 262144  /* power of 2, ~1.7x vocab_size */
+                uint32_t ht_pages = (VOCAB_HT_SIZE * sizeof(uint32_t) + PAGE_SIZE - 1) / PAGE_SIZE;
+                long ht_addr = sys_mmap(ht_pages);
+                uint32_t *vocab_ht = (ht_addr > 0) ? (uint32_t *)ht_addr : NULL;
 
-                    /* Parse "left_tok right_tok" — find the space separator */
-                    char *space = (char *)0;
-                    for (uint32_t s = 0; s < (uint32_t)merge_len; s++) {
-                        if (merge_str[s] == ' ') {
-                            space = &merge_str[s];
-                            break;
-                        }
-                    }
-                    if (!space) continue;
+                if (vocab_ht) {
+                    /* Initialize hash table: 0xFFFFFFFF = empty */
+                    for (uint32_t h = 0; h < VOCAB_HT_SIZE; h++)
+                        vocab_ht[h] = 0xFFFFFFFF;
 
-                    *space = '\0';
-                    char *left_str = merge_str;
-                    char *right_str = space + 1;
-                    uint32_t left_len = (uint32_t)(space - merge_str);
-                    uint32_t right_len = (uint32_t)(merge_len - left_len - 1);
+                    /* FNV-1a hash for strings */
+                    #define FNV_OFFSET 2166136261u
+                    #define FNV_PRIME  16777619u
 
-                    /* Find token IDs by matching vocab strings */
-                    uint32_t left_id = 0, right_id = 0;
-                    int found_left = 0, found_right = 0;
-
+                    /* Insert all vocab entries */
                     for (uint32_t v = 0; v < bpe->vocab_size; v++) {
                         if (!bpe->vocab[v]) continue;
-                        if (!found_left && bpe->vocab_len[v] == left_len &&
-                            strncmp(bpe->vocab[v], left_str, left_len) == 0) {
-                            left_id = v;
-                            found_left = 1;
-                        }
-                        if (!found_right && bpe->vocab_len[v] == right_len &&
-                            strncmp(bpe->vocab[v], right_str, right_len) == 0) {
-                            right_id = v;
-                            found_right = 1;
-                        }
-                        if (found_left && found_right) break;
+                        uint32_t h = FNV_OFFSET;
+                        for (uint32_t j = 0; j < bpe->vocab_len[v]; j++)
+                            h = (h ^ (uint8_t)bpe->vocab[v][j]) * FNV_PRIME;
+                        h &= (VOCAB_HT_SIZE - 1);
+                        /* Linear probe */
+                        while (vocab_ht[h] != 0xFFFFFFFF)
+                            h = (h + 1) & (VOCAB_HT_SIZE - 1);
+                        vocab_ht[h] = v;
                     }
 
-                    /* The merge result is the concatenation — find it in vocab */
-                    char concat[512];
-                    uint32_t concat_len = left_len + right_len;
-                    memcpy(concat, left_str, left_len);
-                    memcpy(concat + left_len, right_str, right_len);
+                    /* Lookup helper: find token ID for a string */
+                    #define VOCAB_LOOKUP(str, slen, out_id, out_found) do { \
+                        uint32_t _h = FNV_OFFSET; \
+                        for (uint32_t _j = 0; _j < (slen); _j++) \
+                            _h = (_h ^ (uint8_t)(str)[_j]) * FNV_PRIME; \
+                        _h &= (VOCAB_HT_SIZE - 1); \
+                        (out_found) = 0; \
+                        while (vocab_ht[_h] != 0xFFFFFFFF) { \
+                            uint32_t _v = vocab_ht[_h]; \
+                            if (bpe->vocab_len[_v] == (slen) && \
+                                strncmp(bpe->vocab[_v], (str), (slen)) == 0) { \
+                                (out_id) = _v; (out_found) = 1; break; \
+                            } \
+                            _h = (_h + 1) & (VOCAB_HT_SIZE - 1); \
+                        } \
+                    } while(0)
 
-                    uint32_t result_id = 0;
-                    for (uint32_t v = 0; v < bpe->vocab_size; v++) {
-                        if (!bpe->vocab[v]) continue;
-                        if (bpe->vocab_len[v] == concat_len &&
-                            strncmp(bpe->vocab[v], concat, concat_len) == 0) {
-                            result_id = v;
-                            break;
+                    for (uint64_t i = 0; i < count; i++) {
+                        char merge_str[512];
+                        uint64_t merge_len;
+                        if (read_string(r, merge_str, sizeof(merge_str), &merge_len) != 0) {
+                            sys_munmap((uint64_t)ht_addr);
+                            goto fail;
                         }
+
+                        /* Parse "left right" */
+                        char *space = (char *)0;
+                        for (uint32_t s = 0; s < (uint32_t)merge_len; s++) {
+                            if (merge_str[s] == ' ') { space = &merge_str[s]; break; }
+                        }
+                        if (!space) continue;
+                        *space = '\0';
+                        char *left_str = merge_str;
+                        char *right_str = space + 1;
+                        uint32_t left_len = (uint32_t)(space - merge_str);
+                        uint32_t right_len = (uint32_t)(merge_len - left_len - 1);
+
+                        uint32_t left_id = 0, right_id = 0, result_id = 0;
+                        int found_left = 0, found_right = 0;
+
+                        VOCAB_LOOKUP(left_str, left_len, left_id, found_left);
+                        VOCAB_LOOKUP(right_str, right_len, right_id, found_right);
+
+                        /* Result = concatenation of left + right */
+                        char concat[512];
+                        uint32_t concat_len = left_len + right_len;
+                        memcpy(concat, left_str, left_len);
+                        memcpy(concat + left_len, right_str, right_len);
+                        int found_result = 0;
+                        VOCAB_LOOKUP(concat, concat_len, result_id, found_result);
+
+                        if (found_left && found_right)
+                            bpe_set_merge(bpe, (uint32_t)i, left_id, right_id, result_id);
                     }
 
-                    if (found_left && found_right)
-                        bpe_set_merge(bpe, (uint32_t)i, left_id, right_id, result_id);
+                    #undef VOCAB_LOOKUP
+                    #undef FNV_OFFSET
+                    #undef FNV_PRIME
+                    #undef VOCAB_HT_SIZE
+                    sys_munmap((uint64_t)ht_addr);
+                } else {
+                    /* Fallback: skip merges if hash table allocation fails */
+                    for (uint64_t i = 0; i < count; i++)
+                        if (skip_value(r, elem_type) != 0) goto fail;
+                    bpe->n_merges = 0;
                 }
             } else {
                 for (uint64_t i = 0; i < count; i++)

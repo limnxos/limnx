@@ -6,6 +6,8 @@
  *   virtio_blk_init()
  *   virtio_blk_read(sector, buf)
  *   virtio_blk_write(sector, buf)
+ *   virtio_blk_read_multi(start_sector, buf, sector_count)
+ *   virtio_blk_write_multi(start_sector, buf, sector_count)
  *
  * Uses polling for completion (no IRQ).
  */
@@ -92,7 +94,13 @@ static int setup_virtqueue(void) {
 /* Synchronous I/O (3-descriptor chain, polled completion)            */
 /* ------------------------------------------------------------------ */
 
-static int blk_do_request(uint32_t type, uint64_t sector, void *data_buf) {
+static int blk_do_request(uint32_t type, uint64_t sector,
+                           void *data_buf, uint32_t sector_count) {
+    if (sector_count == 0)
+        return -1;
+
+    uint32_t data_bytes = sector_count * VIRTIO_BLK_SECTOR_SIZE;
+
     /* Allocate a page for request header + status byte */
     uint8_t *req_virt = (uint8_t *)dma_alloc(PAGE_SIZE);
     if (!req_virt) return -1;
@@ -104,8 +112,10 @@ static int blk_do_request(uint32_t type, uint64_t sector, void *data_buf) {
     hdr->reserved = 0;
     hdr->sector   = sector;
 
-    /* Allocate a separate DMA page for the data buffer */
-    uint8_t *data_virt = (uint8_t *)dma_alloc(PAGE_SIZE);
+    /* Allocate DMA pages for the data buffer (contiguous for multi-sector) */
+    uint32_t data_alloc_size = (data_bytes + PAGE_SIZE - 1) & ~(PAGE_SIZE - 1);
+    if (data_alloc_size == 0) data_alloc_size = PAGE_SIZE;
+    uint8_t *data_virt = (uint8_t *)dma_alloc(data_alloc_size);
     if (!data_virt) {
         dma_free(req_virt, PAGE_SIZE);
         return -1;
@@ -115,7 +125,7 @@ static int blk_do_request(uint32_t type, uint64_t sector, void *data_buf) {
     /* If write, copy data into DMA buffer */
     if (type == VIRTIO_BLK_T_OUT) {
         const uint8_t *src = (const uint8_t *)data_buf;
-        for (int i = 0; i < VIRTIO_BLK_SECTOR_SIZE; i++)
+        for (uint32_t i = 0; i < data_bytes; i++)
             data_virt[i] = src[i];
     }
 
@@ -136,9 +146,9 @@ static int blk_do_request(uint32_t type, uint64_t sector, void *data_buf) {
     q_desc[d0].flags = VIRTQ_DESC_F_NEXT;
     q_desc[d0].next  = d1;
 
-    /* Descriptor 1: data buffer */
+    /* Descriptor 1: data buffer — size is sector_count * 512 */
     q_desc[d1].addr  = data_phys;
-    q_desc[d1].len   = VIRTIO_BLK_SECTOR_SIZE;
+    q_desc[d1].len   = data_bytes;
     q_desc[d1].flags = VIRTQ_DESC_F_NEXT |
                        (type == VIRTIO_BLK_T_IN ? VIRTQ_DESC_F_WRITE : 0);
     q_desc[d1].next  = d2;
@@ -159,9 +169,10 @@ static int blk_do_request(uint32_t type, uint64_t sector, void *data_buf) {
     /* Notify device (queue 0) */
     mmio_write32(dev_base, VIRTIO_MMIO_QUEUE_NOTIFY, 0);
 
-    /* Poll for completion with timeout */
+    /* Poll for completion with scaled timeout for large transfers */
     int completed = 0;
-    for (int i = 0; i < 1000000; i++) {
+    int timeout = 1000000 + (int)sector_count * 100;
+    for (int i = 0; i < timeout; i++) {
         virtio_mb();
         if (q_used->idx != q_last_used) {
             completed = 1;
@@ -171,10 +182,10 @@ static int blk_do_request(uint32_t type, uint64_t sector, void *data_buf) {
     }
 
     if (!completed) {
-        pr_err("timeout waiting for blk request (sector=%lu type=%u)\n",
-               sector, type);
+        pr_err("timeout waiting for blk request (sector=%lu count=%u type=%u)\n",
+               sector, sector_count, type);
         dma_free(req_virt, PAGE_SIZE);
-        dma_free(data_virt, PAGE_SIZE);
+        dma_free(data_virt, data_alloc_size);
         return -1;
     }
 
@@ -194,23 +205,23 @@ static int blk_do_request(uint32_t type, uint64_t sector, void *data_buf) {
     /* If read, copy data out */
     if (type == VIRTIO_BLK_T_IN && result == 0) {
         uint8_t *dst = (uint8_t *)data_buf;
-        for (int i = 0; i < VIRTIO_BLK_SECTOR_SIZE; i++)
+        for (uint32_t i = 0; i < data_bytes; i++)
             dst[i] = data_virt[i];
     }
 
     if (result != 0) {
         static int err_count = 0;
         if (err_count < 5)
-            pr_err("request failed: status=%u (sector=%lu type=%u)\n",
-                   (unsigned)*status_virt, sector, type);
+            pr_err("request failed: status=%u (sector=%lu count=%u type=%u)\n",
+                   (unsigned)*status_virt, sector, sector_count, type);
         else if (err_count == 5)
             pr_err("(suppressing further errors)\n");
         err_count++;
     }
 
     /* Free DMA buffers */
-    pmm_free_page(req_phys);
-    pmm_free_page(data_phys);
+    dma_free(req_virt, PAGE_SIZE);
+    dma_free(data_virt, data_alloc_size);
 
     return result;
 }
@@ -220,11 +231,22 @@ static int blk_do_request(uint32_t type, uint64_t sector, void *data_buf) {
 /* ------------------------------------------------------------------ */
 
 int virtio_blk_read(uint64_t sector, void *buf) {
-    return blk_do_request(VIRTIO_BLK_T_IN, sector, buf);
+    return blk_do_request(VIRTIO_BLK_T_IN, sector, buf, 1);
 }
 
 int virtio_blk_write(uint64_t sector, const void *buf) {
-    return blk_do_request(VIRTIO_BLK_T_OUT, sector, (void *)buf);
+    return blk_do_request(VIRTIO_BLK_T_OUT, sector, (void *)buf, 1);
+}
+
+int virtio_blk_read_multi(uint64_t start_sector, void *buf,
+                           uint32_t sector_count) {
+    return blk_do_request(VIRTIO_BLK_T_IN, start_sector, buf, sector_count);
+}
+
+int virtio_blk_write_multi(uint64_t start_sector, const void *buf,
+                            uint32_t sector_count) {
+    return blk_do_request(VIRTIO_BLK_T_OUT, start_sector, (void *)buf,
+                          sector_count);
 }
 
 /* ------------------------------------------------------------------ */

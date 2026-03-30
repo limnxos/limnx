@@ -29,6 +29,10 @@ typedef struct {
 int      virtio_blk_init(void);
 int      virtio_blk_read(uint64_t sector, void *buf);    /* read 1 sector */
 int      virtio_blk_write(uint64_t sector, const void *buf); /* write 1 sector */
+int      virtio_blk_read_multi(uint64_t start_sector, void *buf,
+                                uint32_t sector_count);  /* read N sectors */
+int      virtio_blk_write_multi(uint64_t start_sector, const void *buf,
+                                 uint32_t sector_count); /* write N sectors */
 uint64_t virtio_blk_get_capacity(void);  /* total 512-byte sectors */
 
 #endif

@@ -1,6 +1,7 @@
 #define pr_fmt(fmt) "[limnfs] " fmt
 #include "klog.h"
 #include "blk/limnfs.h"
+#include "blk/virtio_blk.h"
 #include "blk/bcache.h"
 #include "mm/kheap.h"
 #include "arch/serial.h"
@@ -661,6 +662,70 @@ void limnfs_free_block(uint32_t blk) {
 
 /* --- File data I/O --- */
 
+/* Fast sequential read: detect if file blocks are contiguous on disk and
+ * read the entire range in large virtio-blk bulk requests. This avoids
+ * the per-block get_file_block + bcache overhead for files written
+ * sequentially (e.g. by mklimnfs.py). */
+static int64_t limnfs_read_data_sequential(limnfs_inode_t *inode,
+                                            uint64_t offset, uint8_t *buf,
+                                            uint64_t len) {
+    uint32_t start_lb = (uint32_t)(offset / LIMNFS_BLOCK_SIZE);
+    uint32_t end_lb = (uint32_t)((offset + len - 1) / LIMNFS_BLOCK_SIZE);
+    uint32_t first_blk = get_file_block(inode, start_lb);
+    if (first_blk == 0) return -1;
+
+    /* Verify a few blocks are sequential (spot-check) */
+    uint32_t n_blocks = end_lb - start_lb + 1;
+    uint32_t checks[] = { 1, n_blocks / 4, n_blocks / 2, n_blocks - 1 };
+    for (int c = 0; c < 4; c++) {
+        if (checks[c] == 0 || checks[c] >= n_blocks) continue;
+        uint32_t blk = get_file_block(inode, start_lb + checks[c]);
+        if (blk != first_blk + checks[c])
+            return -1;  /* not sequential */
+    }
+
+    /* All checked blocks are sequential — do bulk reads */
+    uint32_t block_offset = (uint32_t)(offset % LIMNFS_BLOCK_SIZE);
+    uint64_t bytes_read = 0;
+
+    /* Handle first partial block */
+    if (block_offset != 0) {
+        if (bcache_read(first_blk, scratch_block) != 0)
+            return -1;
+        uint64_t chunk = LIMNFS_BLOCK_SIZE - block_offset;
+        if (chunk > len) chunk = len;
+        for (uint64_t i = 0; i < chunk; i++)
+            buf[i] = scratch_block[block_offset + i];
+        bytes_read = chunk;
+        first_blk++;
+    }
+
+    /* Bulk read full blocks — up to 256KB at a time */
+    #define BULK_BLOCKS 64  /* 256KB */
+    while (bytes_read + LIMNFS_BLOCK_SIZE <= len) {
+        uint32_t remain_blocks = (uint32_t)((len - bytes_read) / LIMNFS_BLOCK_SIZE);
+        uint32_t batch = (remain_blocks > BULK_BLOCKS) ? BULK_BLOCKS : remain_blocks;
+        uint64_t sector = (uint64_t)(first_blk) * (LIMNFS_BLOCK_SIZE / 512);
+        uint32_t sectors = batch * (LIMNFS_BLOCK_SIZE / 512);
+        if (virtio_blk_read_multi(sector, buf + bytes_read, sectors) != 0)
+            return -1;
+        bytes_read += (uint64_t)batch * LIMNFS_BLOCK_SIZE;
+        first_blk += batch;
+    }
+
+    /* Handle last partial block */
+    if (bytes_read < len) {
+        if (bcache_read(first_blk, scratch_block) != 0)
+            return -1;
+        uint64_t chunk = len - bytes_read;
+        for (uint64_t i = 0; i < chunk; i++)
+            buf[bytes_read + i] = scratch_block[i];
+        bytes_read += chunk;
+    }
+
+    return (int64_t)bytes_read;
+}
+
 int64_t limnfs_read_data(uint32_t ino, uint64_t offset, uint8_t *buf, uint64_t len) {
     limnfs_inode_t inode;
     if (limnfs_read_inode(ino, &inode) != 0)
@@ -673,6 +738,13 @@ int64_t limnfs_read_data(uint32_t ino, uint64_t offset, uint8_t *buf, uint64_t l
     if (len > available)
         len = available;
 
+    /* Try sequential fast path for large reads (>32KB) */
+    if (len >= 32 * 1024) {
+        int64_t fast = limnfs_read_data_sequential(&inode, offset, buf, len);
+        if (fast >= 0) return fast;
+        /* Fall through to block-by-block path */
+    }
+
     uint64_t bytes_read = 0;
     while (bytes_read < len) {
         uint32_t logical_block = (uint32_t)((offset + bytes_read) / LIMNFS_BLOCK_SIZE);
@@ -680,6 +752,29 @@ int64_t limnfs_read_data(uint32_t ino, uint64_t offset, uint8_t *buf, uint64_t l
         uint32_t disk_block = get_file_block(&inode, logical_block);
         if (disk_block == 0)
             break;
+
+        /* Fast path: if aligned and multiple blocks remain, detect sequential
+         * disk blocks and read them in one large virtio-blk request. */
+        if (block_offset == 0 && (len - bytes_read) >= LIMNFS_BLOCK_SIZE) {
+            uint32_t run = 1;
+            uint32_t max_run = (uint32_t)((len - bytes_read) / LIMNFS_BLOCK_SIZE);
+            if (max_run > 8) max_run = 8;  /* cap at 32KB per bulk read (DMA limit) */
+            while (run < max_run) {
+                uint32_t next = get_file_block(&inode, logical_block + run);
+                if (next != disk_block + run) break;
+                run++;
+            }
+            if (run > 1) {
+                /* Bulk read: sequential blocks directly to user buffer */
+                uint64_t sector = (uint64_t)disk_block * (LIMNFS_BLOCK_SIZE / 512);
+                uint32_t sectors = run * (LIMNFS_BLOCK_SIZE / 512);
+                if (virtio_blk_read_multi(sector, buf + bytes_read, sectors) == 0) {
+                    bytes_read += (uint64_t)run * LIMNFS_BLOCK_SIZE;
+                    continue;
+                }
+                /* Fall through to single-block path on error */
+            }
+        }
 
         if (bcache_read(disk_block, scratch_block) != 0)
             break;

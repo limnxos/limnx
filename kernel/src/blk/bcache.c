@@ -100,16 +100,14 @@ static void hash_remove(int16_t idx) {
     cache[idx].hash_next = -1;
 }
 
-/* Write a dirty entry back to disk */
+/* Write a dirty entry back to disk (single multi-sector request) */
 static int writeback_entry(int16_t idx) {
     bcache_entry_t *e = &cache[idx];
     if (!e->valid || !e->dirty)
         return 0;
     uint64_t sector = (uint64_t)e->tag * SECTORS_PER_BLOCK;
-    for (int s = 0; s < SECTORS_PER_BLOCK; s++) {
-        if (virtio_blk_write(sector + s, e->data + s * VIRTIO_BLK_SECTOR_SIZE) != 0)
-            return -1;
-    }
+    if (virtio_blk_write_multi(sector, e->data, SECTORS_PER_BLOCK) != 0)
+        return -1;
     e->dirty = 0;
     return 0;
 }
@@ -173,14 +171,12 @@ int bcache_read(uint32_t block_no, void *buf) {
     if (cache[victim].valid)
         hash_remove(victim);
 
-    /* Read from disk into victim slot */
+    /* Read full 4KB block from disk in one multi-sector request */
     uint64_t sector = (uint64_t)block_no * SECTORS_PER_BLOCK;
     uint8_t *dst = cache[victim].data;
-    for (int s = 0; s < SECTORS_PER_BLOCK; s++) {
-        if (virtio_blk_read(sector + s, dst + s * VIRTIO_BLK_SECTOR_SIZE) != 0) {
-            spin_unlock(&bcache_lock);
-            return -1;
-        }
+    if (virtio_blk_read_multi(sector, dst, SECTORS_PER_BLOCK) != 0) {
+        spin_unlock(&bcache_lock);
+        return -1;
     }
     cache[victim].tag = block_no;
     cache[victim].valid = 1;
@@ -220,12 +216,9 @@ int bcache_write(uint32_t block_no, const void *buf) {
         if (victim < 0) {
             /* No cache slots — must write directly to disk */
             uint64_t sector = (uint64_t)block_no * SECTORS_PER_BLOCK;
-            for (int s = 0; s < SECTORS_PER_BLOCK; s++) {
-                if (virtio_blk_write(sector + s,
-                        src + s * VIRTIO_BLK_SECTOR_SIZE) != 0) {
-                    spin_unlock(&bcache_lock);
-                    return -1;
-                }
+            if (virtio_blk_write_multi(sector, src, SECTORS_PER_BLOCK) != 0) {
+                spin_unlock(&bcache_lock);
+                return -1;
             }
             spin_unlock(&bcache_lock);
             return 0;
