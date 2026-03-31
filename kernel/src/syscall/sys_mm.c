@@ -1,5 +1,6 @@
 #include "syscall/syscall_internal.h"
 #include "sched/thread.h"
+#include "sched/sched.h"
 #include "mm/pmm.h"
 #include "mm/vmm.h"
 #include "mm/swap.h"
@@ -226,7 +227,24 @@ int64_t sys_fmmap(uint64_t fd, uint64_t a2,
     uint64_t virt = proc->mmap_next_addr;
     uint64_t i = 0;
 
+    /* Progress reporting for large mmaps */
+    uint64_t progress_interval = num_pages / 10;  /* every 10% */
+    if (progress_interval < FMMAP_BATCH_PAGES) progress_interval = FMMAP_BATCH_PAGES;
+    int show_progress = (num_pages > 1024);  /* >4MB */
+    if (show_progress)
+        serial_printf("[fmmap] loading %s (%lu MB)...\n",
+                      node->name, (unsigned long)(file_size / (1024 * 1024)));
+
     while (i < num_pages) {
+        /* Yield periodically so other processes can run during large loads */
+        if (i > 0 && (i % (FMMAP_BATCH_PAGES * 16)) == 0)
+            sched_yield();
+
+        /* Progress indicator */
+        if (show_progress && i > 0 && (i % progress_interval) < FMMAP_BATCH_PAGES)
+            serial_printf("[fmmap] %lu%%\n",
+                          (unsigned long)(i * 100 / num_pages));
+
         uint64_t remain = num_pages - i;
         uint32_t batch = (remain > FMMAP_BATCH_PAGES) ? FMMAP_BATCH_PAGES : (uint32_t)remain;
 
@@ -283,6 +301,8 @@ fail_cleanup:
     return -1;
 
 fmmap_done:
+    if (show_progress)
+        serial_printf("[fmmap] done (%lu pages mapped)\n", (unsigned long)num_pages);
 
     /* Record the mapping (phys_addr=0 since pages are non-contiguous) */
     proc->mmap_table[slot].virt_addr = virt;
