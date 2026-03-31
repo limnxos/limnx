@@ -817,6 +817,9 @@ void kmain(void) {
             serial_printf("[limnfs] Sync complete: %d copied, %d already exist\n",
                           synced, skipped);
 
+            /* Flush metadata after bulk sync */
+            limnfs_sync();
+
             /* Load disk-only files into VFS */
             vfs_mount_limnfs();
         }

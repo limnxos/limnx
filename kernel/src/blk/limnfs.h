@@ -61,6 +61,7 @@ typedef struct {
 int  limnfs_format(uint32_t total_blocks);
 int  limnfs_mount(void);
 int  limnfs_mounted(void);
+void limnfs_sync(void);
 
 /* Inode operations */
 int  limnfs_read_inode(uint32_t ino, limnfs_inode_t *out);

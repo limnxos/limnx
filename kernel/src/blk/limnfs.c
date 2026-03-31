@@ -639,13 +639,26 @@ void limnfs_free_inode(uint32_t ino) {
 
 /* --- Block operations --- */
 
+static uint32_t alloc_hint = 0;  /* next-fit: start scanning from last alloc */
+
 uint32_t limnfs_alloc_block(void) {
-    for (uint32_t i = lfs.super.data_start; i < lfs.super.total_blocks; i++) {
+    uint32_t start = (alloc_hint >= lfs.super.data_start) ? alloc_hint : lfs.super.data_start;
+
+    /* Scan from hint to end */
+    for (uint32_t i = start; i < lfs.super.total_blocks; i++) {
         if (!bitmap_get(lfs.block_bitmap, i)) {
             bitmap_set(lfs.block_bitmap, i);
             lfs.super.free_blocks--;
-            flush_block_bitmap();
-            flush_superblock();
+            alloc_hint = i + 1;
+            return i;
+        }
+    }
+    /* Wrap around: scan from data_start to hint */
+    for (uint32_t i = lfs.super.data_start; i < start; i++) {
+        if (!bitmap_get(lfs.block_bitmap, i)) {
+            bitmap_set(lfs.block_bitmap, i);
+            lfs.super.free_blocks--;
+            alloc_hint = i + 1;
             return i;
         }
     }
@@ -656,7 +669,13 @@ void limnfs_free_block(uint32_t blk) {
     if (blk < lfs.super.data_start || blk >= lfs.super.total_blocks) return;
     bitmap_clear(lfs.block_bitmap, blk);
     lfs.super.free_blocks++;
+}
+
+/* Flush all dirty metadata to disk (bitmap + superblock) */
+void limnfs_sync(void) {
+    if (!lfs.mounted) return;
     flush_block_bitmap();
+    flush_inode_bitmap();
     flush_superblock();
 }
 
