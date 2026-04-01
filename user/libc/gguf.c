@@ -543,8 +543,17 @@ int gguf_load(const char *path, transformer_t *tf, tf_config_t *cfg,
         }
 
         /* Weight tying: if output.weight missing, share with token_embd */
-        if (!found_output)
+        if (!found_output) {
             tf->q_wcls = tf->q_token_emb;
+            printf("[gguf] weight tying: output = token_embd\n");
+        }
+
+        printf("[gguf] quantized: emb=%ux%u wq=%ux%u wk=%ux%u w1=%ux%u wcls=%ux%u\n",
+               tf->q_token_emb.rows, tf->q_token_emb.cols,
+               tf->qqwq[0].rows, tf->qqwq[0].cols,
+               tf->qqwk[0].rows, tf->qqwk[0].cols,
+               tf->qqw1[0].rows, tf->qqw1[0].cols,
+               tf->q_wcls.rows, tf->q_wcls.cols);
 
         if (norm_temp_addr > 0)
             sys_munmap((uint64_t)norm_temp_addr);

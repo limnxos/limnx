@@ -103,6 +103,24 @@ static int read_inittab(void) {
     return 0;
 }
 
+/* Parse path into argv: split "path arg1 arg2" into argv[] */
+static int parse_argv(const char *path, const char **argv, int max_args,
+                      char *buf, int buf_size) {
+    int argc = 0, bi = 0, pi = 0;
+    while (path[pi] && argc < max_args - 1) {
+        /* Skip spaces */
+        while (path[pi] == ' ') pi++;
+        if (!path[pi]) break;
+        /* Start of arg */
+        argv[argc++] = &buf[bi];
+        while (path[pi] && path[pi] != ' ' && bi < buf_size - 1)
+            buf[bi++] = path[pi++];
+        buf[bi++] = '\0';
+    }
+    argv[argc] = (void *)0;
+    return argc;
+}
+
 /* Spawn a service via fork + execve */
 static long spawn_service(service_t *svc) {
     long pid = sys_fork();
@@ -111,13 +129,31 @@ static long spawn_service(service_t *svc) {
         return -1;
     }
     if (pid == 0) {
-        /* Child: exec the service */
-        const char *argv[2];
-        argv[0] = svc->path;
-        argv[1] = (void *)0;
-        sys_execve(svc->path, argv);
-        /* execve failed */
-        printf("[init] exec failed: %s\n", svc->path);
+        /* Child */
+        int is_daemon = !(svc->flags & SVC_WAIT);
+
+        if (is_daemon) {
+            /* Detach from console PTY — prevents garbled output at boot */
+            sys_setsid();
+            long null_fd = sys_open("/dev/null", O_WRONLY);
+            if (null_fd >= 0) {
+                sys_dup2(null_fd, 0);  /* stdin  → /dev/null */
+                sys_dup2(null_fd, 1);  /* stdout → /dev/null */
+                sys_dup2(null_fd, 2);  /* stderr → /dev/null */
+                sys_close(null_fd);
+            }
+        }
+
+        /* Parse path into argv (supports "path arg1 arg2") */
+        const char *argv[8];
+        char argv_buf[256];
+        parse_argv(svc->path, argv, 8, argv_buf, sizeof(argv_buf));
+
+        sys_execve(argv[0], argv);
+        /* execve failed — write to serial since stdout may be /dev/null */
+        sys_write("[init] exec failed: ", 20);
+        sys_write(svc->path, strlen(svc->path));
+        sys_write("\n", 1);
         sys_exit(127);
     }
     /* Parent */

@@ -6,7 +6,7 @@
 #define MAX_INFER_SERVICES  16
 #define INFER_NAME_MAX      32
 #define INFER_SOCK_PATH_MAX 108
-#define INFER_HEALTH_TIMEOUT 50  /* ticks before considered unhealthy */
+#define INFER_HEALTH_TIMEOUT 3600 /* ticks before considered unhealthy (~200s at 18Hz) */
 
 /* Routing policies */
 #define INFER_ROUTE_LEAST_LOADED  0
@@ -105,7 +105,7 @@ void infer_cache_expire(void);
 /* --- Inference request queue --- */
 
 #define INFER_QUEUE_SIZE     16
-#define INFER_QUEUE_TIMEOUT  90   /* ticks (~5 seconds at 18Hz) */
+#define INFER_QUEUE_TIMEOUT  36000 /* ticks (~2000s at 18Hz, enough for large model CPU inference) */
 
 typedef struct infer_queue_entry {
     char     name[INFER_NAME_MAX];
