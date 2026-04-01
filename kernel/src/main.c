@@ -873,47 +873,55 @@ void kmain(void) {
         if (crt) sched_add(crt);
     }
 
-    /* Create /etc config directory and default configs */
+    /* Create /etc config directory and default configs.
+     * Only write defaults on first boot — if configs already exist on disk
+     * (from a previous boot), respect the user's edits. */
     vfs_mkdir("/etc");
     {
         /* /etc/services — service daemon config */
-        int svc_node = vfs_create("/etc/services");
-        if (svc_node >= 0) {
-            const char *default_cfg =
-                "# Service config: name|path|policy|after\n"
-                "# policy: one-for-one, one-for-all\n"
-                "# after: dependency name, or none\n";
-            int len = 0;
-            while (default_cfg[len]) len++;
-            vfs_write(svc_node, 0, (const uint8_t *)default_cfg, len);
+        if (vfs_resolve_path("/etc/services") < 0) {
+            int svc_node = vfs_create("/etc/services");
+            if (svc_node >= 0) {
+                const char *default_cfg =
+                    "# Service config: name|path|policy|after\n"
+                    "# policy: one-for-one, one-for-all\n"
+                    "# after: dependency name, or none\n";
+                int len = 0;
+                while (default_cfg[len]) len++;
+                vfs_write(svc_node, 0, (const uint8_t *)default_cfg, len);
+            }
         }
 
         /* /etc/inittab — init system config */
-        int tab_node = vfs_create("/etc/inittab");
-        if (tab_node >= 0) {
-            const char *inittab =
-                "# Init config: name:path:flags\n"
-                "# flags: respawn, once, wait\n"
-                "serviced:/serviced.elf:respawn\n"
-                "inferd:/inferd.elf:respawn\n"
-                "agentd:/agentd.elf:respawn\n"
-                "shell:/bin/ash:wait\n";
-            int len = 0;
-            while (inittab[len]) len++;
-            vfs_write(tab_node, 0, (const uint8_t *)inittab, len);
-            pr_info("Created /etc/inittab\n");
+        if (vfs_resolve_path("/etc/inittab") < 0) {
+            int tab_node = vfs_create("/etc/inittab");
+            if (tab_node >= 0) {
+                const char *inittab =
+                    "# Init config: name:path:flags\n"
+                    "# flags: respawn, once, wait\n"
+                    "serviced:/serviced.elf:respawn\n"
+                    "agentd:/agentd.elf:respawn\n"
+                    "shell:/bin/ash:wait\n";
+                int len = 0;
+                while (inittab[len]) len++;
+                vfs_write(tab_node, 0, (const uint8_t *)inittab, len);
+                pr_info("Created /etc/inittab (first boot defaults)\n");
+            }
+        } else {
+            pr_info("Using existing /etc/inittab from disk\n");
         }
 
         /* /etc/passwd — user database */
-        int pw_node = vfs_create("/etc/passwd");
-        if (pw_node >= 0) {
-            const char *passwd =
-                "root:x:0:0:root:/:/shell.elf\n"
-                "nobody:x:65534:65534:nobody:/:/shell.elf\n";
-            int len = 0;
-            while (passwd[len]) len++;
-            vfs_write(pw_node, 0, (const uint8_t *)passwd, len);
-            pr_info("Created /etc/passwd\n");
+        if (vfs_resolve_path("/etc/passwd") < 0) {
+            int pw_node = vfs_create("/etc/passwd");
+            if (pw_node >= 0) {
+                const char *passwd =
+                    "root:x:0:0:root:/:/shell.elf\n"
+                    "nobody:x:65534:65534:nobody:/:/shell.elf\n";
+                int len = 0;
+                while (passwd[len]) len++;
+                vfs_write(pw_node, 0, (const uint8_t *)passwd, len);
+            }
         }
     }
 
