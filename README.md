@@ -128,9 +128,14 @@ User program                    Kernel                         inferd daemon
      │ sys_infer_result ────────► │ copy response                  │
 ```
 
-Supported model formats: GGUF v3 (F32, F16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K–Q6_K). BPE tokenizer loaded from GGUF metadata. Transformer: RMS norm, multi-head attention, GQA, RoPE, SwiGLU, KV cache.
+Supported model formats: GGUF v3 (F32, F16, Q4_0, Q4_1, Q5_0, Q5_1, Q8_0, Q2_K–Q6_K). BPE tokenizer loaded from GGUF metadata (FNV-1a hash table for O(1) merge lookup). Transformer: RMS norm, multi-head attention, GQA, RoPE, SwiGLU, KV cache.
 
-Inference runs on **CPU only** — no GPU compute. Future versions will support network/cloud inference backends (inferd proxying to remote model servers) via the same `sys_infer_request` interface.
+**Quantized inference**: Models with quantized weights (e.g. Q4_K_M) stay quantized in memory — a 1GB model uses 1GB RAM, not 7.6GB. Dequantization happens on-the-fly during each matmul. Tested with Qwen3-1.7B-Q4_K_M (1.03GB, 151K vocab, 28 layers).
+
+**Three inference paths**:
+- **Local CPU**: inferd loads GGUF model, runs transformer directly
+- **Remote GPU**: `inferd_proxy` forwards requests over TCP to `gpu_inference_server.py` on a host with GPU
+- **Hardware accelerator**: virtio-accel device (when QEMU backend is compiled)
 
 ## Agent Daemon (agentd)
 
@@ -155,7 +160,7 @@ agentd is the persistent agent runtime — the "brain" that ties together infere
                                   inferd
 ```
 
-**Boot order**: `init → serviced → inferd → agentd → shell`
+**Boot order**: `init → serviced → agentd → shell` (configurable via `/etc/inittab`)
 
 ### How It Works
 
@@ -178,6 +183,76 @@ agentd is the persistent agent runtime — the "brain" that ties together infere
 - **Custom tools** via `/etc/agentd/tools.conf` (name|path|description|keywords)
 - **Tool chaining**: infer → tool → re-infer, up to 4 iterations
 - **Agent registry**: registered as `"agentd"` for system-level IPC
+
+## Service Configuration
+
+Limnx uses persistent config files in `/etc/` that are created with defaults on first boot and preserved across reboots. Edit them to customize your system.
+
+### `/etc/inittab` — Init System
+
+Controls which services start at boot. Format: `name:path:flags`
+
+```bash
+# Default (first boot):
+serviced:/serviced.elf:respawn
+agentd:/agentd.elf:respawn
+shell:/bin/ash:wait
+
+# To auto-start inference with a GGUF model:
+serviced:/serviced.elf:respawn
+inferd:/inferd.elf /model.gguf:respawn
+agentd:/agentd.elf:respawn
+shell:/bin/ash:wait
+```
+
+Flags:
+- `respawn` — restart if the process exits
+- `once` — run once, don't restart
+- `wait` — run and wait for exit before continuing
+
+Edit from the shell: `vi /etc/inittab` — changes take effect on next boot.
+
+### `/etc/services` — Service Daemon
+
+Controls services managed by `serviced`. Format: `name|path|policy|after`
+
+```bash
+# Example:
+inferd|/inferd.elf /model.gguf|one-for-one|none
+agentd|/agentd.elf|one-for-one|inferd
+```
+
+Policies: `one-for-one` (restart only crashed child), `one-for-all` (restart all on any crash).
+Dependencies: `after` field specifies which service must start first.
+
+### Loading AI Models
+
+Models are NOT auto-loaded by default (to keep boot fast). Load manually:
+
+```bash
+# Start inference daemon with a GGUF model:
+/inferd.elf /model.gguf
+
+# Or with a custom service name and socket:
+/inferd.elf /model.gguf qwen /tmp/qwen.sock
+
+# To load a model from a LimnFS disk (prepared with mklimnfs.py):
+/inferd.elf /model.gguf
+```
+
+To prepare a disk with a GGUF model (run on the host):
+
+```bash
+# Create a LimnFS disk image with the model pre-loaded:
+python3 tools/mklimnfs.py -o build/disk.img -s 1536 \
+  /path/to/model.gguf:model.gguf
+
+# Boot with the model disk:
+make run
+# Then from the shell: /inferd.elf /model.gguf
+```
+
+Supported: GGUF v3 with Q4_K, Q4_0, Q8_0, Q2_K–Q6_K, F16, F32 quantization. Weights stay quantized in memory (zero-copy) and dequantize on-the-fly during inference.
 
 ## Use Cases
 
