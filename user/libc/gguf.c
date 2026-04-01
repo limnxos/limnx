@@ -457,13 +457,16 @@ int gguf_load(const char *path, transformer_t *tf, tf_config_t *cfg,
             uint32_t ttype = tensors[t].type;
             uint32_t ndims = tensors[t].n_dims;
 
-            /* For 2D weight tensors: store qweight_t pointer */
+            /* For 2D weight tensors: store qweight_t pointer.
+             * GGUF shape is [inner_dim, outer_dim] (column-first).
+             * Our qweight_t uses rows=outer (output), cols=inner (input).
+             * E.g. token_embd shape=[2048,151936] → rows=151936, cols=2048 */
             if (ndims >= 2) {
                 qweight_t qw;
                 qw.data = raw;
                 qw.qtype = ttype;
-                qw.rows = (uint32_t)tensors[t].shape[0];
-                qw.cols = (uint32_t)tensors[t].shape[1];
+                qw.rows = (uint32_t)tensors[t].shape[1];  /* outer dim = output */
+                qw.cols = (uint32_t)tensors[t].shape[0];  /* inner dim = input  */
 
                 if (strcmp(name, "token_embd.weight") == 0) {
                     tf->q_token_emb = qw;
