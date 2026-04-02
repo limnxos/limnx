@@ -236,8 +236,28 @@ int main(int argc, char **argv) {
     const char *svc_name  = (argc >= 4) ? argv[3] : "default";
     const char *sock_path = (argc >= 5) ? argv[4] : "/tmp/inferd_proxy.sock";
 
-    printf("[proxy] Starting: remote=%s:%s svc=%s sock=%s\n",
-           argv[1], argv[2], svc_name, sock_path);
+    printf("[proxy] Starting: remote=%s:%s svc=%s\n",
+           argv[1], argv[2], svc_name);
+
+    /* Daemonize: fork, parent exits, child continues in background */
+    long dpid = sys_fork();
+    if (dpid < 0) {
+        printf("[proxy] fork failed\n");
+        return 1;
+    }
+    if (dpid > 0) {
+        /* Parent: exit immediately so shell gets control back */
+        return 0;
+    }
+    /* Child: detach from terminal */
+    sys_setsid();
+    long null_fd = sys_open("/dev/null", O_WRONLY);
+    if (null_fd >= 0) {
+        sys_dup2(null_fd, 0);
+        sys_dup2(null_fd, 1);
+        sys_dup2(null_fd, 2);
+        sys_close(null_fd);
+    }
 
     /* Create and bind unix socket */
     long sock_fd = sys_unix_socket();
