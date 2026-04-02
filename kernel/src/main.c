@@ -899,6 +899,8 @@ void kmain(void) {
                 const char *inittab =
                     "# Init config: name:path:flags\n"
                     "# flags: respawn, once, wait\n"
+                    "serviced:/serviced.elf:respawn\n"
+                    "agentd:/agentd.elf:respawn\n"
                     "shell:/bin/ash:wait\n";
                 int len = 0;
                 while (inittab[len]) len++;

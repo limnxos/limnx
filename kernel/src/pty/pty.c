@@ -7,12 +7,16 @@
 #include "sched/sched.h"
 #include "arch/serial.h"
 
+/* Lock ordering: pty lock is leaf (never hold while acquiring another lock) */
+
 static pty_t ptys[MAX_PTYS];
 static int console_pty_idx = -1;
 
 void pty_init(void) {
-    for (int i = 0; i < MAX_PTYS; i++)
+    for (int i = 0; i < MAX_PTYS; i++) {
+        ptys[i].lock = (spinlock_t)SPINLOCK_INIT;
         ptys[i].used = 0;
+    }
     pr_info("PTY subsystem initialized\n");
 }
 
@@ -24,6 +28,8 @@ pty_t *pty_get(int idx) {
 
 int pty_alloc(void) {
     for (int i = 0; i < MAX_PTYS; i++) {
+        uint64_t flags;
+        spin_lock_irqsave(&ptys[i].lock, &flags);
         if (!ptys[i].used) {
             ptys[i].m2s_read_pos = 0;
             ptys[i].m2s_write_pos = 0;
@@ -41,13 +47,15 @@ int pty_alloc(void) {
             ptys[i].fg_pgid = 0;
             ptys[i].winsize.ws_row = 25;
             ptys[i].winsize.ws_col = 80;
+            spin_unlock_irqrestore(&ptys[i].lock, flags);
             return i;
         }
+        spin_unlock_irqrestore(&ptys[i].lock, flags);
     }
     return -1;
 }
 
-/* Helper: push byte to s2m (slave→master) buffer */
+/* Helper: push byte to s2m (slave→master) buffer — caller holds lock */
 static void s2m_push(pty_t *p, uint8_t ch) {
     if (p->s2m_count < PTY_BUF_SIZE) {
         p->s2m_buf[p->s2m_write_pos] = ch;
@@ -62,8 +70,13 @@ int64_t pty_master_write(int idx, const uint8_t *buf, uint32_t len) {
         return -1;
 
     pty_t *p = &ptys[idx];
-    if (p->slave_closed)
+    uint64_t flags;
+    spin_lock_irqsave(&p->lock, &flags);
+
+    if (p->slave_closed) {
+        spin_unlock_irqrestore(&p->lock, flags);
         return -1;
+    }
 
     uint32_t written = 0;
     for (uint32_t i = 0; i < len; i++) {
@@ -71,26 +84,25 @@ int64_t pty_master_write(int idx, const uint8_t *buf, uint32_t len) {
 
         /* Control characters in canonical mode */
         if (p->flags & PTY_ICANON) {
-            /* ^C (0x03): send SIGINT to foreground group */
-            if (ch == 0x03) {
+            if (ch == 0x03) { /* ^C */
                 s2m_push(p, '^'); s2m_push(p, 'C'); s2m_push(p, '\n');
-                if (p->fg_pgid)
-                    process_kill_group(p->fg_pgid, 2); /* SIGINT */
-                /* Discard m2s input buffer */
+                uint64_t pgid = p->fg_pgid;
                 p->m2s_read_pos = 0;
                 p->m2s_write_pos = 0;
                 p->m2s_count = 0;
+                spin_unlock_irqrestore(&p->lock, flags);
+                if (pgid)
+                    process_kill_group(pgid, 2);
+                spin_lock_irqsave(&p->lock, &flags);
                 written++;
                 continue;
             }
-            /* ^D (0x04): signal EOF */
-            if (ch == 0x04) {
+            if (ch == 0x04) { /* ^D */
                 p->eof_flag = 1;
                 written++;
                 continue;
             }
-            /* ^U (0x15): erase line */
-            if (ch == 0x15) {
+            if (ch == 0x15) { /* ^U */
                 while (p->m2s_count > 0) {
                     if (p->m2s_write_pos == 0)
                         p->m2s_write_pos = PTY_BUF_SIZE - 1;
@@ -98,53 +110,45 @@ int64_t pty_master_write(int idx, const uint8_t *buf, uint32_t len) {
                         p->m2s_write_pos--;
                     p->m2s_count--;
                     if (p->flags & PTY_ECHO) {
-                        s2m_push(p, '\b');
-                        s2m_push(p, ' ');
-                        s2m_push(p, '\b');
+                        s2m_push(p, '\b'); s2m_push(p, ' '); s2m_push(p, '\b');
                     }
                 }
                 written++;
                 continue;
             }
-            /* ^Z (0x1A): send SIGTSTP to foreground group */
-            if (ch == 0x1A) {
+            if (ch == 0x1A) { /* ^Z */
                 s2m_push(p, '^'); s2m_push(p, 'Z'); s2m_push(p, '\n');
-                if (p->fg_pgid)
-                    process_kill_group(p->fg_pgid, SIGTSTP);
+                uint64_t pgid = p->fg_pgid;
                 p->m2s_read_pos = 0;
                 p->m2s_write_pos = 0;
                 p->m2s_count = 0;
+                spin_unlock_irqrestore(&p->lock, flags);
+                if (pgid)
+                    process_kill_group(pgid, SIGTSTP);
+                spin_lock_irqsave(&p->lock, &flags);
                 written++;
                 continue;
             }
         }
 
-        /* CR → LF translation (serial terminals send \r on Enter) */
-        if (ch == '\r')
-            ch = '\n';
+        if (ch == '\r') ch = '\n';
 
-        /* Backspace handling in canonical mode */
+        /* Backspace in canonical mode */
         if ((p->flags & PTY_ICANON) && (ch == 0x7F || ch == 0x08)) {
             if (p->m2s_count > 0) {
-                /* Remove last byte from m2s */
                 if (p->m2s_write_pos == 0)
                     p->m2s_write_pos = PTY_BUF_SIZE - 1;
                 else
                     p->m2s_write_pos--;
                 p->m2s_count--;
-
-                /* Echo backspace-space-backspace to s2m */
                 if (p->flags & PTY_ECHO) {
-                    s2m_push(p, '\b');
-                    s2m_push(p, ' ');
-                    s2m_push(p, '\b');
+                    s2m_push(p, '\b'); s2m_push(p, ' '); s2m_push(p, '\b');
                 }
             }
             written++;
             continue;
         }
 
-        /* Write to m2s buffer */
         if (p->m2s_count < PTY_BUF_SIZE) {
             p->m2s_buf[p->m2s_write_pos] = ch;
             p->m2s_write_pos = (p->m2s_write_pos + 1) % PTY_BUF_SIZE;
@@ -154,12 +158,11 @@ int64_t pty_master_write(int idx, const uint8_t *buf, uint32_t len) {
             break;
         }
 
-        /* Echo to s2m */
-        if (p->flags & PTY_ECHO) {
+        if (p->flags & PTY_ECHO)
             s2m_push(p, ch);
-        }
     }
 
+    spin_unlock_irqrestore(&p->lock, flags);
     return (int64_t)written;
 }
 
@@ -169,23 +172,22 @@ int64_t pty_master_read(int idx, uint8_t *buf, uint32_t len) {
         return -1;
 
     pty_t *p = &ptys[idx];
-    uint32_t total = 0;
+    uint64_t flags;
+    spin_lock_irqsave(&p->lock, &flags);
 
-    while (total < len) {
-        if (p->s2m_count > 0) {
-            buf[total] = p->s2m_buf[p->s2m_read_pos];
-            p->s2m_read_pos = (p->s2m_read_pos + 1) % PTY_BUF_SIZE;
-            p->s2m_count--;
-            total++;
-        } else {
-            break;
-        }
+    uint32_t total = 0;
+    while (total < len && p->s2m_count > 0) {
+        buf[total] = p->s2m_buf[p->s2m_read_pos];
+        p->s2m_read_pos = (p->s2m_read_pos + 1) % PTY_BUF_SIZE;
+        p->s2m_count--;
+        total++;
     }
 
+    spin_unlock_irqrestore(&p->lock, flags);
     return (int64_t)total;
 }
 
-/* Helper: check if m2s contains a newline */
+/* Helper: check if m2s contains a newline — caller holds lock */
 static int m2s_has_newline(pty_t *p) {
     uint32_t pos = p->m2s_read_pos;
     for (uint32_t i = 0; i < p->m2s_count; i++) {
@@ -202,25 +204,27 @@ int64_t pty_slave_read(int idx, uint8_t *buf, uint32_t len, int nonblock) {
         return -1;
 
     pty_t *p = &ptys[idx];
+    uint64_t flags;
 
     if (p->flags & PTY_ICANON) {
         /* Check for ^D EOF on empty buffer */
+        spin_lock_irqsave(&p->lock, &flags);
         if (p->eof_flag && p->m2s_count == 0) {
             p->eof_flag = 0;
+            spin_unlock_irqrestore(&p->lock, flags);
             return 0;
         }
 
-        /* Wait for newline, EOF, or master close (block indefinitely) */
+        /* Wait for newline, EOF, or master close */
         while (!m2s_has_newline(p) && !p->master_closed && !p->eof_flag) {
-            if (nonblock)
-                return 0;
+            spin_unlock_irqrestore(&p->lock, flags);
+            if (nonblock) return 0;
             sched_yield();
+            spin_lock_irqsave(&p->lock, &flags);
         }
 
-        /* EOF with data: return what's in the buffer */
-        if (p->eof_flag && p->m2s_count > 0) {
+        if (p->eof_flag && p->m2s_count > 0)
             p->eof_flag = 0;
-        }
 
         /* Read up to and including newline */
         uint32_t total = 0;
@@ -229,17 +233,20 @@ int64_t pty_slave_read(int idx, uint8_t *buf, uint32_t len, int nonblock) {
             p->m2s_read_pos = (p->m2s_read_pos + 1) % PTY_BUF_SIZE;
             p->m2s_count--;
             buf[total++] = ch;
-            if (ch == '\n')
-                break;
+            if (ch == '\n') break;
         }
+
+        spin_unlock_irqrestore(&p->lock, flags);
         return (int64_t)total;
     }
 
-    /* Raw mode: read whatever is available (block indefinitely) */
+    /* Raw mode: read whatever is available */
+    spin_lock_irqsave(&p->lock, &flags);
     while (p->m2s_count == 0 && !p->master_closed) {
-        if (nonblock)
-            return 0;
+        spin_unlock_irqrestore(&p->lock, flags);
+        if (nonblock) return 0;
         sched_yield();
+        spin_lock_irqsave(&p->lock, &flags);
     }
 
     uint32_t total = 0;
@@ -250,31 +257,43 @@ int64_t pty_slave_read(int idx, uint8_t *buf, uint32_t len, int nonblock) {
         total++;
     }
 
-    if (total == 0 && p->master_closed)
-        return 0;  /* EOF */
+    int mc = p->master_closed;
+    spin_unlock_irqrestore(&p->lock, flags);
 
+    if (total == 0 && mc) return 0;
     return (int64_t)total;
 }
 
-/* Slave writes to s2m buffer */
+/* Slave writes to s2m buffer — blocks when full instead of dropping */
 int64_t pty_slave_write(int idx, const uint8_t *buf, uint32_t len) {
     if (idx < 0 || idx >= MAX_PTYS || !ptys[idx].used)
         return -1;
 
     pty_t *p = &ptys[idx];
-    if (p->master_closed)
-        return -1;
-
+    uint64_t flags;
     uint32_t written = 0;
+
     for (uint32_t i = 0; i < len; i++) {
-        if (p->s2m_count < PTY_BUF_SIZE) {
-            p->s2m_buf[p->s2m_write_pos] = buf[i];
-            p->s2m_write_pos = (p->s2m_write_pos + 1) % PTY_BUF_SIZE;
-            p->s2m_count++;
-            written++;
-        } else {
-            break;
+        /* Wait for space in s2m buffer */
+        spin_lock_irqsave(&p->lock, &flags);
+        int retries = 0;
+        while (p->s2m_count >= PTY_BUF_SIZE && !p->master_closed) {
+            spin_unlock_irqrestore(&p->lock, flags);
+            sched_yield();
+            if (++retries > 100000) return (int64_t)written; /* safety valve */
+            spin_lock_irqsave(&p->lock, &flags);
         }
+
+        if (p->master_closed) {
+            spin_unlock_irqrestore(&p->lock, flags);
+            return -1;
+        }
+
+        p->s2m_buf[p->s2m_write_pos] = buf[i];
+        p->s2m_write_pos = (p->s2m_write_pos + 1) % PTY_BUF_SIZE;
+        p->s2m_count++;
+        written++;
+        spin_unlock_irqrestore(&p->lock, flags);
     }
 
     return (int64_t)written;
@@ -294,13 +313,19 @@ void pty_close_master(int idx) {
         return;
 
     pty_t *p = &ptys[idx];
+    uint64_t flags;
+    spin_lock_irqsave(&p->lock, &flags);
+
     if (p->master_refs > 0)
         p->master_refs--;
     if (p->master_refs == 0)
         p->master_closed = 1;
 
-    if (p->master_closed && p->slave_closed)
+    int both_closed = p->master_closed && p->slave_closed;
+    if (both_closed)
         p->used = 0;
+
+    spin_unlock_irqrestore(&p->lock, flags);
 }
 
 void pty_close_slave(int idx) {
@@ -308,13 +333,19 @@ void pty_close_slave(int idx) {
         return;
 
     pty_t *p = &ptys[idx];
+    uint64_t flags;
+    spin_lock_irqsave(&p->lock, &flags);
+
     if (p->slave_refs > 0)
         p->slave_refs--;
     if (p->slave_refs == 0)
         p->slave_closed = 1;
 
-    if (p->master_closed && p->slave_closed)
+    int both_closed = p->master_closed && p->slave_closed;
+    if (both_closed)
         p->used = 0;
+
+    spin_unlock_irqrestore(&p->lock, flags);
 }
 
 /* --- ioctl --- */
@@ -324,67 +355,69 @@ int pty_ioctl(int idx, uint64_t cmd, uint64_t arg) {
         return -1;
 
     pty_t *p = &ptys[idx];
+    uint64_t flags;
+    spin_lock_irqsave(&p->lock, &flags);
 
+    int result = 0;
     switch (cmd) {
     case TCGETS: {
         termios_t *t = (termios_t *)arg;
-        if (!t) return -1;
-        /* Zero all fields first */
+        if (!t) { result = -1; break; }
         uint8_t *tp = (uint8_t *)t;
         for (unsigned i = 0; i < sizeof(termios_t); i++) tp[i] = 0;
-        /* Set flags based on PTY state */
         t->c_iflag = TERMIOS_ICRNL;
         t->c_oflag = TERMIOS_OPOST | TERMIOS_ONLCR;
         t->c_cflag = 0;
         t->c_lflag = TERMIOS_ISIG;
         if (p->flags & PTY_ECHO)   t->c_lflag |= TERMIOS_ECHO;
         if (p->flags & PTY_ICANON) t->c_lflag |= TERMIOS_ICANON;
-        /* Default control characters */
-        t->c_cc[VINTR] = 3;    /* ^C */
-        t->c_cc[VQUIT] = 28;   /* ^\ */
-        t->c_cc[VERASE] = 127; /* DEL */
-        t->c_cc[VKILL] = 21;   /* ^U */
-        t->c_cc[VEOF] = 4;     /* ^D */
-        t->c_cc[VSUSP] = 26;   /* ^Z */
+        t->c_cc[VINTR] = 3;
+        t->c_cc[VQUIT] = 28;
+        t->c_cc[VERASE] = 127;
+        t->c_cc[VKILL] = 21;
+        t->c_cc[VEOF] = 4;
+        t->c_cc[VSUSP] = 26;
         t->c_cc[VMIN] = 1;
         t->c_ispeed = 38400;
         t->c_ospeed = 38400;
-        return 0;
+        break;
     }
     case TCSETS:
     case TCSETSW:
     case TCSETSF: {
         const termios_t *t = (const termios_t *)arg;
-        if (!t) return -1;
+        if (!t) { result = -1; break; }
         p->flags = 0;
         if (t->c_lflag & TERMIOS_ECHO)   p->flags |= PTY_ECHO;
         if (t->c_lflag & TERMIOS_ICANON) p->flags |= PTY_ICANON;
-        return 0;
+        break;
     }
     case TIOCGWINSZ: {
         winsize_t *ws = (winsize_t *)arg;
-        if (!ws) return -1;
+        if (!ws) { result = -1; break; }
         ws->ws_row = p->winsize.ws_row;
         ws->ws_col = p->winsize.ws_col;
-        return 0;
+        break;
     }
     case TIOCSWINSZ: {
         const winsize_t *ws = (const winsize_t *)arg;
-        if (!ws) return -1;
+        if (!ws) { result = -1; break; }
         p->winsize.ws_row = ws->ws_row;
         p->winsize.ws_col = ws->ws_col;
-        return 0;
+        break;
     }
-    case TIOCSPGRP: {
+    case TIOCSPGRP:
         p->fg_pgid = arg;
-        return 0;
-    }
-    case TIOCGPGRP: {
-        return (int)p->fg_pgid;
-    }
+        break;
+    case TIOCGPGRP:
+        result = (int)p->fg_pgid;
+        break;
     default:
-        return -1;
+        result = -1;
     }
+
+    spin_unlock_irqrestore(&p->lock, flags);
+    return result;
 }
 
 /* --- Console PTY --- */
@@ -393,7 +426,7 @@ int pty_create_console(void) {
     int idx = pty_alloc();
     if (idx < 0) return -1;
     console_pty_idx = idx;
-    ptys[idx].master_refs = 1;  /* kernel holds master */
+    ptys[idx].master_refs = 1;
     pr_info("Console PTY created (PTY %d)\n", idx);
     return idx;
 }
@@ -402,7 +435,7 @@ int pty_get_console(void) {
     return console_pty_idx;
 }
 
-/* Called from keyboard ISR to feed a character into the console PTY master */
+/* Called from keyboard ISR and console_reader_thread — must be IRQ-safe */
 void pty_console_input(char ch) {
     if (console_pty_idx < 0) return;
     uint8_t c = (uint8_t)ch;
@@ -414,22 +447,32 @@ int pty_readable(int idx, int is_master) {
     if (idx < 0 || idx >= MAX_PTYS || !ptys[idx].used)
         return 0;
     pty_t *p = &ptys[idx];
+    uint64_t flags;
+    spin_lock_irqsave(&p->lock, &flags);
+    int result;
     if (is_master) {
-        return p->s2m_count > 0;
+        result = p->s2m_count > 0;
     } else {
-        /* Slave: canonical needs newline or EOF or master close */
         if (p->flags & PTY_ICANON)
-            return m2s_has_newline(p) || p->master_closed || p->eof_flag;
-        return p->m2s_count > 0 || p->master_closed;
+            result = m2s_has_newline(p) || p->master_closed || p->eof_flag;
+        else
+            result = p->m2s_count > 0 || p->master_closed;
     }
+    spin_unlock_irqrestore(&p->lock, flags);
+    return result;
 }
 
 int pty_writable(int idx, int is_master) {
     if (idx < 0 || idx >= MAX_PTYS || !ptys[idx].used)
         return 0;
     pty_t *p = &ptys[idx];
+    uint64_t flags;
+    spin_lock_irqsave(&p->lock, &flags);
+    int result;
     if (is_master)
-        return p->m2s_count < PTY_BUF_SIZE;
+        result = p->m2s_count < PTY_BUF_SIZE;
     else
-        return p->s2m_count < PTY_BUF_SIZE;
+        result = p->s2m_count < PTY_BUF_SIZE;
+    spin_unlock_irqrestore(&p->lock, flags);
+    return result;
 }

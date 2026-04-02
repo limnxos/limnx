@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "pty/termios.h"
+#include "sync/spinlock.h"
 
 #define MAX_PTYS       8
 #define PTY_BUF_SIZE   4096
@@ -11,6 +12,8 @@
 #define PTY_ICANON     (1 << 1)   /* canonical mode (line-buffered) */
 
 typedef struct pty {
+    spinlock_t lock;  /* protects all fields below — use irqsave (called from ISR) */
+
     /* Master→Slave buffer: master writes here, slave reads */
     uint8_t  m2s_buf[PTY_BUF_SIZE];
     uint32_t m2s_read_pos;
