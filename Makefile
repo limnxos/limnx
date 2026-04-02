@@ -266,10 +266,13 @@ iso: $(ISO)
 # --- Run in QEMU ---
 
 run: $(ISO) $(DISK_IMG)
+	@saved_stty=$$(stty -g 2>/dev/null); \
+	stty raw -echo 2>/dev/null; \
+	trap 'stty "'"$$saved_stty"'" 2>/dev/null' EXIT INT TERM; \
 	qemu-system-x86_64 \
 		-M q35 \
 		-cdrom $(ISO) \
-		-m 4G \
+		-m $(or $(RAM),4G) \
 		-smp 2 \
 		-serial stdio \
 		-display none \
@@ -277,7 +280,8 @@ run: $(ISO) $(DISK_IMG)
 		-device virtio-net-pci,netdev=net0 \
 		-netdev user,id=net0,hostfwd=udp::5555-10.0.2.15:1234,hostfwd=tcp::8080-10.0.2.15:80 \
 		-drive file=$(DISK_IMG),format=raw,if=none,id=disk0 \
-		-device virtio-blk-pci,drive=disk0
+		-device virtio-blk-pci,drive=disk0; \
+	stty "$$saved_stty" 2>/dev/null
 
 # --- Test (boot + run 'test all' via shell) ---
 
