@@ -899,8 +899,6 @@ void kmain(void) {
                 const char *inittab =
                     "# Init config: name:path:flags\n"
                     "# flags: respawn, once, wait\n"
-                    "serviced:/serviced.elf:respawn\n"
-                    "agentd:/agentd.elf:respawn\n"
                     "shell:/bin/ash:wait\n";
                 int len = 0;
                 while (inittab[len]) len++;
@@ -947,6 +945,10 @@ void kmain(void) {
             vfs_write(tools_conf, 0, (const uint8_t *)conf, len);
         }
     }
+
+    /* Create standard directories */
+    vfs_mkdir("/tmp");
+    vfs_mkdir("/var");
 
     /* Create /dev with device nodes */
     vfs_mkdir("/dev");

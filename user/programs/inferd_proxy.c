@@ -168,19 +168,19 @@ static int forward_request(const char *prompt, uint32_t prompt_len,
     /* Send HTTP request */
     sys_tcp_send(conn, http_req, hlen);
 
-    /* Receive HTTP response (may come in chunks) */
+    /* Receive HTTP response — keep reading until connection closes
+     * or we detect end of JSON body */
     char recv_buf[MAX_RESP];
     uint32_t total = 0;
-    for (;;) {
+    int attempts = 0;
+    while (total < sizeof(recv_buf) - 1 && attempts < 500) {
         long n = sys_tcp_recv(conn, recv_buf + total, sizeof(recv_buf) - total - 1);
-        if (n <= 0) break;
-        total += (uint32_t)n;
-        if (total >= sizeof(recv_buf) - 1) break;
+        if (n > 0) {
+            total += (uint32_t)n;
+            recv_buf[total] = '\0';
+            attempts = 0;  /* reset on progress */
 
-        /* Check if we have the full response (Connection: close → EOF) */
-        recv_buf[total] = '\0';
-        /* Look for end of JSON in body */
-        if (total > 4) {
+            /* Check if we have complete HTTP response with JSON body */
             char *body_start = (char *)0;
             for (uint32_t i = 0; i + 3 < total; i++) {
                 if (recv_buf[i] == '\r' && recv_buf[i+1] == '\n' &&
@@ -190,16 +190,29 @@ static int forward_request(const char *prompt, uint32_t prompt_len,
                 }
             }
             if (body_start) {
-                /* Check for closing brace of JSON */
-                uint32_t blen = total - (uint32_t)(body_start - recv_buf);
-                if (blen > 0 && body_start[blen - 1] == '}')
-                    break;  /* Got full JSON response */
+                /* Count braces to detect complete JSON */
+                int depth = 0;
+                for (char *p = body_start; *p; p++) {
+                    if (*p == '{') depth++;
+                    else if (*p == '}') depth--;
+                }
+                if (depth == 0 && body_start[0] == '{')
+                    break;  /* Complete JSON received */
             }
+        } else {
+            attempts++;
+            sys_yield();
         }
     }
 
     sys_tcp_close(conn);
     recv_buf[total] = '\0';
+
+    printf("[proxy] recv %u bytes\n", total);
+    if (total > 0 && total < 200)
+        printf("[proxy] raw: %s\n", recv_buf);
+    else if (total >= 200)
+        printf("[proxy] first 200: %.200s\n", recv_buf);
 
     if (total == 0) return -1;
 
@@ -236,27 +249,36 @@ int main(int argc, char **argv) {
     const char *svc_name  = (argc >= 4) ? argv[3] : "default";
     const char *sock_path = (argc >= 5) ? argv[4] : "/tmp/inferd_proxy.sock";
 
+    /* -f flag = foreground mode (for debugging) */
+    int foreground = 0;
+    if (argc >= 2 && strcmp(argv[1], "-f") == 0) {
+        foreground = 1;
+        /* Shift args */
+        argc--;
+        for (int i = 1; i < argc; i++) argv[i] = argv[i + 1];
+    }
+
     printf("[proxy] Starting: remote=%s:%s svc=%s\n",
            argv[1], argv[2], svc_name);
 
-    /* Daemonize: fork, parent exits, child continues in background */
-    long dpid = sys_fork();
-    if (dpid < 0) {
-        printf("[proxy] fork failed\n");
-        return 1;
-    }
-    if (dpid > 0) {
-        /* Parent: exit immediately so shell gets control back */
-        return 0;
-    }
-    /* Child: detach from terminal */
-    sys_setsid();
-    long null_fd = sys_open("/dev/null", O_WRONLY);
-    if (null_fd >= 0) {
-        sys_dup2(null_fd, 0);
-        sys_dup2(null_fd, 1);
-        sys_dup2(null_fd, 2);
-        sys_close(null_fd);
+    if (!foreground) {
+        /* Daemonize: fork, parent exits, child continues in background */
+        long dpid = sys_fork();
+        if (dpid < 0) {
+            printf("[proxy] fork failed\n");
+            return 1;
+        }
+        if (dpid > 0) {
+            return 0;
+        }
+        sys_setsid();
+        long null_fd = sys_open("/dev/null", O_WRONLY);
+        if (null_fd >= 0) {
+            sys_dup2(null_fd, 0);
+            sys_dup2(null_fd, 1);
+            sys_dup2(null_fd, 2);
+            sys_close(null_fd);
+        }
     }
 
     /* Create and bind unix socket */

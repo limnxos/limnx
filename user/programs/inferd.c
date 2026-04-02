@@ -117,6 +117,18 @@ static int generate_response(const char *prompt, uint32_t prompt_len,
 
     if (!logits) return 0;
 
+    /* Debug: show logit distribution for first token */
+    {
+        float min_l = logits[0], max_l = logits[0];
+        uint32_t max_idx = 0;
+        for (uint32_t v = 1; v < cfg.vocab_size; v++) {
+            if (logits[v] < min_l) min_l = logits[v];
+            if (logits[v] > max_l) { max_l = logits[v]; max_idx = v; }
+        }
+        printf("[inferd] logits: min=%.2f max=%.2f argmax=%u spread=%.2f\n",
+               (double)min_l, (double)max_l, max_idx, (double)(max_l - min_l));
+    }
+
     /* Generate continuation tokens */
     uint32_t gen_tokens[MAX_GEN];
     uint32_t gen_count = 0;

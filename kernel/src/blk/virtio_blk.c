@@ -163,12 +163,15 @@ static int blk_do_request(uint32_t type, uint64_t sector,
     /* Notify device */
     outw(io_base + VIRTIO_REG_QUEUE_NOTIFY, 0);
 
-    /* Busy-wait for completion with scaled timeout for large transfers */
-    int timeout = 100000 + (int)sector_count * 100;
+    /* Poll for completion: check used ring directly (fast path)
+     * and fall back to IRQ flag. Use arch_pause() not sched_yield()
+     * to avoid expensive context switches in the tight poll loop. */
+    int timeout = 1000000;
     for (int i = 0; i < timeout; i++) {
-        if (blk_irq_fired)
+        arch_memory_barrier();
+        if (q_used->idx != q_last_used || blk_irq_fired)
             break;
-        sched_yield();
+        arch_pause();
     }
 
     /* Process used ring */

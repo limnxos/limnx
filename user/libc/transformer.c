@@ -550,6 +550,17 @@ float *transformer_forward(transformer_t *tf, uint32_t token) {
     /* 1. Copy token embedding into x */
     if (tf->quantized) {
         embed_q(tf->x, &tf->q_token_emb, token, tf->dq_row);
+        /* Debug: verify embedding values on first forward */
+        if (tf->pos == 0) {
+            float emin = tf->x[0], emax = tf->x[0], esum = 0;
+            for (uint32_t i = 0; i < dim; i++) {
+                if (tf->x[i] < emin) emin = tf->x[i];
+                if (tf->x[i] > emax) emax = tf->x[i];
+                esum += tf->x[i];
+            }
+            printf("[tf] embed[%u]: min=%.4f max=%.4f mean=%.4f\n",
+                   token, (double)emin, (double)emax, (double)(esum / dim));
+        }
     } else {
         float *emb = tf->token_emb + token * dim;
         for (uint32_t i = 0; i < dim; i++)
