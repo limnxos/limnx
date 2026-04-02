@@ -1026,8 +1026,12 @@ void kmain(void) {
             path[p] = '\0';
             vfs_symlink(path, "/busybox.elf");
         }
+        arch_memory_barrier();  /* ensure symlinks visible on all CPUs before init */
         pr_info("Created /bin with %d busybox symlinks\n", 47);
     }
+
+    /* Ensure all VFS/config changes are visible on all CPUs before init */
+    arch_memory_barrier();
 
     /* Launch init (pid 1) — the Unix way.
      * Kernel sets up console PTY on init's fd 0/1/2.
