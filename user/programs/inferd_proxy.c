@@ -2,22 +2,21 @@
  * inferd_proxy.c — Network inference proxy for Limnx
  *
  * Registers as an inference service, accepts requests via unix socket,
- * forwards them over TCP to a remote GPU/cloud inference server,
- * and returns the response.
+ * forwards them over TCP to a remote llama-server (or compatible HTTP API).
  *
  * Usage: inferd_proxy <host_ip> <port> [svc_name] [sock_path]
  *
- * The remote server protocol:
- *   Send: [uint32_t prompt_len][prompt bytes]
- *   Recv: [uint32_t resp_len][response bytes]
+ * Compatible with:
+ *   - llama.cpp's llama-server (/completion endpoint)
+ *   - Any OpenAI-compatible server (/v1/completions)
  *
- * Host-side: run tools/gpu_inference_server.py on a machine with a GPU.
+ * Host-side: llama-server -m model.gguf --port 9200 --host 0.0.0.0
  */
 
 #include "libc/libc.h"
 
 #define MAX_PROMPT  2048
-#define MAX_RESP    4096
+#define MAX_RESP    8192
 
 static uint32_t remote_ip;
 static uint16_t remote_port;
@@ -42,10 +41,77 @@ static uint32_t parse_ip(const char *s) {
     return (a << 24) | (b << 16) | (c << 8) | d;
 }
 
-/* Forward a prompt to the remote server via TCP */
+/* Escape a string for JSON (handle \n, \r, \t, \", \\) */
+static int json_escape(const char *src, uint32_t src_len,
+                       char *dst, uint32_t dst_max) {
+    uint32_t di = 0;
+    for (uint32_t i = 0; i < src_len && di < dst_max - 2; i++) {
+        char c = src[i];
+        if (c == '"' || c == '\\') {
+            dst[di++] = '\\'; dst[di++] = c;
+        } else if (c == '\n') {
+            dst[di++] = '\\'; dst[di++] = 'n';
+        } else if (c == '\r') {
+            dst[di++] = '\\'; dst[di++] = 'r';
+        } else if (c == '\t') {
+            dst[di++] = '\\'; dst[di++] = 't';
+        } else {
+            dst[di++] = c;
+        }
+    }
+    dst[di] = '\0';
+    return (int)di;
+}
+
+/* Find "content":" in JSON response and extract the string value */
+static int extract_content(const char *json, uint32_t json_len,
+                           char *out, uint32_t max_out) {
+    /* Find "content":" */
+    const char *key = "\"content\":\"";
+    int klen = 11;
+    const char *p = (const char *)0;
+    for (uint32_t i = 0; i + klen < json_len; i++) {
+        int match = 1;
+        for (int k = 0; k < klen; k++) {
+            if (json[i + k] != key[k]) { match = 0; break; }
+        }
+        if (match) { p = &json[i + klen]; break; }
+    }
+    /* Also try with space: "content": " */
+    if (!p) {
+        const char *key2 = "\"content\": \"";
+        int k2len = 12;
+        for (uint32_t i = 0; i + k2len < json_len; i++) {
+            int match = 1;
+            for (int k = 0; k < k2len; k++) {
+                if (json[i + k] != key2[k]) { match = 0; break; }
+            }
+            if (match) { p = &json[i + k2len]; break; }
+        }
+    }
+    if (!p) return -1;
+
+    /* Extract until closing quote (handle escapes) */
+    uint32_t oi = 0;
+    while (*p && *p != '"' && oi < max_out - 1) {
+        if (*p == '\\' && *(p + 1)) {
+            p++;
+            if (*p == 'n') out[oi++] = '\n';
+            else if (*p == 'r') out[oi++] = '\r';
+            else if (*p == 't') out[oi++] = '\t';
+            else out[oi++] = *p;
+        } else {
+            out[oi++] = *p;
+        }
+        p++;
+    }
+    out[oi] = '\0';
+    return (int)oi;
+}
+
+/* Forward a prompt to llama-server via HTTP POST /completion */
 static int forward_request(const char *prompt, uint32_t prompt_len,
                            char *response, uint32_t max_resp) {
-    /* Connect to remote server */
     long conn = sys_tcp_socket();
     if (conn < 0) {
         printf("[proxy] Failed to create TCP socket\n");
@@ -59,31 +125,104 @@ static int forward_request(const char *prompt, uint32_t prompt_len,
         return -1;
     }
 
-    /* Send: [uint32_t len][prompt bytes] */
-    uint32_t net_len = prompt_len;
-    sys_tcp_send(conn, &net_len, 4);
-    sys_tcp_send(conn, prompt, prompt_len);
+    /* Build JSON body: {"prompt":"...","n_predict":256,"temperature":0.8} */
+    char escaped[MAX_PROMPT * 2];
+    json_escape(prompt, prompt_len, escaped, sizeof(escaped));
 
-    /* Recv: [uint32_t len][response bytes] */
-    uint32_t resp_len = 0;
-    long n = sys_tcp_recv(conn, &resp_len, 4);
-    if (n < 4 || resp_len == 0) {
-        sys_tcp_close(conn);
-        return -1;
+    char body[MAX_PROMPT * 2 + 128];
+    int body_len = 0;
+    const char *pre = "{\"prompt\":\"";
+    while (*pre) body[body_len++] = *pre++;
+    for (int i = 0; escaped[i]; i++) body[body_len++] = escaped[i];
+    const char *post = "\",\"n_predict\":256,\"temperature\":0.8,\"top_k\":40}";
+    while (*post) body[body_len++] = *post++;
+    body[body_len] = '\0';
+
+    /* Build HTTP request */
+    char http_req[MAX_PROMPT * 2 + 256];
+    int hlen = 0;
+    const char *h1 = "POST /completion HTTP/1.1\r\nHost: localhost\r\n"
+                     "Content-Type: application/json\r\nConnection: close\r\n"
+                     "Content-Length: ";
+    while (*h1) http_req[hlen++] = *h1++;
+
+    /* itoa for content-length */
+    char cl_str[16];
+    int ci = 0;
+    int tmp = body_len;
+    if (tmp == 0) cl_str[ci++] = '0';
+    else {
+        char rev[16]; int ri = 0;
+        while (tmp > 0) { rev[ri++] = '0' + (tmp % 10); tmp /= 10; }
+        while (ri > 0) cl_str[ci++] = rev[--ri];
     }
+    cl_str[ci] = '\0';
+    for (int i = 0; cl_str[i]; i++) http_req[hlen++] = cl_str[i];
 
-    if (resp_len > max_resp)
-        resp_len = max_resp;
+    const char *h2 = "\r\n\r\n";
+    while (*h2) http_req[hlen++] = *h2++;
 
+    /* Append body */
+    for (int i = 0; i < body_len; i++) http_req[hlen++] = body[i];
+
+    /* Send HTTP request */
+    sys_tcp_send(conn, http_req, hlen);
+
+    /* Receive HTTP response (may come in chunks) */
+    char recv_buf[MAX_RESP];
     uint32_t total = 0;
-    while (total < resp_len) {
-        n = sys_tcp_recv(conn, response + total, resp_len - total);
+    for (;;) {
+        long n = sys_tcp_recv(conn, recv_buf + total, sizeof(recv_buf) - total - 1);
         if (n <= 0) break;
         total += (uint32_t)n;
+        if (total >= sizeof(recv_buf) - 1) break;
+
+        /* Check if we have the full response (Connection: close → EOF) */
+        recv_buf[total] = '\0';
+        /* Look for end of JSON in body */
+        if (total > 4) {
+            char *body_start = (char *)0;
+            for (uint32_t i = 0; i + 3 < total; i++) {
+                if (recv_buf[i] == '\r' && recv_buf[i+1] == '\n' &&
+                    recv_buf[i+2] == '\r' && recv_buf[i+3] == '\n') {
+                    body_start = &recv_buf[i + 4];
+                    break;
+                }
+            }
+            if (body_start) {
+                /* Check for closing brace of JSON */
+                uint32_t blen = total - (uint32_t)(body_start - recv_buf);
+                if (blen > 0 && body_start[blen - 1] == '}')
+                    break;  /* Got full JSON response */
+            }
+        }
     }
 
     sys_tcp_close(conn);
-    return (int)total;
+    recv_buf[total] = '\0';
+
+    if (total == 0) return -1;
+
+    /* Extract "content" from JSON response */
+    int clen = extract_content(recv_buf, total, response, max_resp);
+    if (clen <= 0) {
+        /* Fallback: return raw body */
+        char *body_start = recv_buf;
+        for (uint32_t i = 0; i + 3 < total; i++) {
+            if (recv_buf[i] == '\r' && recv_buf[i+1] == '\n' &&
+                recv_buf[i+2] == '\r' && recv_buf[i+3] == '\n') {
+                body_start = &recv_buf[i + 4];
+                break;
+            }
+        }
+        uint32_t blen = total - (uint32_t)(body_start - recv_buf);
+        if (blen > max_resp - 1) blen = max_resp - 1;
+        memcpy(response, body_start, blen);
+        response[blen] = '\0';
+        return (int)blen;
+    }
+
+    return clen;
 }
 
 int main(int argc, char **argv) {

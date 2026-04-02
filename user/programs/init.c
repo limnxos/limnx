@@ -199,20 +199,37 @@ int main(void) {
 
     printf("[init] %d services configured\n", service_count);
 
-    /* Start all services */
+    /* Start all services: launch daemons first, shell last */
     for (int i = 0; i < service_count; i++) {
+        if (services[i].flags & SVC_WAIT) continue;  /* skip shell for now */
         spawn_service(&services[i]);
+    }
 
-        /* If wait flag, block until this service exits before next */
-        if (services[i].flags & SVC_WAIT) {
-            sys_waitpid(services[i].pid);
-            printf("[init] %s exited\n", services[i].name);
-            services[i].pid = 0;
+    /* Small delay to let daemons detach before shell starts */
+    long ts[2] = {0, 200000000};  /* 200ms */
+    sys_nanosleep(ts);
+
+    /* Now start wait-flagged services (shell) */
+    for (int i = 0; i < service_count; i++) {
+        if (!(services[i].flags & SVC_WAIT)) continue;
+
+        /* Give shell its own session + foreground process group */
+        spawn_service(&services[i]);
+        sys_waitpid(services[i].pid);
+        services[i].pid = 0;
+    }
+
+    /* Silence init's own output so it doesn't compete with shell */
+    {
+        long null_fd = sys_open("/dev/null", O_WRONLY);
+        if (null_fd >= 0) {
+            sys_dup2(null_fd, 1);
+            sys_dup2(null_fd, 2);
+            sys_close(null_fd);
         }
     }
 
     /* Main loop: reap children, respawn if needed */
-    printf("[init] entering main loop\n");
     for (;;) {
         /* Poll all running services with WNOHANG */
         int any_running = 0;
